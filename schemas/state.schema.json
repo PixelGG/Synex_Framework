@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://synex.dev/schemas/state.schema.json",
+  "title": "Synex owned state definition",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "scope", "authority", "schema"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "name": {
+      "type": "string",
+      "pattern": "^synex_[a-z0-9_]+\\.[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)*$",
+      "maxLength": 128
+    },
+    "scope": { "enum": ["global", "player", "entity", "character"] },
+    "authority": { "enum": ["server", "owner"] },
+    "schema": { "type": "object" },
+    "sensitive": { "type": "boolean" },
+    "replicated": { "type": "boolean" },
+    "persistent": { "type": "boolean" },
+    "readCapability": { "$ref": "#/$defs/capability" },
+    "writeCapability": { "$ref": "#/$defs/capability" }
+  },
+  "$defs": {
+    "capability": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "maxLength": 128
+    }
+  }
+}

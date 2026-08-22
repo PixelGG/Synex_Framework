@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://synex.dev/schemas/resource.schema.json",
+  "title": "Synex resource manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "name",
+    "version",
+    "synex",
+    "critical",
+    "capabilities",
+    "services",
+    "contracts",
+    "dependencies",
+    "migrations",
+    "dataOwnership",
+    "stateSnapshot"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema": { "const": 1 },
+    "name": {
+      "type": "string",
+      "pattern": "^synex_[a-z0-9_]+$",
+      "maxLength": 64
+    },
+    "version": { "$ref": "#/$defs/semver" },
+    "synex": { "$ref": "#/$defs/range" },
+    "critical": { "type": "boolean" },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["request"],
+      "properties": {
+        "request": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/capability" }
+        }
+      }
+    },
+    "services": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provide", "require", "optional"],
+      "properties": {
+        "provide": { "$ref": "#/$defs/serviceList" },
+        "require": { "$ref": "#/$defs/serviceList" },
+        "optional": { "$ref": "#/$defs/serviceList" }
+      }
+    },
+    "contracts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provide", "consume"],
+      "properties": {
+        "provide": { "$ref": "#/$defs/nameList" },
+        "consume": { "$ref": "#/$defs/nameList" }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "optional", "development"],
+      "properties": {
+        "required": { "$ref": "#/$defs/dependencyList" },
+        "optional": { "$ref": "#/$defs/dependencyList" },
+        "development": { "$ref": "#/$defs/dependencyList" }
+      }
+    },
+    "migrations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "path", "transactional"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[0-9]{3}_[a-z0-9_]+$",
+            "maxLength": 96
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^migrations/[A-Za-z0-9._/-]+\\.sql$",
+            "maxLength": 240,
+            "not": { "pattern": "(?:^|/)\\.\\.(?:/|$)" }
+          },
+          "transactional": { "type": "boolean" }
+        }
+      }
+    },
+    "dataOwnership": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tables", "characterDelete"],
+      "properties": {
+        "tables": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^synex_[a-z0-9_]+$",
+            "maxLength": 64
+          }
+        },
+        "characterDelete": { "enum": ["none", "delete", "anonymize", "retain", "block"] }
+      }
+    },
+    "stateSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["supported", "schemaVersion"],
+      "properties": {
+        "supported": { "type": "boolean" },
+        "schemaVersion": { "type": "integer", "minimum": 1 }
+      }
+    }
+  },
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|(?:[0-9]*[A-Za-z-][0-9A-Za-z-]*))(?:\\.(?:(?:0|[1-9][0-9]*)|(?:[0-9]*[A-Za-z-][0-9A-Za-z-]*)))*)?$"
+    },
+    "range": {
+      "type": "string",
+      "pattern": "^(?:\\^|~|>=|<=|>|<|=)?\\s*(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:\\s+(?:\\^|~|>=|<=|>|<|=)?\\s*(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*))*$",
+      "maxLength": 96
+    },
+    "capability": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "maxLength": 128
+    },
+    "service": {
+      "type": "string",
+      "pattern": "^synex\\.[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*@[1-9][0-9]*$",
+      "maxLength": 128
+    },
+    "nameList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/capability" }
+    },
+    "serviceList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/service" }
+    },
+    "dependencyList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "version"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_-]+$",
+            "maxLength": 64
+          },
+          "version": { "$ref": "#/$defs/range" }
+        }
+      }
+    }
+  }
+}

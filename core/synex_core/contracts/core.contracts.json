@@ -1,0 +1,217 @@
+{
+  "$schema": "../../../schemas/contract.schema.json",
+  "schema": 1,
+  "domain": "synex.core",
+  "contracts": [
+    {
+      "name": "synex.runtime.status",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_core",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.runtime.read",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["state", "revision", "operational", "reasons", "recentTransitions"],
+        "properties": {
+          "state": { "type": "string", "maxLength": 32 },
+          "revision": { "type": "integer", "minimum": 0 },
+          "operational": { "type": "boolean" },
+          "reasons": { "type": "object" },
+          "recentTransitions": { "type": "array", "maxItems": 64, "items": { "type": "object" } }
+        }
+      },
+      "errors": ["CAPABILITY_DENIED", "NOT_READY"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.identity.session.by_source",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_core",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.identity.read",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source"],
+        "properties": {
+          "source": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["found"],
+        "properties": {
+          "found": { "type": "boolean" },
+          "session": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "userId", "state", "source", "sourceGeneration", "version"],
+            "properties": {
+              "id": { "type": "string", "maxLength": 36 },
+              "userId": { "type": "string", "maxLength": 36 },
+              "characterId": { "type": "string", "maxLength": 36 },
+              "state": { "type": "string", "maxLength": 32 },
+              "source": { "type": "integer", "minimum": 0 },
+              "sourceGeneration": { "type": "integer", "minimum": 1 },
+              "version": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      },
+      "errors": ["CAPABILITY_DENIED", "NOT_READY"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.identity.characters.list",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_core",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.identity.read",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sessionId"],
+        "properties": { "sessionId": { "type": "string", "maxLength": 36 } }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["characters"],
+        "properties": {
+          "characters": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "userId", "slot", "status", "firstName", "lastName", "metadata", "version"],
+              "properties": {
+                "id": { "type": "string", "maxLength": 36 },
+                "userId": { "type": "string", "maxLength": 36 },
+                "slot": { "type": "integer", "minimum": 1 },
+                "status": { "type": "string", "maxLength": 16 },
+                "firstName": { "type": "string", "maxLength": 64 },
+                "lastName": { "type": "string", "maxLength": 64 },
+                "dateOfBirth": { "type": "string", "maxLength": 10 },
+                "metadata": { "type": "object" },
+                "version": { "type": "integer", "minimum": 1 }
+              }
+            }
+          }
+        }
+      },
+      "errors": ["CAPABILITY_DENIED", "DATABASE_ERROR", "SESSION_NOT_FOUND"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.identity.characters.create",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_core",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.characters.create",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sessionId", "slot", "firstName", "lastName"],
+        "properties": {
+          "sessionId": { "type": "string", "maxLength": 36 },
+          "slot": { "type": "integer", "minimum": 1, "maximum": 64 },
+          "firstName": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "lastName": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "dateOfBirth": { "type": "string", "minLength": 10, "maxLength": 10 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "userId", "slot", "status", "firstName", "lastName", "metadata", "version"],
+        "properties": {
+          "id": { "type": "string", "maxLength": 36 },
+          "userId": { "type": "string", "maxLength": 36 },
+          "slot": { "type": "integer", "minimum": 1 },
+          "status": { "type": "string", "maxLength": 16 },
+          "firstName": { "type": "string", "maxLength": 64 },
+          "lastName": { "type": "string", "maxLength": 64 },
+          "dateOfBirth": { "type": "string", "maxLength": 10 },
+          "metadata": { "type": "object" },
+          "version": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "errors": ["CAPABILITY_DENIED", "CHARACTER_SLOT_UNAVAILABLE", "DATABASE_ERROR", "INVALID_CHARACTER_NAME", "INVALID_SESSION_STATE", "SESSION_NOT_FOUND", "SESSION_PERSISTENCE_PENDING"],
+      "idempotent": false
+    },
+    {
+      "name": "synex.identity.characters.select",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_core",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.characters.select",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sessionId", "characterId"],
+        "properties": {
+          "sessionId": { "type": "string", "maxLength": 36 },
+          "characterId": { "type": "string", "maxLength": 36 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": ["session", "character"],
+        "properties": {
+          "session": { "type": "object" },
+          "character": { "type": "object" }
+        }
+      },
+      "errors": ["CAPABILITY_DENIED", "CHARACTER_ALREADY_ACTIVE", "CHARACTER_LOAD_FAILED", "CHARACTER_NOT_FOUND", "INVALID_SESSION_STATE", "SESSION_NOT_FOUND", "SESSION_PERSISTENCE_PENDING"],
+      "idempotent": false
+    },
+    {
+      "name": "synex.identity.characters.delete",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_core",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.characters.delete",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sessionId", "characterId"],
+        "properties": {
+          "sessionId": { "type": "string", "maxLength": 36 },
+          "characterId": { "type": "string", "maxLength": 36 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["planId", "characterId", "state"],
+        "properties": {
+          "planId": { "type": "string", "maxLength": 36 },
+          "characterId": { "type": "string", "maxLength": 36 },
+          "state": { "type": "string", "enum": ["completed", "reconciling"] }
+        }
+      },
+      "errors": ["CAPABILITY_DENIED", "CHARACTER_DELETE_BLOCKED", "CHARACTER_DELETE_PREFLIGHT_FAILED", "CHARACTER_NOT_FOUND", "DATABASE_ERROR", "INVALID_SESSION_STATE", "SESSION_NOT_FOUND", "SESSION_PERSISTENCE_PENDING"],
+      "idempotent": false
+    }
+  ]
+}

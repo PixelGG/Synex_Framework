@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "framework": "qb",
+  "records": [
+    {
+      "license": "license:fixture-license-a",
+      "citizenid": "QB-FIXTURE-001",
+      "charinfo": "{\"firstname\":\"Ada\",\"lastname\":\"North\"}",
+      "money": "{\"cash\":1250,\"bank\":8750}",
+      "job": "{\"name\":\"mechanic\",\"grade\":{\"level\":2}}",
+      "gang": "{\"name\":\"none\",\"grade\":{\"level\":0}}",
+      "vehicles": [{ "fixture": true }],
+      "metadata": { "fixture": true }
+    }
+  ]
+}

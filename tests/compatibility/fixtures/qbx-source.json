@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "framework": "qbx",
+  "records": [
+    {
+      "license": "license:fixture-license-b",
+      "citizenid": "QBX-FIXTURE-001",
+      "charinfo": { "firstname": "Lin", "lastname": "West" },
+      "money": { "cash": 400, "bank": 1600 },
+      "job": { "name": "ambulance", "grade": { "level": 1 } },
+      "gang": { "name": "none", "grade": { "level": 0 } },
+      "vehicles": [],
+      "metadata": {}
+    }
+  ]
+}

@@ -1,0 +1,756 @@
+{
+  "$schema": "../../schemas/contract.schema.json",
+  "schema": 1,
+  "domain": "synex.accounts",
+  "contracts": [
+    {
+      "name": "synex.accounts.register_currency",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_accounts",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.accounts.configure",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "currency_code", "display_name", "minor_unit"],
+        "properties": {
+          "idempotency_key": { "type": "string", "pattern": "^[0-9a-f-]{36}$" },
+          "currency_code": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,15}$" },
+          "display_name": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "minor_unit": { "type": "integer", "minimum": 0, "maximum": 6 },
+          "actor_ref": { "type": "string", "maxLength": 128 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["currency_id", "currency_code", "display_name", "minor_unit", "status"],
+        "properties": {
+          "currency_id": { "type": "string" },
+          "currency_code": { "type": "string" },
+          "display_name": { "type": "string" },
+          "minor_unit": { "type": "integer" },
+          "status": { "const": "active" }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "CURRENCY_EXISTS", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.accounts.create",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_accounts",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.accounts.create",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "currency_code", "account_role", "owner_kind", "owner_ref"],
+        "properties": {
+          "idempotency_key": { "type": "string" },
+          "currency_code": { "type": "string" },
+          "account_role": { "enum": ["asset", "mint", "burn"] },
+          "account_key": { "type": "string", "minLength": 3, "maxLength": 64 },
+          "owner_kind": { "enum": ["system", "user", "character", "group"] },
+          "owner_ref": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "metadata_json": { "type": "string", "maxLength": 4096 },
+          "actor_ref": { "type": "string", "maxLength": 128 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["account_id", "currency_code", "account_role", "owner_kind", "owner_ref", "status", "booked_minor", "reserved_minor", "available_minor", "sequence"],
+        "properties": {
+          "account_id": { "type": "string" },
+          "currency_code": { "type": "string" },
+          "account_role": { "type": "string" },
+          "owner_kind": { "type": "string" },
+          "owner_ref": { "type": "string" },
+          "status": { "const": "active" },
+          "booked_minor": { "const": 0 },
+          "reserved_minor": { "const": 0 },
+          "available_minor": { "const": 0 },
+          "sequence": { "const": 0 }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "CURRENCY_NOT_FOUND", "CURRENCY_UNAVAILABLE", "ACCOUNT_KEY_EXISTS", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.accounts.get_snapshot",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_accounts",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.accounts.read",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["account_id"],
+        "properties": { "account_id": { "type": "string" } }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["account_id", "currency_code", "minor_unit", "account_role", "owner_kind", "owner_ref", "status", "booked_minor", "reserved_minor", "available_minor", "sequence", "version", "snapshot_created_at"],
+        "properties": {
+          "account_id": { "type": "string" },
+          "account_key": { "type": "string" },
+          "currency_code": { "type": "string" },
+          "minor_unit": { "type": "integer" },
+          "account_role": { "type": "string" },
+          "owner_kind": { "type": "string" },
+          "owner_ref": { "type": "string" },
+          "status": { "type": "string" },
+          "booked_minor": { "type": "integer" },
+          "reserved_minor": { "type": "integer", "minimum": 0 },
+          "available_minor": { "type": "integer" },
+          "sequence": { "type": "integer", "minimum": 0 },
+          "version": { "type": "integer", "minimum": 1 },
+          "snapshot_created_at": { "type": "string" }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "ACCOUNT_NOT_FOUND", "DATABASE_ERROR"]
+    },
+    {
+      "name": "synex.accounts.transfer",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_accounts",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.accounts.transfer",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "source_account_id", "destination_account_id", "amount_minor"],
+        "properties": {
+          "idempotency_key": { "type": "string" },
+          "source_account_id": { "type": "string" },
+          "destination_account_id": { "type": "string" },
+          "amount_minor": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "reference": { "type": "string", "maxLength": 128 },
+          "actor_ref": { "type": "string", "maxLength": 128 },
+          "metadata_json": { "type": "string", "maxLength": 4096 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["transaction_id", "posting_id", "transaction_kind", "debit_account_id", "credit_account_id", "debit_minor", "credit_minor", "currency_code"],
+        "properties": {
+          "transaction_id": { "type": "string" },
+          "posting_id": { "type": "string" },
+          "transaction_kind": { "type": "string" },
+          "debit_account_id": { "type": "string" },
+          "credit_account_id": { "type": "string" },
+          "debit_minor": { "type": "integer" },
+          "credit_minor": { "type": "integer" },
+          "currency_code": { "type": "string" }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "ACCOUNT_NOT_FOUND", "ACCOUNT_UNAVAILABLE", "CURRENCY_MISMATCH", "INVALID_LEDGER_ROLE", "INSUFFICIENT_FUNDS", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.accounts.debit",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_accounts",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.accounts.transfer",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "account_id", "counterparty_account_id", "amount_minor"],
+        "properties": {
+          "idempotency_key": { "type": "string" },
+          "account_id": { "type": "string" },
+          "counterparty_account_id": { "type": "string" },
+          "amount_minor": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "reference": { "type": "string", "maxLength": 128 },
+          "actor_ref": { "type": "string", "maxLength": 128 },
+          "metadata_json": { "type": "string", "maxLength": 4096 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": ["transaction_id", "posting_id", "debit_minor", "credit_minor"],
+        "properties": {
+          "transaction_id": { "type": "string" },
+          "posting_id": { "type": "string" },
+          "debit_minor": { "type": "integer" },
+          "credit_minor": { "type": "integer" }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "ACCOUNT_NOT_FOUND", "ACCOUNT_UNAVAILABLE", "CURRENCY_MISMATCH", "INVALID_LEDGER_ROLE", "INSUFFICIENT_FUNDS", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.accounts.credit",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_accounts",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.accounts.transfer",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "counterparty_account_id", "account_id", "amount_minor"],
+        "properties": {
+          "idempotency_key": { "type": "string" },
+          "counterparty_account_id": { "type": "string" },
+          "account_id": { "type": "string" },
+          "amount_minor": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "reference": { "type": "string", "maxLength": 128 },
+          "actor_ref": { "type": "string", "maxLength": 128 },
+          "metadata_json": { "type": "string", "maxLength": 4096 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": ["transaction_id", "posting_id", "debit_minor", "credit_minor"],
+        "properties": {
+          "transaction_id": { "type": "string" },
+          "posting_id": { "type": "string" },
+          "debit_minor": { "type": "integer" },
+          "credit_minor": { "type": "integer" }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "ACCOUNT_NOT_FOUND", "ACCOUNT_UNAVAILABLE", "CURRENCY_MISMATCH", "INVALID_LEDGER_ROLE", "INSUFFICIENT_FUNDS", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.accounts.mint",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_accounts",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.accounts.mint",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "mint_account_id", "account_id", "amount_minor"],
+        "properties": {
+          "idempotency_key": { "type": "string" },
+          "mint_account_id": { "type": "string" },
+          "account_id": { "type": "string" },
+          "amount_minor": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "reference": { "type": "string", "maxLength": 128 },
+          "actor_ref": { "type": "string", "maxLength": 128 },
+          "metadata_json": { "type": "string", "maxLength": 4096 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": ["transaction_id", "posting_id", "debit_minor", "credit_minor"],
+        "properties": {
+          "transaction_id": { "type": "string" },
+          "posting_id": { "type": "string" },
+          "debit_minor": { "type": "integer" },
+          "credit_minor": { "type": "integer" }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "ACCOUNT_NOT_FOUND", "ACCOUNT_UNAVAILABLE", "CURRENCY_MISMATCH", "INVALID_LEDGER_ROLE", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.accounts.burn",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_accounts",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.accounts.burn",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "account_id", "burn_account_id", "amount_minor"],
+        "properties": {
+          "idempotency_key": { "type": "string" },
+          "account_id": { "type": "string" },
+          "burn_account_id": { "type": "string" },
+          "amount_minor": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "reference": { "type": "string", "maxLength": 128 },
+          "actor_ref": { "type": "string", "maxLength": 128 },
+          "metadata_json": { "type": "string", "maxLength": 4096 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": ["transaction_id", "posting_id", "debit_minor", "credit_minor"],
+        "properties": {
+          "transaction_id": { "type": "string" },
+          "posting_id": { "type": "string" },
+          "debit_minor": { "type": "integer" },
+          "credit_minor": { "type": "integer" }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "ACCOUNT_NOT_FOUND", "ACCOUNT_UNAVAILABLE", "CURRENCY_MISMATCH", "INVALID_LEDGER_ROLE", "INSUFFICIENT_FUNDS", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.accounts.create_hold",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_accounts",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.accounts.hold",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "account_id", "capture_account_id", "amount_minor", "expires_in_seconds"],
+        "properties": {
+          "idempotency_key": { "type": "string" },
+          "account_id": { "type": "string" },
+          "capture_account_id": { "type": "string" },
+          "amount_minor": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "expires_in_seconds": { "type": "integer", "minimum": 1, "maximum": 604800 },
+          "reference": { "type": "string", "maxLength": 128 },
+          "actor_ref": { "type": "string", "maxLength": 128 },
+          "metadata_json": { "type": "string", "maxLength": 4096 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": ["hold_id", "account_id", "capture_account_id", "amount_minor", "currency_code", "state", "expires_in_seconds"],
+        "properties": {
+          "hold_id": { "type": "string" },
+          "account_id": { "type": "string" },
+          "capture_account_id": { "type": "string" },
+          "amount_minor": { "type": "integer" },
+          "currency_code": { "type": "string" },
+          "state": { "type": "string" },
+          "expires_in_seconds": { "type": "integer" }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "ACCOUNT_NOT_FOUND", "ACCOUNT_UNAVAILABLE", "CURRENCY_MISMATCH", "INSUFFICIENT_FUNDS", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.accounts.get_hold",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_accounts",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.accounts.read",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["hold_id"],
+        "properties": { "hold_id": { "type": "string" } }
+      },
+      "output": {
+        "type": "object",
+        "required": ["hold_id", "account_id", "capture_account_id", "amount_minor", "state", "metadata_json", "expires_at", "created_at", "event_id", "event_occurred_at"],
+        "properties": {
+          "hold_id": { "type": "string" },
+          "account_id": { "type": "string" },
+          "capture_account_id": { "type": "string" },
+          "amount_minor": { "type": "integer" },
+          "state": { "type": "string" },
+          "metadata_json": { "type": "string" },
+          "expires_at": { "type": "string" },
+          "created_at": { "type": "string" },
+          "event_id": { "type": "string" },
+          "event_occurred_at": { "type": "string" }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "HOLD_NOT_FOUND", "DATABASE_ERROR"]
+    },
+    {
+      "name": "synex.accounts.capture_hold",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_accounts",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.accounts.hold",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "hold_id"],
+        "properties": {
+          "idempotency_key": { "type": "string" },
+          "hold_id": { "type": "string" },
+          "reference": { "type": "string", "maxLength": 128 },
+          "actor_ref": { "type": "string", "maxLength": 128 },
+          "metadata_json": { "type": "string", "maxLength": 4096 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": ["hold_id", "state", "transaction_id", "posting_id", "debit_account_id", "credit_account_id", "amount_minor"],
+        "properties": {
+          "hold_id": { "type": "string" },
+          "state": { "type": "string" },
+          "transaction_id": { "type": "string" },
+          "posting_id": { "type": "string" },
+          "debit_account_id": { "type": "string" },
+          "credit_account_id": { "type": "string" },
+          "amount_minor": { "type": "integer" }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "HOLD_NOT_FOUND", "HOLD_EXPIRED", "HOLD_TERMINAL", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.accounts.release_hold",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_accounts",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.accounts.hold",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "hold_id"],
+        "properties": {
+          "idempotency_key": { "type": "string" },
+          "hold_id": { "type": "string" },
+          "reference": { "type": "string", "maxLength": 128 },
+          "actor_ref": { "type": "string", "maxLength": 128 },
+          "metadata_json": { "type": "string", "maxLength": 4096 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "required": ["hold_id", "state", "account_id", "amount_minor"],
+        "properties": {
+          "hold_id": { "type": "string" },
+          "state": { "type": "string" },
+          "account_id": { "type": "string" },
+          "amount_minor": { "type": "integer" }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "HOLD_NOT_FOUND", "HOLD_TERMINAL", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.accounts.reverse",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_accounts",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.accounts.reverse",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "transaction_id", "reason"],
+        "properties": {
+          "idempotency_key": { "type": "string", "pattern": "^[0-9a-f-]{36}$" },
+          "transaction_id": { "type": "string", "pattern": "^[0-9a-f-]{36}$" },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "actor_ref": { "type": "string", "maxLength": 128 },
+          "metadata_json": { "type": "string", "maxLength": 4096 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reversal_id", "original_transaction_id", "transaction_id", "posting_id", "debit_account_id", "credit_account_id", "amount_minor", "currency_code"],
+        "properties": {
+          "reversal_id": { "type": "string" },
+          "original_transaction_id": { "type": "string" },
+          "transaction_id": { "type": "string" },
+          "posting_id": { "type": "string" },
+          "debit_account_id": { "type": "string" },
+          "credit_account_id": { "type": "string" },
+          "amount_minor": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "currency_code": { "type": "string" }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "TRANSACTION_NOT_FOUND", "TRANSACTION_ALREADY_REVERSED", "REVERSAL_NOT_REVERSIBLE", "ACCOUNT_UNAVAILABLE", "INSUFFICIENT_FUNDS", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.accounts.create_access_role",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_accounts",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.accounts.access.manage",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "account_id", "role_key", "display_name", "permissions"],
+        "properties": {
+          "idempotency_key": { "type": "string" },
+          "account_id": { "type": "string" },
+          "role_key": { "type": "string", "minLength": 2, "maxLength": 48 },
+          "display_name": { "type": "string", "minLength": 1, "maxLength": 96 },
+          "permissions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 7,
+            "uniqueItems": true,
+            "items": { "enum": ["view", "deposit", "withdraw", "transfer", "history", "manage", "close"] }
+          },
+          "actor_ref": { "type": "string", "maxLength": 128 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role_id", "account_id", "role_key", "display_name", "permissions", "version"],
+        "properties": {
+          "role_id": { "type": "string" },
+          "account_id": { "type": "string" },
+          "role_key": { "type": "string" },
+          "display_name": { "type": "string" },
+          "permissions": {
+            "type": "array",
+            "maxItems": 7,
+            "uniqueItems": true,
+            "items": { "enum": ["view", "deposit", "withdraw", "transfer", "history", "manage", "close"] }
+          },
+          "version": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "ACCOUNT_NOT_FOUND", "ACCESS_ROLE_EXISTS", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.accounts.grant_access",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_accounts",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.accounts.access.manage",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "account_id", "role_id", "principal_kind", "principal_ref"],
+        "properties": {
+          "idempotency_key": { "type": "string" },
+          "account_id": { "type": "string" },
+          "role_id": { "type": "string" },
+          "principal_kind": { "enum": ["system", "resource", "user", "character", "group"] },
+          "principal_ref": { "type": "string", "minLength": 2, "maxLength": 128 },
+          "valid_for_seconds": { "type": "integer", "minimum": 1, "maximum": 31536000 },
+          "actor_ref": { "type": "string", "maxLength": 128 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["grant_id", "account_id", "role_id", "principal_kind", "principal_ref", "status", "version"],
+        "properties": {
+          "grant_id": { "type": "string" },
+          "account_id": { "type": "string" },
+          "role_id": { "type": "string" },
+          "principal_kind": { "type": "string" },
+          "principal_ref": { "type": "string" },
+          "status": { "const": "active" },
+          "version": { "type": "integer", "minimum": 1 },
+          "valid_for_seconds": { "type": "integer", "minimum": 1, "maximum": 31536000 }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "ACCESS_ROLE_NOT_FOUND", "ACCESS_GRANT_EXISTS", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.accounts.revoke_access",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_accounts",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.accounts.access.manage",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "grant_id", "reason", "actor_ref"],
+        "properties": {
+          "idempotency_key": { "type": "string" },
+          "grant_id": { "type": "string" },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "actor_ref": { "type": "string", "maxLength": 128 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["grant_id", "account_id", "role_id", "principal_kind", "principal_ref", "status", "version"],
+        "properties": {
+          "grant_id": { "type": "string" },
+          "account_id": { "type": "string" },
+          "role_id": { "type": "string" },
+          "principal_kind": { "type": "string" },
+          "principal_ref": { "type": "string" },
+          "status": { "const": "revoked" },
+          "version": { "type": "integer", "minimum": 2 }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "ACCESS_GRANT_NOT_FOUND", "ACCESS_GRANT_REVOKED", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.accounts.get_access",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_accounts",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.accounts.access.read",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["account_id", "principal_kind", "principal_ref"],
+        "properties": {
+          "account_id": { "type": "string" },
+          "principal_kind": { "enum": ["system", "resource", "user", "character", "group"] },
+          "principal_ref": { "type": "string", "minLength": 2, "maxLength": 128 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["account_id", "principal_kind", "principal_ref", "granted", "permissions"],
+        "properties": {
+          "account_id": { "type": "string" },
+          "principal_kind": { "type": "string" },
+          "principal_ref": { "type": "string" },
+          "granted": { "type": "boolean" },
+          "grant_id": { "type": "string" },
+          "grant_version": { "type": "integer", "minimum": 1 },
+          "role_id": { "type": "string" },
+          "role_key": { "type": "string" },
+          "role_display_name": { "type": "string" },
+          "valid_until": { "type": "string" },
+          "permissions": {
+            "type": "array",
+            "maxItems": 7,
+            "uniqueItems": true,
+            "items": { "enum": ["view", "deposit", "withdraw", "transfer", "history", "manage", "close"] }
+          }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "ACCOUNT_NOT_FOUND", "DATABASE_ERROR"]
+    },
+    {
+      "name": "synex.accounts.run_reconciliation",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_accounts",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.accounts.integrity.run",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "currency_code"],
+        "properties": {
+          "idempotency_key": { "type": "string" },
+          "currency_code": { "type": "string", "minLength": 2, "maxLength": 16 },
+          "actor_ref": { "type": "string", "maxLength": 128 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["run_id", "currency_id", "currency_code", "model_version", "cutoff_posting_id", "transaction_count", "posting_count", "total_debit_minor", "total_credit_minor", "total_booked_minor", "status", "finding_count", "findings"],
+        "properties": {
+          "run_id": { "type": "string" },
+          "currency_id": { "type": "string" },
+          "currency_code": { "type": "string" },
+          "model_version": { "type": "integer", "minimum": 2 },
+          "cutoff_posting_id": { "type": "string", "minLength": 1, "maxLength": 20 },
+          "transaction_count": { "type": "string", "minLength": 1, "maxLength": 20 },
+          "posting_count": { "type": "string", "minLength": 1, "maxLength": 20 },
+          "total_debit_minor": { "type": "string", "minLength": 1, "maxLength": 38 },
+          "total_credit_minor": { "type": "string", "minLength": 1, "maxLength": 38 },
+          "total_booked_minor": { "type": "string", "minLength": 1, "maxLength": 38 },
+          "status": { "enum": ["healthy", "warn"] },
+          "finding_count": { "type": "integer", "minimum": 0, "maximum": 5 },
+          "findings": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["rule", "severity"],
+              "properties": {
+                "rule": { "enum": ["ledger_imbalance", "snapshot_sum_drift", "negative_asset_balance", "reserved_exceeds_booked", "orphan_transaction"] },
+                "severity": { "const": "warn" }
+              }
+            }
+          }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "CURRENCY_NOT_FOUND", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.accounts.get_integrity",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_accounts",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.accounts.integrity.read",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["currency_code"],
+        "properties": { "currency_code": { "type": "string", "minLength": 2, "maxLength": 16 } }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["currency_id", "currency_code", "model_version", "cutoff_posting_id", "transaction_count", "posting_count", "total_debit_minor", "total_credit_minor", "total_booked_minor", "negative_asset_count", "reserved_exceeds_booked_count", "orphan_transaction_count", "finding_count", "status", "generated_at", "findings"],
+        "properties": {
+          "currency_id": { "type": "string" },
+          "currency_code": { "type": "string" },
+          "model_version": { "type": "integer", "minimum": 1 },
+          "cutoff_posting_id": { "type": "string", "minLength": 1, "maxLength": 20 },
+          "transaction_count": { "type": "string", "minLength": 1, "maxLength": 20 },
+          "posting_count": { "type": "string", "minLength": 1, "maxLength": 20 },
+          "total_debit_minor": { "type": "string", "minLength": 1, "maxLength": 38 },
+          "total_credit_minor": { "type": "string", "minLength": 1, "maxLength": 38 },
+          "total_booked_minor": { "type": "string", "minLength": 1, "maxLength": 38 },
+          "negative_asset_count": { "type": "string", "minLength": 1, "maxLength": 20 },
+          "reserved_exceeds_booked_count": { "type": "string", "minLength": 1, "maxLength": 20 },
+          "orphan_transaction_count": { "type": "string", "minLength": 1, "maxLength": 20 },
+          "finding_count": { "type": "integer", "minimum": 0, "maximum": 5 },
+          "status": { "enum": ["healthy", "warn"] },
+          "generated_at": { "type": "string" },
+          "findings": {
+            "type": "array",
+            "maxItems": 16,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["finding_id", "rule", "severity", "details_json", "created_at"],
+              "properties": {
+                "finding_id": { "type": "string" },
+                "rule": { "enum": ["ledger_imbalance", "snapshot_sum_drift", "negative_asset_balance", "reserved_exceeds_booked", "orphan_transaction"] },
+                "severity": { "const": "warn" },
+                "aggregate_type": { "type": "string", "maxLength": 32 },
+                "aggregate_id": { "type": "string", "maxLength": 128 },
+                "details_json": { "type": "string", "maxLength": 4096 },
+                "created_at": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "CURRENCY_NOT_FOUND", "DATABASE_ERROR"]
+    }
+  ]
+}

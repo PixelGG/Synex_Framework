@@ -1,0 +1,43 @@
+{
+  "name": "synex-framework",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "synex": ".build/tools/cli/src/bin.js"
+  },
+  "synex": {
+    "apiVersion": "1.0.0"
+  },
+  "engines": {
+    "node": ">=22.12.0",
+    "npm": ">=10.0.0"
+  },
+  "scripts": {
+    "build": "npm run generate && tsc --build",
+    "check": "npm run generate:check && tsc --build --pretty false && npm run validate",
+    "generate": "node --experimental-strip-types tools/cli/src/bin.ts contract generate",
+    "generate:check": "node --experimental-strip-types tools/cli/src/bin.ts contract generate --check",
+    "validate": "node --experimental-strip-types tools/cli/src/bin.ts validate",
+    "test": "node tools/test-runner.mjs",
+    "test:lua": "node tools/test-runner.mjs lua",
+    "test:database": "node tools/test-runner.mjs database",
+    "test:compatibility": "node tools/test-runner.mjs compatibility",
+    "test:tooling": "node tools/test-runner.mjs tooling",
+    "migrate": "node --experimental-strip-types tools/migrator/src/bin.ts",
+    "security": "node --experimental-strip-types tools/cli/src/bin.ts security scan .",
+    "certify": "node --experimental-strip-types tools/cli/src/bin.ts certify repository",
+    "benchmark": "node --experimental-strip-types tools/cli/src/bin.ts benchmark"
+  },
+  "dependencies": {
+    "ajv": "8.20.0",
+    "mysql2": "3.23.4"
+  },
+  "devDependencies": {
+    "@types/luaparse": "0.2.13",
+    "@types/node": "24.13.3",
+    "luaparse": "0.3.1",
+    "typescript": "7.0.2",
+    "wasmoon": "1.16.0"
+  }
+}

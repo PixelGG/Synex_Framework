@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "framework": "esx",
+  "fields": {
+    "userId": "identifier",
+    "characterId": "character",
+    "firstName": "firstname",
+    "lastName": "lastname",
+    "money": { "cash": "accounts.money", "bank": "accounts.bank" },
+    "job": { "name": "job.name", "grade": "job.grade" },
+    "group": { "name": "permission", "grade": "permission_grade" },
+    "vehicles": "vehicles",
+    "metadata": "metadata"
+  }
+}

@@ -1,0 +1,392 @@
+{
+  "$schema": "../../schemas/contract.schema.json",
+  "schema": 1,
+  "domain": "synex.groups",
+  "contracts": [
+    {
+      "name": "synex.groups.create",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_groups",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.groups.manage",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "group_key", "display_name", "group_type"],
+        "properties": {
+          "idempotency_key": { "type": "string", "pattern": "^[0-9a-f-]{36}$" },
+          "group_key": { "type": "string", "pattern": "^[a-z][a-z0-9_]{2,63}$" },
+          "display_name": { "type": "string", "minLength": 1, "maxLength": 96 },
+          "group_type": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,31}$" },
+          "created_by_ref": { "type": "string", "pattern": "^[0-9a-f-]{36}$" },
+          "metadata_json": { "type": "string", "maxLength": 4096 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["group_id", "group_key", "status", "version"],
+        "properties": {
+          "group_id": { "type": "string" },
+          "group_key": { "type": "string" },
+          "status": { "const": "active" },
+          "version": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "GROUP_EXISTS", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.groups.get",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_groups",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.groups.read",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["group_id"],
+        "properties": { "group_id": { "type": "string", "pattern": "^[0-9a-f-]{36}$" } }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["group_id", "group_key", "display_name", "group_type", "status", "metadata_json", "version", "read_model_version", "created_at", "updated_at"],
+        "properties": {
+          "group_id": { "type": "string" },
+          "group_key": { "type": "string" },
+          "display_name": { "type": "string" },
+          "group_type": { "type": "string" },
+          "status": { "type": "string" },
+          "created_by_ref": { "type": ["string", "null"] },
+          "metadata_json": { "type": "string" },
+          "version": { "type": "integer" },
+          "read_model_version": { "type": "integer", "minimum": 1 },
+          "created_at": { "type": "string" },
+          "updated_at": { "type": "string" }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "GROUP_NOT_FOUND", "DATABASE_ERROR"]
+    },
+    {
+      "name": "synex.groups.add_membership",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_groups",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.groups.manage",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "group_id", "subject_kind", "subject_id", "role_key"],
+        "properties": {
+          "idempotency_key": { "type": "string" },
+          "group_id": { "type": "string" },
+          "subject_kind": { "enum": ["user", "character"] },
+          "subject_id": { "type": "string" },
+          "role_key": { "type": "string", "minLength": 2, "maxLength": 48 },
+          "actor_ref": { "type": "string" }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["membership_id", "group_id", "status", "version"],
+        "properties": {
+          "membership_id": { "type": "string" },
+          "group_id": { "type": "string" },
+          "role_key": { "type": "string" },
+          "status": { "type": "string" },
+          "version": { "type": "integer" }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "MEMBERSHIP_EXISTS", "GRADE_NOT_FOUND", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.groups.change_membership",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_groups",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.groups.manage",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "group_id", "subject_kind", "subject_id", "role_key"],
+        "properties": {
+          "idempotency_key": { "type": "string" },
+          "group_id": { "type": "string" },
+          "subject_kind": { "enum": ["user", "character"] },
+          "subject_id": { "type": "string" },
+          "role_key": { "type": "string", "minLength": 2, "maxLength": 48 },
+          "actor_ref": { "type": "string" }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["membership_id", "group_id", "status", "version"],
+        "properties": {
+          "membership_id": { "type": "string" },
+          "group_id": { "type": "string" },
+          "role_key": { "type": "string" },
+          "status": { "type": "string" },
+          "version": { "type": "integer" }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "MEMBERSHIP_NOT_FOUND", "MEMBERSHIP_REMOVED", "GRADE_NOT_FOUND", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.groups.remove_membership",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_groups",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.groups.manage",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "group_id", "subject_kind", "subject_id"],
+        "properties": {
+          "idempotency_key": { "type": "string" },
+          "group_id": { "type": "string" },
+          "subject_kind": { "enum": ["user", "character"] },
+          "subject_id": { "type": "string" },
+          "actor_ref": { "type": "string" }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["membership_id", "group_id", "status", "version"],
+        "properties": {
+          "membership_id": { "type": "string" },
+          "group_id": { "type": "string" },
+          "status": { "const": "removed" },
+          "version": { "type": "integer" }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "MEMBERSHIP_NOT_FOUND", "MEMBERSHIP_REMOVED", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.groups.create_grade",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_groups",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.groups.grades.manage",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "group_id", "grade_key", "display_name", "rank_value"],
+        "properties": {
+          "idempotency_key": { "type": "string", "pattern": "^[0-9a-f-]{36}$" },
+          "group_id": { "type": "string", "pattern": "^[0-9a-f-]{36}$" },
+          "grade_key": { "type": "string", "pattern": "^[a-z][a-z0-9_]{1,47}$" },
+          "display_name": { "type": "string", "minLength": 1, "maxLength": 96 },
+          "rank_value": { "type": "integer", "minimum": -32768, "maximum": 32767 },
+          "actor_ref": { "type": "string", "pattern": "^[0-9a-f-]{36}$" }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["grade_id", "group_id", "grade_key", "display_name", "rank_value", "status", "version"],
+        "properties": {
+          "grade_id": { "type": "string" },
+          "group_id": { "type": "string" },
+          "grade_key": { "type": "string" },
+          "display_name": { "type": "string" },
+          "rank_value": { "type": "integer" },
+          "status": { "const": "active" },
+          "version": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "GROUP_NOT_FOUND", "GROUP_UNAVAILABLE", "GRADE_EXISTS", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.groups.set_grade_capability",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_groups",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.groups.grades.manage",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "grade_id", "capability", "effect"],
+        "properties": {
+          "idempotency_key": { "type": "string", "pattern": "^[0-9a-f-]{36}$" },
+          "grade_id": { "type": "string", "pattern": "^[0-9a-f-]{36}$" },
+          "capability": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "effect": { "enum": ["allow", "deny"] },
+          "actor_ref": { "type": "string", "pattern": "^[0-9a-f-]{36}$" }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["grade_id", "group_id", "capability", "effect"],
+        "properties": {
+          "grade_id": { "type": "string" },
+          "group_id": { "type": "string" },
+          "capability": { "type": "string" },
+          "effect": { "enum": ["allow", "deny"] }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "GRADE_NOT_FOUND", "GRADE_CAPABILITY_LIMIT", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.groups.set_primary_membership",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_groups",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.groups.memberships.primary",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["idempotency_key", "group_id", "subject_kind", "subject_id"],
+        "properties": {
+          "idempotency_key": { "type": "string", "pattern": "^[0-9a-f-]{36}$" },
+          "group_id": { "type": "string", "pattern": "^[0-9a-f-]{36}$" },
+          "subject_kind": { "enum": ["user", "character"] },
+          "subject_id": { "type": "string", "pattern": "^[0-9a-f-]{36}$" },
+          "actor_ref": { "type": "string", "pattern": "^[0-9a-f-]{36}$" }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["membership_id", "group_id", "subject_kind", "subject_id", "primary_version"],
+        "properties": {
+          "membership_id": { "type": "string" },
+          "group_id": { "type": "string" },
+          "subject_kind": { "type": "string" },
+          "subject_id": { "type": "string" },
+          "primary_version": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "IDEMPOTENCY_CONFLICT", "OPERATION_IN_PROGRESS", "MEMBERSHIP_NOT_FOUND", "WRITE_CONFLICT", "DATABASE_ERROR"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.groups.get_read_model",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_groups",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.groups.read",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["group_id", "subject_kind", "subject_id"],
+        "properties": {
+          "group_id": { "type": "string" },
+          "subject_kind": { "enum": ["user", "character"] },
+          "subject_id": { "type": "string" }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["group_id", "group_key", "read_model_version", "invalidated_at", "membership_id", "membership_status", "membership_version", "grade_id", "grade_key", "grade_display_name", "rank_value", "grade_version", "is_primary", "capabilities"],
+        "properties": {
+          "group_id": { "type": "string" },
+          "group_key": { "type": "string" },
+          "read_model_version": { "type": "integer", "minimum": 1 },
+          "invalidated_at": { "type": "string" },
+          "membership_id": { "type": "string" },
+          "membership_status": { "type": "string" },
+          "membership_version": { "type": "integer" },
+          "grade_id": { "type": "string" },
+          "grade_key": { "type": "string" },
+          "grade_display_name": { "type": "string" },
+          "rank_value": { "type": "integer" },
+          "grade_version": { "type": "integer" },
+          "is_primary": { "type": "boolean" },
+          "primary_version": { "type": "integer" },
+          "capabilities": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["capability", "effect", "version"],
+              "properties": {
+                "capability": { "type": "string" },
+                "effect": { "enum": ["allow", "deny"] },
+                "version": { "type": "integer" }
+              }
+            }
+          }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "MEMBERSHIP_NOT_FOUND", "READ_MODEL_TOO_LARGE", "DATABASE_ERROR"]
+    },
+    {
+      "name": "synex.groups.check_capability",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_groups",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.groups.read",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["group_id", "subject_kind", "subject_id", "capability"],
+        "properties": {
+          "group_id": { "type": "string" },
+          "subject_kind": { "enum": ["user", "character"] },
+          "subject_id": { "type": "string" },
+          "capability": { "type": "string", "minLength": 1, "maxLength": 128 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["group_id", "membership_id", "grade_id", "capability", "allowed", "denied", "read_model_version", "matched_rules"],
+        "properties": {
+          "group_id": { "type": "string" },
+          "membership_id": { "type": "string" },
+          "grade_id": { "type": "string" },
+          "capability": { "type": "string" },
+          "allowed": { "type": "boolean" },
+          "denied": { "type": "boolean" },
+          "read_model_version": { "type": "integer" },
+          "matched_rules": {
+            "type": "array",
+            "maxItems": 128,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["capability", "effect"],
+              "properties": {
+                "capability": { "type": "string" },
+                "effect": { "enum": ["allow", "deny"] }
+              }
+            }
+          }
+        }
+      },
+      "errors": ["VALIDATION_FAILED", "MEMBERSHIP_NOT_FOUND", "READ_MODEL_TOO_LARGE", "DATABASE_ERROR"]
+    }
+  ]
+}

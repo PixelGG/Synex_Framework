@@ -1,0 +1,304 @@
+{
+  "$schema": "../../../schemas/contract.schema.json",
+  "schema": 1,
+  "domain": "synex.entities",
+  "contracts": [
+    {
+      "name": "synex.entities.spawn",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_entities",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.entities.spawn",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entityType", "model", "position", "owner"],
+        "properties": {
+          "entityType": { "enum": ["vehicle", "ped", "object"] },
+          "model": { "type": "integer", "minimum": -2147483648, "maximum": 4294967295 },
+          "position": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["x", "y", "z"],
+            "properties": {
+              "x": { "type": "number", "minimum": -20000, "maximum": 20000 },
+              "y": { "type": "number", "minimum": -20000, "maximum": 20000 },
+              "z": { "type": "number", "minimum": -20000, "maximum": 20000 }
+            }
+          },
+          "heading": { "type": "number", "minimum": -360, "maximum": 360 },
+          "bucket": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+          "bucketGeneration": {
+            "oneOf": [
+              { "const": 0 },
+              { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" }
+            ]
+          },
+          "vehicleType": { "enum": ["automobile", "bike", "boat", "heli", "plane", "submarine", "trailer"] },
+          "pedType": { "type": "integer", "minimum": 0, "maximum": 29 },
+          "doorFlag": { "type": "boolean" },
+          "persistent": { "type": "boolean" },
+          "persistentKey": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "owner": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "id"],
+            "properties": {
+              "type": { "enum": ["character", "resource", "system", "user"] },
+              "id": { "type": "string", "minLength": 1, "maxLength": 64 }
+            }
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entityId", "generation", "netId", "entityType", "model", "bucket", "persistent"],
+        "properties": {
+          "entityId": { "type": "string", "minLength": 8, "maxLength": 64 },
+          "generation": { "type": "integer", "minimum": 1 },
+          "netId": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "entityType": { "enum": ["vehicle", "ped", "object"] },
+          "model": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+          "bucket": { "type": "integer", "minimum": 0 },
+          "persistent": { "type": "boolean" },
+          "networkOwner": { "type": "integer", "minimum": -1, "maximum": 65535 }
+        }
+      },
+      "errors": ["CONFLICT", "FORBIDDEN", "INTERNAL_ERROR", "INVALID_ARGUMENT", "NOT_FOUND", "RATE_LIMITED", "STALE_BUCKET", "STALE_ENTITY", "STALE_RESOURCE", "UNAVAILABLE"],
+      "idempotent": false,
+      "rateLimit": { "capacity": 12, "refillPerSecond": 3 }
+    },
+    {
+      "name": "synex.entities.get",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_entities",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.entities.read",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entityId", "generation"],
+        "properties": {
+          "entityId": { "type": "string", "minLength": 8, "maxLength": 64 },
+          "generation": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "output": { "type": "object" },
+      "errors": ["FORBIDDEN", "INVALID_ARGUMENT", "NOT_FOUND", "RATE_LIMITED", "STALE_ENTITY", "STALE_RESOURCE", "UNAVAILABLE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 60, "refillPerSecond": 20 }
+    },
+    {
+      "name": "synex.entities.resolve_persistent",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_entities",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.entities.read",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["persistentKey"],
+        "properties": {
+          "persistentKey": { "type": "string", "minLength": 1, "maxLength": 128 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entityId", "generation", "netId", "entityType", "model", "bucket", "persistent"],
+        "properties": {
+          "entityId": { "type": "string", "minLength": 8, "maxLength": 64 },
+          "generation": { "type": "integer", "minimum": 1 },
+          "netId": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "entityType": { "enum": ["vehicle", "ped", "object"] },
+          "model": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+          "bucket": { "type": "integer", "minimum": 0 },
+          "persistent": { "const": true },
+          "networkOwner": { "type": "integer", "minimum": -1, "maximum": 65535 }
+        }
+      },
+      "errors": ["CONFLICT", "FORBIDDEN", "INVALID_ARGUMENT", "NOT_FOUND", "RATE_LIMITED", "STALE_ENTITY", "STALE_RESOURCE", "UNAVAILABLE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 60, "refillPerSecond": 20 }
+    },
+    {
+      "name": "synex.entities.delete",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_entities",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.entities.delete",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entityId", "generation"],
+        "properties": {
+          "entityId": { "type": "string", "minLength": 8, "maxLength": 64 },
+          "generation": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entityId", "deleted"],
+        "properties": {
+          "entityId": { "type": "string" },
+          "deleted": { "const": true }
+        }
+      },
+      "errors": ["CONFLICT", "FORBIDDEN", "INVALID_ARGUMENT", "NOT_FOUND", "RATE_LIMITED", "STALE_ENTITY", "STALE_RESOURCE", "UNAVAILABLE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 24, "refillPerSecond": 8 }
+    },
+    {
+      "name": "synex.entities.bucket.create",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_entities",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.entities.bucket.create",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "purpose": { "type": "string", "minLength": 1, "maxLength": 64 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["bucket", "generation", "lockdown", "populationEnabled"],
+        "properties": {
+          "bucket": { "type": "integer", "minimum": 1 },
+          "generation": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+          "lockdown": { "const": "strict" },
+          "populationEnabled": { "const": false }
+        }
+      },
+      "errors": ["CONFLICT", "FORBIDDEN", "INVALID_ARGUMENT", "RATE_LIMITED", "STALE_RESOURCE", "UNAVAILABLE"],
+      "idempotent": false,
+      "rateLimit": { "capacity": 8, "refillPerSecond": 1 }
+    },
+    {
+      "name": "synex.entities.bucket.destroy",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_entities",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.entities.bucket.destroy",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["bucket", "generation"],
+        "properties": {
+          "bucket": { "type": "integer", "minimum": 1 },
+          "generation": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["bucket", "destroyed"],
+        "properties": {
+          "bucket": { "type": "integer" },
+          "destroyed": { "const": true }
+        }
+      },
+      "errors": ["CONFLICT", "FORBIDDEN", "INVALID_ARGUMENT", "NOT_FOUND", "RATE_LIMITED", "STALE_BUCKET", "STALE_ENTITY", "STALE_RESOURCE", "UNAVAILABLE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 12, "refillPerSecond": 3 }
+    },
+    {
+      "name": "synex.entities.bucket.move_entity",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_entities",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.entities.bucket.entity.move",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entityId", "generation", "bucket", "bucketGeneration"],
+        "properties": {
+          "entityId": { "type": "string", "minLength": 8, "maxLength": 64 },
+          "generation": { "type": "integer", "minimum": 1 },
+          "bucket": { "type": "integer", "minimum": 0 },
+          "bucketGeneration": {
+            "oneOf": [
+              { "const": 0 },
+              { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" }
+            ]
+          }
+        }
+      },
+      "output": { "type": "object" },
+      "errors": ["CONFLICT", "FORBIDDEN", "INVALID_ARGUMENT", "NOT_FOUND", "RATE_LIMITED", "STALE_BUCKET", "STALE_ENTITY", "STALE_RESOURCE", "UNAVAILABLE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 30, "refillPerSecond": 10 }
+    },
+    {
+      "name": "synex.entities.bucket.move_player",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_entities",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.entities.bucket.player.move",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "bucket", "bucketGeneration"],
+        "properties": {
+          "source": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "bucket": { "type": "integer", "minimum": 0 },
+          "bucketGeneration": {
+            "oneOf": [
+              { "const": 0 },
+              { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" }
+            ]
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "bucket"],
+        "properties": {
+          "source": { "type": "integer" },
+          "bucket": { "type": "integer" }
+        }
+      },
+      "errors": ["CONFLICT", "FORBIDDEN", "INVALID_ARGUMENT", "NOT_FOUND", "RATE_LIMITED", "STALE_BUCKET", "STALE_RESOURCE", "UNAVAILABLE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 30, "refillPerSecond": 10 }
+    },
+    {
+      "name": "synex.entities.health",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_entities",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.entities.read",
+      "input": {
+        "type": "object",
+        "additionalProperties": false
+      },
+      "output": { "type": "object" },
+      "errors": ["FORBIDDEN", "RATE_LIMITED", "STALE_RESOURCE", "UNAVAILABLE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 30, "refillPerSecond": 10 }
+    }
+  ]
+}

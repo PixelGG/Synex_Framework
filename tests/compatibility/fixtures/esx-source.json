@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "framework": "esx",
+  "records": [
+    {
+      "identifier": "license:fixture-license-c",
+      "character": "ESX-FIXTURE-001",
+      "firstname": "Mira",
+      "lastname": "Stone",
+      "accounts": "{\"money\":900,\"bank\":4100}",
+      "job": "{\"name\":\"taxi\",\"grade\":3}",
+      "permission": "user",
+      "permission_grade": 0,
+      "vehicles": [],
+      "metadata": {}
+    }
+  ]
+}

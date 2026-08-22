@@ -1,0 +1,160 @@
+name: Synex Framework CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "core/**"
+      - "resources/**"
+      - "libraries/**"
+      - "packages/**"
+      - "schemas/**"
+      - "tools/**"
+      - "tests/**"
+      - "examples/**"
+      - "docs/**"
+      - "README.md"
+      - "package.json"
+      - "package-lock.json"
+      - ".npmrc"
+      - "tsconfig.json"
+      - ".luarc.json"
+      - ".github/workflows/framework-ci.yml"
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "core/**"
+      - "resources/**"
+      - "libraries/**"
+      - "packages/**"
+      - "schemas/**"
+      - "tools/**"
+      - "tests/**"
+      - "examples/**"
+      - "docs/**"
+      - "README.md"
+      - "package.json"
+      - "package-lock.json"
+      - ".npmrc"
+      - "tsconfig.json"
+      - ".luarc.json"
+      - ".github/workflows/framework-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: framework-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Contracts, build, tests, and policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Verify generated contracts are current
+        run: npm run generate:check
+
+      - name: Build TypeScript
+        run: npx tsc --build --pretty false
+
+      - name: Validate manifests and contracts
+        run: npm run validate
+
+      - name: Run headless Lua runtime tests
+        run: npm run test:lua
+
+      - name: Run lifecycle and graceful-reload tests
+        run: node tools/test-runner.mjs core
+
+      - name: Run deterministic platform stress tests
+        run: node tools/test-runner.mjs stress
+
+      - name: Run developer-tooling tests
+        run: node tools/test-runner.mjs tooling
+
+      - name: Run entity and control-plane tests
+        run: node tools/test-runner.mjs entities
+
+      - name: Run compatibility and migration-planner tests
+        run: node tools/test-runner.mjs compatibility
+
+      - name: Run compatibility analyzer
+        run: node --experimental-strip-types tools/cli/src/bin.ts compat scan .
+
+      - name: Validate documentation, links, and manifest file coverage
+        run: node tools/test-runner.mjs documentation
+
+      - name: Run static security analyzer
+        run: npm run security
+
+      - name: Certify repository
+        run: npm run certify
+
+      - name: Audit Node.js dependency graph
+        run: npm audit --audit-level=high
+
+  database:
+    name: MariaDB migrations and invariants
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      mariadb:
+        image: mariadb:11.8.8
+        env:
+          MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "1"
+          MARIADB_DATABASE: synex_test_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    env:
+      SYNEX_TEST_DATABASE_LIVE: "1"
+      SYNEX_TEST_DATABASE_URL: mysql://root@127.0.0.1:3306/synex_test_ci
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Build database tests
+        run: npx tsc --build --pretty false
+
+      - name: Apply migrations and test database invariants
+        run: npm run test:database

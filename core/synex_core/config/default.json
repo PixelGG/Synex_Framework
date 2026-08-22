@@ -1,0 +1,70 @@
+{
+  "$schema": "../../../schemas/config.schema.json",
+  "environment": "production",
+  "strict": true,
+  "instanceId": "",
+  "database": {
+    "minimumOxmysqlVersion": "2.14.1",
+    "queryWarnMs": 250,
+    "queryTimeoutMs": 5000,
+    "deadlockRetries": 2,
+    "migrationLeaseSeconds": 30
+  },
+  "connections": {
+    "pendingTtlMs": 120000,
+    "gateTimeoutMs": 10000,
+    "duplicatePolicy": "deny_new",
+    "allowlistRequired": false,
+    "clusterSessionLeaseSeconds": 45,
+    "clusterHeartbeatMs": 10000,
+    "queueEnabled": false,
+    "queueUpdateMs": 1000,
+    "queueTimeoutMs": 120000,
+    "maximumQueued": 128,
+    "maximumActiveSessions": 128,
+    "queueReservedSlots": 0,
+    "queueStaffPriority": 1000,
+    "queueReconnectPriority": 500,
+    "queueReconnectGraceMs": 60000,
+    "queueStaffAce": "synex.queue.staff",
+    "maintenanceMode": false,
+    "maintenanceMessage": "Synex is currently in maintenance mode.",
+    "maintenanceBypassAce": "synex.maintenance.bypass"
+  },
+  "rpc": {
+    "timeoutMs": 5000,
+    "maximumTimeoutMs": 15000,
+    "maximumPendingPerSource": 16,
+    "maximumPayloadBytes": 32768,
+    "rate": 12,
+    "burst": 24
+  },
+  "events": {
+    "maximumQueueDepth": 1024
+  },
+  "logging": {
+    "level": "info",
+    "pretty": false
+  },
+  "privacy": {
+    "identifierSaltConvar": "synex_identifier_salt",
+    "diagnosticIdentifierPrefix": 8
+  },
+  "retention": {
+    "workerIntervalMs": 3600000,
+    "batchSize": 250,
+    "audit": {
+      "mode": "retain_forever",
+      "archiveAfterDays": 365
+    },
+    "financial": {
+      "mode": "retain_forever",
+      "archiveAfterDays": 365
+    }
+  },
+  "features": {
+    "durableEvents": true,
+    "sagas": true,
+    "stateReplication": true
+  }
+}

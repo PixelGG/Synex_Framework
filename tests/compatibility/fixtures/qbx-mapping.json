@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "framework": "qbx",
+  "fields": {
+    "userId": "license",
+    "characterId": "citizenid",
+    "firstName": "charinfo.firstname",
+    "lastName": "charinfo.lastname",
+    "money": { "cash": "money.cash", "bank": "money.bank" },
+    "job": { "name": "job.name", "grade": "job.grade.level" },
+    "group": { "name": "gang.name", "grade": "gang.grade.level" },
+    "vehicles": "vehicles",
+    "metadata": "metadata"
+  }
+}

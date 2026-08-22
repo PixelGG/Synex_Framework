@@ -1,0 +1,115 @@
+{
+  "$schema": "../../schemas/resource.schema.json",
+  "schema": 1,
+  "name": "synex_accounts",
+  "version": "0.1.0",
+  "synex": "^1.0.0",
+  "critical": true,
+  "capabilities": {
+    "request": ["synex.events.durable", "synex.runtime.read"]
+  },
+  "services": {
+    "provide": ["synex.accounts@1"],
+    "require": ["synex.runtime@1"],
+    "optional": []
+  },
+  "contracts": {
+    "provide": [
+      "synex.accounts.register_currency",
+      "synex.accounts.create",
+      "synex.accounts.get_snapshot",
+      "synex.accounts.transfer",
+      "synex.accounts.debit",
+      "synex.accounts.credit",
+      "synex.accounts.mint",
+      "synex.accounts.burn",
+      "synex.accounts.create_hold",
+      "synex.accounts.get_hold",
+      "synex.accounts.capture_hold",
+      "synex.accounts.release_hold",
+      "synex.accounts.reverse",
+      "synex.accounts.create_access_role",
+      "synex.accounts.grant_access",
+      "synex.accounts.revoke_access",
+      "synex.accounts.get_access",
+      "synex.accounts.run_reconciliation",
+      "synex.accounts.get_integrity"
+    ],
+    "consume": []
+  },
+  "dependencies": {
+    "required": [
+      {
+        "name": "synex_core",
+        "version": ">=0.1.0"
+      },
+      {
+        "name": "oxmysql",
+        "version": ">=2.14.1"
+      }
+    ],
+    "optional": [],
+    "development": []
+  },
+  "migrations": [
+    {
+      "id": "001_accounts",
+      "path": "migrations/001_accounts.sql",
+      "transactional": false
+    },
+    {
+      "id": "002_ledger",
+      "path": "migrations/002_ledger.sql",
+      "transactional": false
+    },
+    {
+      "id": "003_holds",
+      "path": "migrations/003_holds.sql",
+      "transactional": false
+    },
+    {
+      "id": "004_access_integrity",
+      "path": "migrations/004_access_integrity.sql",
+      "transactional": false
+    },
+    {
+      "id": "005_character_lifecycle",
+      "path": "migrations/005_character_lifecycle.sql",
+      "transactional": false
+    },
+    {
+      "id": "006_financial_archive",
+      "path": "migrations/006_financial_archive.sql",
+      "transactional": false
+    }
+  ],
+  "dataOwnership": {
+    "tables": [
+      "synex_currencies",
+      "synex_accounts",
+      "synex_account_owners",
+      "synex_account_operations",
+      "synex_ledger_transactions",
+      "synex_ledger_postings",
+      "synex_account_balance_snapshots",
+      "synex_account_audit",
+      "synex_account_outbox",
+      "synex_account_holds",
+      "synex_account_hold_events",
+      "synex_account_access_roles",
+      "synex_account_access_role_permissions",
+      "synex_account_access_grants",
+      "synex_ledger_reversals",
+      "synex_economy_integrity_read_models",
+      "synex_economy_reconciliation_runs",
+      "synex_economy_anomaly_findings",
+      "synex_account_character_deletions",
+      "synex_financial_transaction_archive"
+    ],
+    "characterDelete": "anonymize"
+  },
+  "stateSnapshot": {
+    "supported": true,
+    "schemaVersion": 1
+  }
+}

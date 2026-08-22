@@ -1,0 +1,54 @@
+local Client = {}
+
+local MAX_PENDING = 32
+local TIMEOUT_MS = 10000
+
+function Client.create(options)
+    assert(type(options) == 'table', 'native bridge client options are required')
+    local requestEvent = assert(options.requestEvent, 'requestEvent is required')
+    local responseEvent = assert(options.responseEvent, 'responseEvent is required')
+    local pending = {}
+    local pendingCount = 0
+    local sequence = 0
+
+    RegisterNetEvent(responseEvent, function(requestId, ok, payload)
+        if source ~= 65535 or type(requestId) ~= 'string' then return end
+        local entry = pending[requestId]
+        if not entry then return end
+        pending[requestId] = nil
+        pendingCount = math.max(0, pendingCount - 1)
+        entry(ok == true, payload)
+    end)
+
+    local client = {}
+    function client:triggerCallback(name, callback, ...)
+        if type(name) ~= 'string' or #name < 1 or #name > 96 or type(callback) ~= 'function'
+            or pendingCount >= MAX_PENDING then return false end
+        sequence = (sequence + 1) & 0xffffffff
+        local requestId = ('%08x_%08x'):format(GetGameTimer() & 0xffffffff, sequence)
+        local arguments = table.pack(...)
+        pending[requestId] = function(ok, payload)
+            if ok and type(payload) == 'table' then
+                callback(table.unpack(payload, 1, payload.n or #payload))
+            else
+                callback(nil, payload)
+            end
+        end
+        pendingCount = pendingCount + 1
+        SetTimeout(TIMEOUT_MS, function()
+            local entry = pending[requestId]
+            if not entry then return end
+            pending[requestId] = nil
+            pendingCount = math.max(0, pendingCount - 1)
+            entry(false, { code = 'CALLBACK_TIMEOUT', message = 'Compatibility callback timed out.', retryable = true })
+        end)
+        TriggerServerEvent(requestEvent, requestId, name, arguments)
+        return true
+    end
+
+    return client
+end
+
+SynexBridgeClient = Client
+
+return Client

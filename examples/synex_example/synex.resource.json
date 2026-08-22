@@ -1,0 +1,36 @@
+{
+  "$schema": "../../schemas/resource.schema.json",
+  "schema": 1,
+  "name": "synex_example",
+  "version": "0.1.0",
+  "synex": "^1.0.0",
+  "critical": false,
+  "capabilities": {
+    "request": []
+  },
+  "services": {
+    "provide": ["synex.example@1"],
+    "require": ["synex.runtime@1"],
+    "optional": []
+  },
+  "contracts": {
+    "provide": ["synex.example.echo"],
+    "consume": []
+  },
+  "dependencies": {
+    "required": [
+      { "name": "synex_core", "version": ">=0.1.0" }
+    ],
+    "optional": [],
+    "development": []
+  },
+  "migrations": [],
+  "dataOwnership": {
+    "tables": [],
+    "characterDelete": "none"
+  },
+  "stateSnapshot": {
+    "supported": false,
+    "schemaVersion": 1
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "$schema": "../../../schemas/contract.schema.json",
+  "schema": 1,
+  "domain": "synex.example",
+  "contracts": [
+    {
+      "name": "synex.example.echo",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_example",
+      "stability": "experimental",
+      "network": "none",
+      "capability": null,
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["message"],
+        "properties": {
+          "message": { "type": "string", "minLength": 1, "maxLength": 128 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["message", "provider"],
+        "properties": {
+          "message": { "type": "string", "maxLength": 128 },
+          "provider": { "const": "synex_example" }
+        }
+      },
+      "errors": ["INVALID_ARGUMENT", "NOT_READY", "PROVIDER_UNAVAILABLE"],
+      "idempotent": true
+    }
+  ]
+}

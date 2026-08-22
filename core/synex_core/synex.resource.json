@@ -1,0 +1,83 @@
+{
+  "$schema": "../../schemas/resource.schema.json",
+  "schema": 1,
+  "name": "synex_core",
+  "version": "0.1.0",
+  "synex": "^1.0.0",
+  "critical": true,
+  "capabilities": {
+    "request": []
+  },
+  "services": {
+    "provide": ["synex.runtime@1"],
+    "require": [],
+    "optional": []
+  },
+  "contracts": {
+    "provide": [
+      "synex.runtime.status",
+      "synex.identity.session.by_source",
+      "synex.identity.characters.list",
+      "synex.identity.characters.create",
+      "synex.identity.characters.select",
+      "synex.identity.characters.delete"
+    ],
+    "consume": []
+  },
+  "dependencies": {
+    "required": [
+      {
+        "name": "oxmysql",
+        "version": ">=2.14.1"
+      }
+    ],
+    "optional": [],
+    "development": []
+  },
+  "migrations": [
+    { "id": "001_migration_control", "path": "migrations/001_migration_control.sql", "transactional": false },
+    { "id": "002_identity", "path": "migrations/002_identity.sql", "transactional": false },
+    { "id": "003_reliability", "path": "migrations/003_reliability.sql", "transactional": false },
+    { "id": "004_access_control", "path": "migrations/004_access_control.sql", "transactional": false },
+    { "id": "005_sagas", "path": "migrations/005_sagas.sql", "transactional": false },
+    { "id": "006_character_deletion", "path": "migrations/006_character_deletion.sql", "transactional": false },
+    { "id": "007_cluster_runtime", "path": "migrations/007_cluster_runtime.sql", "transactional": false },
+    { "id": "008_core_rbac", "path": "migrations/008_core_rbac.sql", "transactional": false },
+    { "id": "009_legacy_import", "path": "migrations/009_legacy_import.sql", "transactional": false },
+    { "id": "010_retention_archive", "path": "migrations/010_retention_archive.sql", "transactional": false }
+  ],
+  "dataOwnership": {
+    "tables": [
+      "synex_schema_migrations",
+      "synex_schema_migration_attempts",
+      "synex_cluster_leases",
+      "synex_users",
+      "synex_identifiers",
+      "synex_sessions",
+      "synex_characters",
+      "synex_character_slots",
+      "synex_idempotency_keys",
+      "synex_outbox",
+      "synex_sagas",
+      "synex_saga_steps",
+      "synex_audit_log",
+      "synex_access_bans",
+      "synex_allowlist_entries",
+      "synex_character_deletion_plans",
+      "synex_instances",
+      "synex_session_control_requests",
+      "synex_rbac_roles",
+      "synex_rbac_role_permissions",
+      "synex_rbac_subject_roles",
+      "synex_rbac_subject_versions",
+      "synex_legacy_imports",
+      "synex_legacy_id_mappings",
+      "synex_audit_archive"
+    ],
+    "characterDelete": "anonymize"
+  },
+  "stateSnapshot": {
+    "supported": true,
+    "schemaVersion": 1
+  }
+}

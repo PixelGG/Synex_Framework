@@ -1,196 +1,83 @@
 <p align="center">
-  <img src="../../../.github/assets/branding/synex-mark.svg" width="88" height="88" alt="">
+  <img src="../../../.github/assets/branding/synex-mark.svg" width="88" height="88" alt="Symbole Synex">
 </p>
 
 <h1 align="center">Synex</h1>
 
 <p align="center">
-  <strong>Une fondation conçue avec rigueur pour un Framework FiveM modulaire et un écosystème cohérent de Resources officielles.</strong>
+  <strong>Un runtime FiveM contract-first et une fondation pour des ressources aux responsabilités indépendantes.</strong>
 </p>
 
 <p align="center">
-  <sub>DOCUMENTATION LANGUAGE</sub><br>
   <a href="../../../README.md">EN</a>
-  &nbsp;·&nbsp;
+  &nbsp;&middot;&nbsp;
   <a href="../de/README.md">DE</a>
-  &nbsp;·&nbsp;
+  &nbsp;&middot;&nbsp;
   <strong>FR</strong>
-  &nbsp;·&nbsp;
+  &nbsp;&middot;&nbsp;
   <a href="../es/README.md">ES</a>
-  &nbsp;·&nbsp;
+  &nbsp;&middot;&nbsp;
   <a href="../pt-BR/README.md">PT-BR</a>
 </p>
 
 <p align="center">
-  Synex se structure comme un seul framework, avec des responsabilités clairement définies entre son Core, ses Resources métier et ses bibliothèques partagées.<br>
-  Le dépôt constitue actuellement un socle structurel : ses périmètres sont en place, mais il ne contient encore aucun code Runtime.
+  <img alt="Cible : FiveM" src="https://img.shields.io/badge/target-FiveM-5ed7ff?style=flat-square&amp;labelColor=111827">
+  <img alt="Version : 0.1.0 experimental" src="https://img.shields.io/badge/release-0.1.0%20experimental-8b73ff?style=flat-square&amp;labelColor=111827">
 </p>
 
 <p align="center">
-  <a href="#pourquoi-synex">Pourquoi Synex</a> ·
-  <a href="#écosystème-prévu">Écosystème</a> ·
-  <a href="#architecture-du-dépôt">Architecture</a> ·
-  <a href="#bien-démarrer">Bien démarrer</a> ·
-  <a href="#état-du-développement">État</a>
+  <img src="../../../.github/assets/readme/hero.webp" width="1200" alt="Illustration abstraite du réseau modulaire Synex">
 </p>
 
-<p align="center">
-  <img alt="Cible : FiveM" src="https://img.shields.io/badge/cible-FiveM-5ed7ff?style=flat-square&amp;labelColor=111827">
-  <img alt="Statut : fondation du dépôt" src="https://img.shields.io/badge/statut-fondation%20du%20d%C3%A9p%C3%B4t-8b73ff?style=flat-square&amp;labelColor=111827">
-</p>
+> [!CAUTION]
+> **Version source expérimentale.** Synex `0.1.0` contient des ressources de fondation exécutables, des contrats générés, des migrations, des tests et des outils. Tous les contrats publics restent `experimental` ; il n'existe pas encore de version stable, d'installateur packagé ni de garantie de support en production.
 
-<p align="center">
-  <img src="../../../.github/assets/readme/hero.webp" width="1200" alt="">
-</p>
+## Fondation implémentée
 
-> [!IMPORTANT]
-> **Maturité actuelle :** Synex se trouve au stade de la fondation du dépôt. Les périmètres des modules documentés ci-dessous existent, mais le dépôt ne contient encore ni Resource FiveM exécutable, ni manifest, ni code Runtime, ni schéma de base de données, ni configuration, ni workflow d’installation.
+| Domaine | Module | Responsabilité réellement présente | Statut |
+| --- | --- | --- | --- |
+| Kernel | [`synex_core`](../../../core/synex_core/) | Cycle de vie boot/session/personnage, contrats, RPC, événements, hooks, services, capabilities, RBAC/accès persistant, état, fiabilité, audit, métriques et santé | Experimental |
+| Groupes | [`synex_groups`](../../../resources/synex_groups/) | Groupes, grades, règles de capability, sélection primaire et appartenances versionnées | Experimental |
+| Comptes | [`synex_accounts`](../../../resources/synex_accounts/) | Devises, comptes en partie double, réservations, rôles d'accès, annulations et modèles d'intégrité | Experimental |
+| Entités | [`synex_entities`](../../../resources/synex_entities/) | Identité d'entité authoritative côté serveur, résolution persistante et routing buckets | Experimental |
+| Opérations | [`synex_control`](../../../resources/synex_control/) | NUI en jeu en lecture seule avec vues Core/domaines bornées, recherche d'audit exacte et état fermé transparent | Experimental |
+| Compatibilité | [`synex_bridge`](../../../libraries/synex_bridge/) | Adaptateurs QB/QBX/ESX optionnels liés au consommateur, avec callbacks bornés, transferts cash/bank et import contrôlé | Experimental / transition |
+| Développement | [`packages`](../../../packages/) / [`tools`](../../../tools/) | SDK Lua/TypeScript générés, CLI, analyseurs, certification et tests | Experimental |
 
-## Pourquoi Synex
+Les adaptateurs de compatibilité n'exposent pas d'objets joueur legacy mutables. Les changements monétaires passent uniquement par des transferts Synex équilibrés via des comptes de contrepartie configurés ; les comptes absents ou ambigus échouent de manière fermée.
 
-L’écosystème d’un Framework commence par une répartition explicite des responsabilités. Synex établit ces périmètres avant de présenter des détails d’implémentation comme des capacités du produit.
+Synex lie chaque façade API à la ressource appelante réelle et à son epoch de démarrage. Les contrats JSON définissent version, schéma, capability et direction réseau. Chaque migration et table a un seul propriétaire de domaine. Les entrées client et NUI restent non fiables.
 
-- **Organisation fondée sur les périmètres.** Le Core, les Resources métier, les bibliothèques partagées, la documentation, les exemples et les outils disposent chacun d’un emplacement distinct.
-- **Namespace cohérent.** Chaque module réservé au Framework utilise le préfixe `synex_`.
-- **Écosystème organisé par domaine.** Les responsabilités liées aux personnages, à l’économie, à la communication et aux véhicules sont représentées par des scaffolds de Resources indépendants.
-- **Maturité fondée sur des éléments vérifiables.** Un répertoire indique une responsabilité prévue ; il n’est pas présenté comme une fonctionnalité terminée ou installable.
+### Limites uniquement réservées
 
-## Modèle de fondation
+`synex_character`, `synex_identity`, `synex_inventory`, `synex_banking`, `synex_phone`, `synex_radio`, `synex_jobs`, `synex_shops`, `synex_vehicles`, `synex_garages` et `synex_ui` ne contiennent actuellement que des scaffolds et ne sont **pas des fonctionnalités exécutables**. Le cycle de vie personnage/session existant se trouve dans `synex_core`.
 
-| Périmètre | Responsabilité prévue | Vérifié à ce jour |
-| --- | --- | --- |
-| `core/` | Emplacement du Core du Framework | Scaffold `synex_core` |
-| `resources/` | Resources métier officielles | 10 scaffolds nommés |
-| `libraries/` | Bibliothèques partagées du Framework | Scaffolds `synex_ui` et `synex_bridge` |
-| `docs/`, `examples/`, `tools/` | Documentation du projet, exemples et outils | README localisés et guide d’intégration Discord ; `examples/` et `tools/` réservés |
+## Démarrage
 
-Cette organisation établit uniquement la répartition des responsabilités au sein du dépôt. Elle ne définit pas encore les dépendances Runtime, les contrats publics, les frontières Client/Server ni le comportement des services.
+Il faut un FXServer actuel, MariaDB/MySQL via `oxmysql >= 2.14.1` (et `< 3.0.0` lorsque `synex_entities` est activé), un `synex_instance_id` stable en production stricte et OneSync `on` pour `synex_entities`. Node.js sert aux outils et aux tests du dépôt, pas au runtime Lua.
 
-## Écosystème prévu
-
-Chaque entrée ci-dessous présente actuellement le même état vérifié : **Scaffold** — le répertoire existe, mais il ne contient ni manifest de Resource ni implémentation. Les descriptions indiquent des responsabilités réservées et non des fonctionnalités disponibles.
-
-| Domaine | Module | Responsabilité réservée |
-| --- | --- | --- |
-| Fondation | [`synex_core`](../../../core/synex_core/) | Périmètre du Core du Framework |
-| Fondation | [`synex_ui`](../../../libraries/synex_ui/) | Périmètre de la bibliothèque UI partagée |
-| Fondation | [`synex_bridge`](../../../libraries/synex_bridge/) | Périmètre du Bridge d’intégration |
-| Joueur | [`synex_character`](../../../resources/synex_character/) | Périmètre du domaine des personnages |
-| Joueur | [`synex_identity`](../../../resources/synex_identity/) | Périmètre du domaine de l’identité |
-| Joueur | [`synex_inventory`](../../../resources/synex_inventory/) | Périmètre du domaine de l’inventaire |
-| Économie | [`synex_banking`](../../../resources/synex_banking/) | Périmètre du domaine bancaire |
-| Économie | [`synex_jobs`](../../../resources/synex_jobs/) | Périmètre du domaine des métiers |
-| Économie | [`synex_shops`](../../../resources/synex_shops/) | Périmètre du domaine des commerces |
-| Communication | [`synex_phone`](../../../resources/synex_phone/) | Périmètre du domaine du téléphone |
-| Communication | [`synex_radio`](../../../resources/synex_radio/) | Périmètre du domaine de la radio |
-| Mobilité | [`synex_vehicles`](../../../resources/synex_vehicles/) | Périmètre du domaine des véhicules |
-| Mobilité | [`synex_garages`](../../../resources/synex_garages/) | Périmètre du domaine des garages |
-
-## Architecture du dépôt
-
-Ce diagramme représente le scaffold actuel du Framework. Il s’agit volontairement d’une carte du dépôt, et non d’un graphe de dépendances Runtime.
-
-```mermaid
-flowchart TB
-    repo["Synex_Framework/"]
-
-    repo --> core["core/<br/>synex_core/"]
-    repo --> resources["resources/<br/>10 domain resource scaffolds"]
-    repo --> libraries["libraries/<br/>synex_ui/ · synex_bridge/"]
-    repo --> support["docs/ · examples/ · tools/"]
+```bash
+npm ci
+npm run check
+npm test
+npm run security
+npm run certify
 ```
 
-Les flèches indiquent uniquement l’emplacement des éléments de premier niveau dans le dépôt. Elles n’impliquent aucune direction de dépendance, aucun flux d’Events, aucune couche de Callbacks, aucun service Player, aucune couche de base de données ni aucune interaction NUI.
-
-## Principes de conception visibles à ce jour
-
-- **Responsabilités regroupées sous un namespace commun.** Les répertoires des modules appartenant au Framework partagent le préfixe `synex_`.
-- **Séparation des responsabilités.** Le Core, les Resources, les bibliothèques réutilisables et les éléments de support du projet occupent des zones distinctes de premier niveau.
-- **Un domaine par scaffold.** Chaque Resource prévue dispose de son propre périmètre de répertoire.
-- **Les affirmations suivent l’implémentation.** Les API, les caractéristiques de performance, les garanties de sécurité et la compatibilité ne seront documentées que lorsqu’elles pourront être vérifiées à partir d’éléments présents dans le dépôt.
-
-## Bien démarrer
-
-> [!NOTE]
-> **La documentation d’installation est en cours de préparation.**
-
-Il n’existe pas encore de procédure d’installation vérifiée : le dépôt ne contient actuellement aucun fichier `fxmanifest.lua`, aucune définition de dépendances, aucune configuration, aucun schéma de base de données ni aucun ordre de démarrage des Resources. Les commandes ne seront publiées qu’après avoir pu être testées avec des Resources exécutables.
-
-## Structure du dépôt
-
-<details>
-<summary>Afficher la structure actuelle de premier niveau</summary>
-
-```text
-Synex_Framework/
-├── .gitattributes
-├── .github/
-│   ├── assets/
-│   │   ├── branding/
-│   │   └── readme/
-│   ├── scripts/
-│   │   └── discord/
-│   └── workflows/
-├── .gitignore
-├── core/
-│   └── synex_core/
-├── resources/
-│   ├── synex_character/
-│   ├── synex_identity/
-│   ├── synex_inventory/
-│   ├── synex_banking/
-│   ├── synex_phone/
-│   ├── synex_radio/
-│   ├── synex_jobs/
-│   ├── synex_shops/
-│   ├── synex_vehicles/
-│   └── synex_garages/
-├── libraries/
-│   ├── synex_ui/
-│   └── synex_bridge/
-├── tools/
-├── docs/
-│   ├── discord-notifications.md
-│   └── locales/
-│       ├── README.md
-│       ├── de/README.md
-│       ├── fr/README.md
-│       ├── es/README.md
-│       └── pt-BR/README.md
-├── examples/
-└── README.md
-```
-
-Les répertoires des modules ne contiennent actuellement que des fichiers `.gitkeep` servant de placeholders.
-
-</details>
-
-## État de la pile technologique
-
-FiveM est la plateforme cible déclarée. L’automatisation du dépôt utilise des modules JavaScript sans dépendances sur Node.js 24 via GitHub Actions. Le langage d’exécution du framework, la stack NUI, le moteur de base de données, le gestionnaire de paquets et le pipeline de build des Resources ne peuvent pas encore être déterminés à partir du contenu du dépôt.
-
-## État du développement
-
-| Domaine | État vérifié |
-| --- | --- |
-| Organisation du dépôt | Présente |
-| Flux de développement GitHub vers Discord | Implémenté et couvert par les tests d’automatisation du dépôt |
-| Modules du Core, des Resources et des bibliothèques | Scaffolds de répertoires uniquement |
-| Manifests de Resources et code Runtime | Absents |
-| API publiques, Events, Exports et Callbacks | Absents |
-| Base de données, configuration, permissions et systèmes de sécurité | Absents |
-| Workflow d’installation du framework et guides d’exécution | Indisponibles |
-| Licence | Non déclarée |
+Ce dépôt est un monorepo de développement, pas un paquet serveur prêt à déposer. Le [guide de démarrage](../../getting-started.md) décrit placement, configuration, migrations, ordre de démarrage et limites.
 
 ## Documentation
 
-- [Configuration, exploitation et sécurité des notifications Discord](../../discord-notifications.md)
-- [Éditions localisées de cette landing page](../README.md)
+L'anglais reste la source technique canonique.
 
-Les guides d’installation et d’exécution du framework ne sont pas encore disponibles.
+- [Index de documentation](../../README.md)
+- [Architecture](../../architecture/README.md)
+- [API publique](../../api/README.md)
+- [Sécurité](../../security/README.md)
+- [Opérations](../../operations.md)
+- [Tests et CI](../../testing.md)
+- [Compatibilité](../../compatibility/README.md)
 
 ---
 
-<p align="center">
-  <sub>Synex Framework · Des périmètres clairs d’abord. Des capacités vérifiées ensuite.</sub>
-</p>
+<p align="center"><sub>Synex Framework &middot; Contrats explicites. État attribué. Limites honnêtes.</sub></p>

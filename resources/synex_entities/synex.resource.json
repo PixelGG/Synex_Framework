@@ -1,0 +1,67 @@
+{
+  "$schema": "../../schemas/resource.schema.json",
+  "schema": 1,
+  "name": "synex_entities",
+  "version": "0.1.0",
+  "synex": "^1.0.0",
+  "critical": true,
+  "capabilities": {
+    "request": [
+      "synex.audit.append"
+    ]
+  },
+  "services": {
+    "provide": [
+      "synex.entities@1"
+    ],
+    "require": [
+      "synex.runtime@1"
+    ],
+    "optional": []
+  },
+  "contracts": {
+    "provide": [
+      "synex.entities.bucket.create",
+      "synex.entities.bucket.destroy",
+      "synex.entities.bucket.move_entity",
+      "synex.entities.bucket.move_player",
+      "synex.entities.delete",
+      "synex.entities.get",
+      "synex.entities.health",
+      "synex.entities.resolve_persistent",
+      "synex.entities.spawn"
+    ],
+    "consume": []
+  },
+  "dependencies": {
+    "required": [
+      {
+        "name": "synex_core",
+        "version": ">=0.1.0"
+      },
+      {
+        "name": "oxmysql",
+        "version": ">=2.14.1 <3.0.0"
+      }
+    ],
+    "optional": [],
+    "development": []
+  },
+  "migrations": [
+    {
+      "id": "001_entities",
+      "path": "migrations/001_entities.sql",
+      "transactional": false
+    }
+  ],
+  "dataOwnership": {
+    "tables": [
+      "synex_entities"
+    ],
+    "characterDelete": "retain"
+  },
+  "stateSnapshot": {
+    "supported": false,
+    "schemaVersion": 1
+  }
+}

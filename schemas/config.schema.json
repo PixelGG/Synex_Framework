@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://synex.dev/schemas/config.schema.json",
+  "title": "Synex core runtime configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["environment", "strict", "instanceId", "database", "connections", "rpc", "events", "logging", "privacy", "retention", "features"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "environment": { "enum": ["development", "staging", "production"] },
+    "strict": { "type": "boolean" },
+    "instanceId": { "type": "string", "maxLength": 36, "pattern": "^(?:[A-Za-z0-9_-]+)?$" },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimumOxmysqlVersion", "queryWarnMs", "queryTimeoutMs", "deadlockRetries", "migrationLeaseSeconds"],
+      "properties": {
+        "minimumOxmysqlVersion": { "type": "string", "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$", "maxLength": 32 },
+        "queryWarnMs": { "type": "integer", "minimum": 1, "maximum": 60000 },
+        "queryTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 60000 },
+        "deadlockRetries": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "migrationLeaseSeconds": { "type": "integer", "minimum": 10, "maximum": 300 }
+      }
+    },
+    "connections": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pendingTtlMs", "gateTimeoutMs", "duplicatePolicy", "allowlistRequired", "clusterSessionLeaseSeconds", "clusterHeartbeatMs", "queueEnabled", "queueUpdateMs", "queueTimeoutMs", "maximumQueued", "maximumActiveSessions", "queueReservedSlots", "queueStaffPriority", "queueReconnectPriority", "queueReconnectGraceMs", "queueStaffAce", "maintenanceMode", "maintenanceMessage", "maintenanceBypassAce"],
+      "properties": {
+        "pendingTtlMs": { "type": "integer", "minimum": 1000, "maximum": 600000 },
+        "gateTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 60000 },
+        "duplicatePolicy": { "enum": ["deny_new", "kick_old", "allow", "replace_old"] },
+        "allowlistRequired": { "type": "boolean" },
+        "clusterSessionLeaseSeconds": { "type": "integer", "minimum": 10, "maximum": 300 },
+        "clusterHeartbeatMs": { "type": "integer", "minimum": 1000, "maximum": 60000 },
+        "queueEnabled": { "type": "boolean" },
+        "queueUpdateMs": { "type": "integer", "minimum": 250, "maximum": 30000 },
+        "queueTimeoutMs": { "type": "integer", "minimum": 1000, "maximum": 1800000 },
+        "maximumQueued": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "maximumActiveSessions": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "queueReservedSlots": { "type": "integer", "minimum": 0, "maximum": 9999 },
+        "queueStaffPriority": { "type": "integer", "minimum": 1, "maximum": 100000 },
+        "queueReconnectPriority": { "type": "integer", "minimum": 1, "maximum": 100000 },
+        "queueReconnectGraceMs": { "type": "integer", "minimum": 0, "maximum": 600000 },
+        "queueStaffAce": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.-]+$" },
+        "maintenanceMode": { "type": "boolean" },
+        "maintenanceMessage": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001F\\u007F]+$" },
+        "maintenanceBypassAce": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.-]+$" }
+      }
+    },
+    "rpc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timeoutMs", "maximumTimeoutMs", "maximumPendingPerSource", "maximumPayloadBytes", "rate", "burst"],
+      "properties": {
+        "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 15000 },
+        "maximumTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 15000 },
+        "maximumPendingPerSource": { "type": "integer", "minimum": 1, "maximum": 128 },
+        "maximumPayloadBytes": { "type": "integer", "minimum": 1024, "maximum": 262144 },
+        "rate": { "type": "number", "exclusiveMinimum": 0, "maximum": 10000 },
+        "burst": { "type": "number", "exclusiveMinimum": 0, "maximum": 10000 }
+      }
+    },
+    "events": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maximumQueueDepth"],
+      "properties": { "maximumQueueDepth": { "type": "integer", "minimum": 1, "maximum": 100000 } }
+    },
+    "logging": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["level", "pretty"],
+      "properties": {
+        "level": { "enum": ["trace", "debug", "info", "warn", "error", "fatal"] },
+        "pretty": { "const": false }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identifierSaltConvar", "diagnosticIdentifierPrefix"],
+      "properties": {
+        "identifierSaltConvar": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]*$", "maxLength": 64 },
+        "diagnosticIdentifierPrefix": { "type": "integer", "minimum": 4, "maximum": 16 }
+      }
+    },
+    "retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workerIntervalMs", "batchSize", "audit", "financial"],
+      "properties": {
+        "workerIntervalMs": { "type": "integer", "minimum": 60000, "maximum": 86400000 },
+        "batchSize": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "audit": { "$ref": "#/$defs/retentionPolicy" },
+        "financial": { "$ref": "#/$defs/retentionPolicy" }
+      }
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["durableEvents", "sagas", "stateReplication"],
+      "properties": {
+        "durableEvents": { "type": "boolean" },
+        "sagas": { "type": "boolean" },
+        "stateReplication": { "type": "boolean" }
+      }
+    }
+  },
+  "$defs": {
+    "retentionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "archiveAfterDays"],
+      "properties": {
+        "mode": { "enum": ["retain_forever", "archive"] },
+        "archiveAfterDays": { "type": "integer", "minimum": 1, "maximum": 36500 }
+      }
+    }
+  }
+}

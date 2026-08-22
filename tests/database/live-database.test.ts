@@ -1,0 +1,779 @@
+import assert from 'node:assert/strict';
+import { createHash, randomUUID } from 'node:crypto';
+import test from 'node:test';
+import type { Connection, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
+import { importReviewedMigrationPlan, type ImportDatabase } from '../../tools/migrator/src/importer.js';
+import {
+  buildMigrationPlan,
+  validateMapping,
+  validateSource,
+} from '../../tools/migrator/src/migrator.js';
+import { applyMigrations, liveDatabaseGate, loadMigrations, openLiveDatabase } from './harness.js';
+
+interface EngineRow extends RowDataPacket {
+  table_name: string;
+  engine: string;
+}
+
+interface ConstraintRow extends RowDataPacket {
+  constraint_name: string;
+}
+
+interface OperationRow extends RowDataPacket {
+  operation_name: string;
+  request_fingerprint: string;
+  state: string;
+  response_json: string | null;
+}
+
+interface BalanceRow extends RowDataPacket {
+  public_id: string;
+  sequence_no: string | number;
+  booked_minor: string | number;
+  reserved_minor: string | number;
+  snapshot_count: string | number;
+  minimum_booked_minor: string | number;
+}
+
+interface PostingRow extends RowDataPacket {
+  debit_account_id: string;
+  credit_account_id: string;
+  debit_minor: string | number;
+  credit_minor: string | number;
+}
+
+interface AggregateRow extends RowDataPacket {
+  transaction_count: string | number;
+  posting_count: string | number;
+  operation_count: string | number;
+  audit_count: string | number;
+  outbox_count: string | number;
+}
+
+interface LeaseRow extends RowDataPacket {
+  owner_id: string;
+  fencing_token: string | number;
+  currently_valid: string | number;
+}
+
+interface TransferInput {
+  idempotencyKey: string;
+  fingerprint: string;
+  sourceAccountId: string;
+  destinationAccountId: string;
+  amountMinor: number;
+  transactionId: string;
+  postingId: string;
+  eventId: string;
+}
+
+interface Fixture {
+  currencyInternalId: number;
+  firstAccountId: string;
+  secondAccountId: string;
+}
+
+function asNumber(value: string | number): number {
+  return typeof value === 'number' ? value : Number.parseInt(value, 10);
+}
+
+function importDatabase(connection: Connection): ImportDatabase {
+  return {
+    begin: async () => connection.beginTransaction(),
+    commit: async () => connection.commit(),
+    rollback: async () => connection.rollback(),
+    close: async () => undefined,
+    execute: async (sql, parameters = []) => {
+      const [raw] = await connection.execute(sql, [...parameters]);
+      if (Array.isArray(raw)) {
+        return {
+          rows: raw.map((row) => ({ ...(row as RowDataPacket) })),
+          insertId: 0,
+          affectedRows: raw.length,
+        };
+      }
+      const header = raw as ResultSetHeader;
+      return { rows: [], insertId: header.insertId, affectedRows: header.affectedRows };
+    },
+  };
+}
+
+async function completedTransfer(connection: Connection, input: TransferInput): Promise<string | undefined> {
+  const [rows] = await connection.query<OperationRow[]>(
+    `SELECT operation_name, request_fingerprint, state, response_json
+     FROM synex_account_operations WHERE idempotency_key = ?`,
+    [input.idempotencyKey],
+  );
+  const operation = rows[0];
+  if (!operation) return undefined;
+  assert.equal(operation.operation_name, 'transfer');
+  assert.equal(operation.request_fingerprint, input.fingerprint);
+  assert.equal(operation.state, 'completed');
+  if (typeof operation.response_json !== 'string') {
+    throw new Error('completed operation has no response');
+  }
+  const response = JSON.parse(operation.response_json) as unknown;
+  assert.ok(response && typeof response === 'object');
+  const transactionId = (response as Record<string, unknown>).transaction_id;
+  if (typeof transactionId !== 'string') {
+    throw new Error('completed operation response has no transaction_id');
+  }
+  return transactionId;
+}
+
+async function assertOneRow(
+  connection: Connection,
+  sql: string,
+  parameters: readonly unknown[],
+  message: string,
+): Promise<void> {
+  const [result] = await connection.query<ResultSetHeader>(sql, [...parameters]);
+  assert.equal(result.affectedRows, 1, message);
+}
+
+async function transferAtomically(connection: Connection, input: TransferInput): Promise<string> {
+  const replayed = await completedTransfer(connection, input);
+  if (replayed) return replayed;
+
+  const responseJson = JSON.stringify({
+    transaction_id: input.transactionId,
+    posting_id: input.postingId,
+    transaction_kind: 'transfer',
+    debit_account_id: input.sourceAccountId,
+    credit_account_id: input.destinationAccountId,
+    debit_minor: input.amountMinor,
+    credit_minor: input.amountMinor,
+  });
+
+  await connection.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+  await connection.beginTransaction();
+  try {
+    await assertOneRow(
+      connection,
+      `INSERT INTO synex_account_operations
+       (idempotency_key, operation_name, request_fingerprint, state)
+       VALUES (?, 'transfer', ?, 'pending')`,
+      [input.idempotencyKey, input.fingerprint],
+      'the operation claim must be unique',
+    );
+
+    const lockOrder = [input.sourceAccountId, input.destinationAccountId].sort();
+    for (const accountId of lockOrder) {
+      const [accounts] = await connection.query<RowDataPacket[]>(
+        'SELECT id FROM synex_accounts WHERE public_id = ? FOR UPDATE',
+        [accountId],
+      );
+      assert.equal(accounts.length, 1, 'the locked account must exist');
+    }
+    for (const accountId of lockOrder) {
+      const [snapshots] = await connection.query<RowDataPacket[]>(
+        `SELECT snapshot.id FROM synex_account_balance_snapshots AS snapshot
+         INNER JOIN synex_accounts AS account ON account.id = snapshot.account_id
+         WHERE account.public_id = ?
+           AND snapshot.sequence_no = (
+             SELECT MAX(latest.sequence_no) FROM synex_account_balance_snapshots AS latest
+             WHERE latest.account_id = account.id
+           )
+         FOR UPDATE`,
+        [accountId],
+      );
+      assert.equal(snapshots.length, 1, 'the latest snapshot must exist');
+    }
+
+    await assertOneRow(
+      connection,
+      `INSERT INTO synex_ledger_transactions
+       (public_id, operation_id, currency_id, transaction_kind, reference_text, actor_ref, metadata_json)
+       SELECT ?, operation.id, source.currency_id, 'transfer', NULL, NULL, '{}'
+       FROM synex_accounts AS source
+       INNER JOIN synex_accounts AS destination
+         ON destination.public_id = ?
+        AND destination.currency_id = source.currency_id
+        AND destination.status = 'active'
+        AND destination.account_role = 'asset'
+       INNER JOIN synex_account_operations AS operation ON operation.idempotency_key = ?
+       INNER JOIN synex_account_balance_snapshots AS balance
+         ON balance.account_id = source.id
+        AND balance.sequence_no = (
+          SELECT MAX(latest.sequence_no) FROM synex_account_balance_snapshots AS latest
+          WHERE latest.account_id = source.id
+        )
+       WHERE source.public_id = ?
+         AND source.status = 'active'
+         AND source.account_role = 'asset'
+         AND (source.allow_negative = 1 OR balance.booked_minor - balance.reserved_minor >= ?)`,
+      [
+        input.transactionId,
+        input.destinationAccountId,
+        input.idempotencyKey,
+        input.sourceAccountId,
+        input.amountMinor,
+      ],
+      'the locked source must have sufficient funds',
+    );
+
+    await assertOneRow(
+      connection,
+      `INSERT INTO synex_ledger_postings
+       (public_id, transaction_id, debit_account_id, credit_account_id, debit_minor, credit_minor)
+       VALUES (
+         ?,
+         (SELECT id FROM synex_ledger_transactions WHERE public_id = ?),
+         (SELECT id FROM synex_accounts WHERE public_id = ?),
+         (SELECT id FROM synex_accounts WHERE public_id = ?),
+         ?,
+         ?
+       )`,
+      [
+        input.postingId,
+        input.transactionId,
+        input.sourceAccountId,
+        input.destinationAccountId,
+        input.amountMinor,
+        input.amountMinor,
+      ],
+      'one balanced posting must be appended',
+    );
+
+    await assertOneRow(
+      connection,
+      `INSERT INTO synex_account_balance_snapshots
+       (account_id, sequence_no, source_kind, source_ref, booked_minor, reserved_minor)
+       SELECT account.id, previous.sequence_no + 1, 'ledger', ?,
+              previous.booked_minor - ?, previous.reserved_minor
+       FROM synex_accounts AS account
+       INNER JOIN synex_account_balance_snapshots AS previous
+         ON previous.account_id = account.id
+        AND previous.sequence_no = (
+          SELECT MAX(latest.sequence_no) FROM synex_account_balance_snapshots AS latest
+          WHERE latest.account_id = account.id
+        )
+       WHERE account.public_id = ?
+         AND (account.allow_negative = 1 OR previous.booked_minor - previous.reserved_minor >= ?)`,
+      [input.transactionId, input.amountMinor, input.sourceAccountId, input.amountMinor],
+      'the debit snapshot must advance once without going negative',
+    );
+
+    await assertOneRow(
+      connection,
+      `INSERT INTO synex_account_balance_snapshots
+       (account_id, sequence_no, source_kind, source_ref, booked_minor, reserved_minor)
+       SELECT account.id, previous.sequence_no + 1, 'ledger', ?,
+              previous.booked_minor + ?, previous.reserved_minor
+       FROM synex_accounts AS account
+       INNER JOIN synex_account_balance_snapshots AS previous
+         ON previous.account_id = account.id
+        AND previous.sequence_no = (
+          SELECT MAX(latest.sequence_no) FROM synex_account_balance_snapshots AS latest
+          WHERE latest.account_id = account.id
+        )
+       WHERE account.public_id = ?`,
+      [input.transactionId, input.amountMinor, input.destinationAccountId],
+      'the credit snapshot must advance once',
+    );
+
+    await assertOneRow(
+      connection,
+      `INSERT INTO synex_account_audit
+       (event_id, operation_id, event_type, aggregate_id, actor_ref, snapshot_json)
+       VALUES (
+         ?,
+         (SELECT id FROM synex_account_operations WHERE idempotency_key = ?),
+         'synex.accounts.transfer',
+         ?,
+         NULL,
+         ?
+       )`,
+      [input.eventId, input.idempotencyKey, input.transactionId, responseJson],
+      'the audit record must be atomic with the transfer',
+    );
+    await assertOneRow(
+      connection,
+      `INSERT INTO synex_account_outbox
+       (event_id, aggregate_id, event_type, schema_version, payload_json)
+       VALUES (?, ?, 'synex.accounts.transfer', 1, ?)`,
+      [input.eventId, input.transactionId, responseJson],
+      'the outbox record must be atomic with the transfer',
+    );
+    await assertOneRow(
+      connection,
+      `UPDATE synex_account_operations
+       SET state = 'completed', response_json = ?, completed_at = CURRENT_TIMESTAMP(6)
+       WHERE idempotency_key = ? AND operation_name = 'transfer' AND state = 'pending'`,
+      [responseJson, input.idempotencyKey],
+      'the idempotent response must complete atomically',
+    );
+
+    await connection.commit();
+    return input.transactionId;
+  } catch (error) {
+    try {
+      await connection.rollback();
+    } catch (rollbackError) {
+      throw new AggregateError([error, rollbackError], 'transfer and rollback both failed');
+    }
+    const winner = await completedTransfer(connection, input);
+    if (winner) return winner;
+    throw error;
+  }
+}
+
+function transferInput(
+  sourceAccountId: string,
+  destinationAccountId: string,
+  amountMinor: number,
+  idempotencyKey = randomUUID(),
+): TransferInput {
+  return {
+    idempotencyKey,
+    fingerprint: JSON.stringify({ sourceAccountId, destinationAccountId, amountMinor }),
+    sourceAccountId,
+    destinationAccountId,
+    amountMinor,
+    transactionId: randomUUID(),
+    postingId: randomUUID(),
+    eventId: randomUUID(),
+  };
+}
+
+async function createTransferFixture(connection: Connection): Promise<Fixture> {
+  const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
+  const currencyCode = `t${suffix}`;
+  const currencyPublicId = randomUUID();
+  const [currency] = await connection.query<ResultSetHeader>(
+    `INSERT INTO synex_currencies
+     (public_id, currency_code, display_name, minor_unit, status)
+     VALUES (?, ?, 'Live concurrency token', 0, 'active')`,
+    [currencyPublicId, currencyCode],
+  );
+
+  const firstAccountId = randomUUID();
+  const secondAccountId = randomUUID();
+  const internalIds: number[] = [];
+  for (const [publicId, accountKey] of [
+    [firstAccountId, `live_a_${suffix}`],
+    [secondAccountId, `live_b_${suffix}`],
+  ] as const) {
+    const [account] = await connection.query<ResultSetHeader>(
+      `INSERT INTO synex_accounts
+       (public_id, currency_id, account_key, account_role, allow_negative, status, metadata_json)
+       VALUES (?, ?, ?, 'asset', 0, 'active', '{}')`,
+      [publicId, currency.insertId, accountKey],
+    );
+    internalIds.push(account.insertId);
+    await connection.query(
+      `INSERT INTO synex_account_owners (account_id, owner_kind, owner_ref)
+       VALUES (?, 'system', 'synex_live_test')`,
+      [account.insertId],
+    );
+    await connection.query(
+      `INSERT INTO synex_account_balance_snapshots
+       (account_id, sequence_no, source_kind, source_ref, booked_minor, reserved_minor)
+       VALUES (?, 0, 'opening', ?, 1000, 0)`,
+      [account.insertId, randomUUID()],
+    );
+  }
+  assert.equal(internalIds.length, 2);
+  return { currencyInternalId: currency.insertId, firstAccountId, secondAccountId };
+}
+
+const gate = liveDatabaseGate();
+
+test('live MariaDB/MySQL applies every migration and exposes enforced account constraints', {
+  skip: gate.enabled ? false : gate.reason,
+}, async () => {
+  const { connection, databaseName } = await openLiveDatabase();
+  try {
+    await applyMigrations(connection, await loadMigrations());
+    const [engines] = await connection.query<EngineRow[]>(
+      `SELECT table_name, engine FROM information_schema.tables
+       WHERE table_schema = ? AND table_name LIKE 'synex\\_%' ESCAPE '\\\\'`,
+      [databaseName],
+    );
+    assert.ok(engines.length >= 46);
+    assert.ok(engines.every((row) => row.engine.toLowerCase() === 'innodb'));
+
+    const [checks] = await connection.query<ConstraintRow[]>(
+      `SELECT constraint_name FROM information_schema.table_constraints
+       WHERE table_schema = ? AND table_name = 'synex_ledger_postings' AND constraint_type = 'CHECK'`,
+      [databaseName],
+    );
+    const names = new Set(checks.map((row) => row.constraint_name));
+    assert.ok(names.has('chk_ledger_postings_balanced'));
+    assert.ok(names.has('chk_ledger_postings_accounts'));
+
+    const [foreignKeys] = await connection.query<ConstraintRow[]>(
+      `SELECT constraint_name FROM information_schema.table_constraints
+       WHERE table_schema = ? AND table_name = 'synex_account_hold_events'
+         AND constraint_type = 'FOREIGN KEY'`,
+      [databaseName],
+    );
+    assert.ok(foreignKeys.length >= 2);
+
+    const [foundationChecks] = await connection.query<ConstraintRow[]>(
+      `SELECT constraint_name FROM information_schema.table_constraints
+       WHERE table_schema = ? AND constraint_name IN (
+         'chk_group_grade_capability_effect',
+         'chk_account_access_permissions_key',
+         'chk_economy_anomaly_findings_severity',
+         'chk_economy_integrity_status'
+       ) AND constraint_type = 'CHECK'`,
+      [databaseName],
+    );
+    assert.deepEqual(
+      new Set(foundationChecks.map((row) => row.constraint_name)),
+      new Set([
+        'chk_group_grade_capability_effect',
+        'chk_account_access_permissions_key',
+        'chk_economy_anomaly_findings_severity',
+        'chk_economy_integrity_status',
+      ]),
+    );
+
+    const [reversalForeignKeys] = await connection.query<ConstraintRow[]>(
+      `SELECT constraint_name FROM information_schema.table_constraints
+       WHERE table_schema = ? AND table_name = 'synex_ledger_reversals'
+         AND constraint_type = 'FOREIGN KEY'`,
+      [databaseName],
+    );
+    assert.equal(reversalForeignKeys.length, 2);
+  } finally {
+    await connection.end();
+  }
+});
+
+test('live database serializes opposite transfers, deduplicates writes, and fences one lease owner', {
+  skip: gate.enabled ? false : gate.reason,
+}, async () => {
+  const primary = await openLiveDatabase();
+  const firstWorker = await openLiveDatabase();
+  const secondWorker = await openLiveDatabase();
+  try {
+    await applyMigrations(primary.connection, await loadMigrations());
+    const fixture = await createTransferFixture(primary.connection);
+
+    const firstDirection = transferInput(fixture.firstAccountId, fixture.secondAccountId, 250);
+    const secondDirection = transferInput(fixture.secondAccountId, fixture.firstAccountId, 400);
+    const oppositeResults = await Promise.all([
+      transferAtomically(firstWorker.connection, firstDirection),
+      transferAtomically(secondWorker.connection, secondDirection),
+    ]);
+    assert.deepEqual(
+      new Set(oppositeResults),
+      new Set([firstDirection.transactionId, secondDirection.transactionId]),
+    );
+
+    const duplicateKey = randomUUID();
+    const duplicateWinner = transferInput(
+      fixture.firstAccountId,
+      fixture.secondAccountId,
+      75,
+      duplicateKey,
+    );
+    const duplicateContender = transferInput(
+      fixture.firstAccountId,
+      fixture.secondAccountId,
+      75,
+      duplicateKey,
+    );
+    const duplicateResults = await Promise.all([
+      transferAtomically(firstWorker.connection, duplicateWinner),
+      transferAtomically(secondWorker.connection, duplicateContender),
+    ]);
+    assert.equal(duplicateResults[0], duplicateResults[1], 'duplicate requests must replay one committed response');
+
+    const [balances] = await primary.connection.query<BalanceRow[]>(
+      `SELECT account.public_id,
+              latest.sequence_no,
+              latest.booked_minor,
+              latest.reserved_minor,
+              history.snapshot_count,
+              history.minimum_booked_minor
+       FROM synex_accounts AS account
+       INNER JOIN synex_account_balance_snapshots AS latest
+         ON latest.account_id = account.id
+        AND latest.sequence_no = (
+          SELECT MAX(candidate.sequence_no) FROM synex_account_balance_snapshots AS candidate
+          WHERE candidate.account_id = account.id
+        )
+       INNER JOIN (
+         SELECT account_id, COUNT(*) AS snapshot_count, MIN(booked_minor) AS minimum_booked_minor
+         FROM synex_account_balance_snapshots GROUP BY account_id
+       ) AS history ON history.account_id = account.id
+       WHERE account.public_id IN (?, ?)
+       ORDER BY account.public_id`,
+      [fixture.firstAccountId, fixture.secondAccountId],
+    );
+    assert.equal(balances.length, 2);
+    const latestByAccount = new Map(balances.map((row) => [row.public_id, row]));
+    const firstBalance = latestByAccount.get(fixture.firstAccountId);
+    const secondBalance = latestByAccount.get(fixture.secondAccountId);
+    assert.ok(firstBalance);
+    assert.ok(secondBalance);
+    assert.equal(asNumber(firstBalance.booked_minor), 1075);
+    assert.equal(asNumber(secondBalance.booked_minor), 925);
+    for (const balance of balances) {
+      assert.equal(asNumber(balance.sequence_no), 3, 'each committed transfer advances each account once');
+      assert.equal(asNumber(balance.snapshot_count), 4, 'opening plus three immutable snapshots are retained');
+      assert.equal(asNumber(balance.reserved_minor), 0);
+      assert.ok(asNumber(balance.minimum_booked_minor) >= 0, 'no asset snapshot may become negative');
+    }
+    assert.equal(
+      balances.reduce((sum, balance) => sum + asNumber(balance.booked_minor), 0),
+      2000,
+      'the fixture currency supply must be conserved',
+    );
+
+    const [postings] = await primary.connection.query<PostingRow[]>(
+      `SELECT debit.public_id AS debit_account_id,
+              credit.public_id AS credit_account_id,
+              posting.debit_minor,
+              posting.credit_minor
+       FROM synex_ledger_postings AS posting
+       INNER JOIN synex_ledger_transactions AS ledger_transaction
+         ON ledger_transaction.id = posting.transaction_id
+       INNER JOIN synex_accounts AS debit ON debit.id = posting.debit_account_id
+       INNER JOIN synex_accounts AS credit ON credit.id = posting.credit_account_id
+       WHERE ledger_transaction.currency_id = ?`,
+      [fixture.currencyInternalId],
+    );
+    assert.equal(postings.length, 3, 'the duplicate request must not append a second posting');
+    const reconstructed = new Map<string, number>([
+      [fixture.firstAccountId, 1000],
+      [fixture.secondAccountId, 1000],
+    ]);
+    for (const posting of postings) {
+      const debit = asNumber(posting.debit_minor);
+      const credit = asNumber(posting.credit_minor);
+      assert.equal(debit, credit, 'every committed posting must remain balanced');
+      reconstructed.set(
+        posting.debit_account_id,
+        (reconstructed.get(posting.debit_account_id) ?? 0) - debit,
+      );
+      reconstructed.set(
+        posting.credit_account_id,
+        (reconstructed.get(posting.credit_account_id) ?? 0) + credit,
+      );
+    }
+    assert.equal(reconstructed.get(fixture.firstAccountId), asNumber(firstBalance.booked_minor));
+    assert.equal(reconstructed.get(fixture.secondAccountId), asNumber(secondBalance.booked_minor));
+
+    const [aggregates] = await primary.connection.query<AggregateRow[]>(
+      `SELECT
+         (SELECT COUNT(*) FROM synex_ledger_transactions WHERE currency_id = ?) AS transaction_count,
+         (SELECT COUNT(*) FROM synex_ledger_postings AS posting
+            INNER JOIN synex_ledger_transactions AS ledger_transaction
+              ON ledger_transaction.id = posting.transaction_id
+            WHERE ledger_transaction.currency_id = ?) AS posting_count,
+         (SELECT COUNT(*) FROM synex_account_operations
+            WHERE idempotency_key IN (?, ?, ?) AND state = 'completed') AS operation_count,
+         (SELECT COUNT(*) FROM synex_account_audit AS audit
+            INNER JOIN synex_account_operations AS operation ON operation.id = audit.operation_id
+            WHERE operation.idempotency_key IN (?, ?, ?)) AS audit_count,
+         (SELECT COUNT(*) FROM synex_account_outbox AS outbox
+            INNER JOIN synex_ledger_transactions AS ledger_transaction
+              ON ledger_transaction.public_id = outbox.aggregate_id
+            WHERE ledger_transaction.currency_id = ?) AS outbox_count`,
+      [
+        fixture.currencyInternalId,
+        fixture.currencyInternalId,
+        firstDirection.idempotencyKey,
+        secondDirection.idempotencyKey,
+        duplicateKey,
+        firstDirection.idempotencyKey,
+        secondDirection.idempotencyKey,
+        duplicateKey,
+        fixture.currencyInternalId,
+      ],
+    );
+    const aggregate = aggregates[0];
+    assert.ok(aggregate);
+    assert.equal(asNumber(aggregate.transaction_count), 3);
+    assert.equal(asNumber(aggregate.posting_count), 3);
+    assert.equal(asNumber(aggregate.operation_count), 3);
+    assert.equal(asNumber(aggregate.audit_count), 3);
+    assert.equal(asNumber(aggregate.outbox_count), 3);
+
+    const leaseName = `live-test-${randomUUID()}`;
+    await primary.connection.query(
+      `INSERT INTO synex_cluster_leases
+       (lease_name, owner_id, fencing_token, expires_at)
+       VALUES (?, 'expired-owner', 1, TIMESTAMPADD(SECOND, -1, CURRENT_TIMESTAMP(6)))`,
+      [leaseName],
+    );
+    const owners = [`worker-a-${randomUUID()}`, `worker-b-${randomUUID()}`] as const;
+    const claim = async (connection: Connection, ownerId: string): Promise<number> => {
+      const [result] = await connection.query<ResultSetHeader>(
+        `UPDATE synex_cluster_leases
+         SET owner_id = ?, fencing_token = fencing_token + 1,
+             expires_at = TIMESTAMPADD(SECOND, 30, CURRENT_TIMESTAMP(6))
+         WHERE lease_name = ? AND expires_at <= CURRENT_TIMESTAMP(6)`,
+        [ownerId, leaseName],
+      );
+      return result.affectedRows;
+    };
+    const claims = await Promise.all([
+      claim(firstWorker.connection, owners[0]),
+      claim(secondWorker.connection, owners[1]),
+    ]);
+    assert.equal(claims[0] + claims[1], 1, 'exactly one cluster worker may claim an expired lease');
+    const winningOwner = claims[0] === 1 ? owners[0] : owners[1];
+    const [leases] = await primary.connection.query<LeaseRow[]>(
+      `SELECT owner_id, fencing_token, expires_at > CURRENT_TIMESTAMP(6) AS currently_valid
+       FROM synex_cluster_leases WHERE lease_name = ?`,
+      [leaseName],
+    );
+    assert.equal(leases.length, 1);
+    assert.equal(leases[0]?.owner_id, winningOwner);
+    assert.equal(asNumber(leases[0]?.fencing_token ?? 0), 2);
+    assert.equal(asNumber(leases[0]?.currently_valid ?? 0), 1);
+  } finally {
+    await Promise.all([
+      primary.connection.end(),
+      firstWorker.connection.end(),
+      secondWorker.connection.end(),
+    ]);
+  }
+});
+
+test('live legacy import writes a reconciled native model and replays without writes', {
+  skip: gate.enabled ? false : gate.reason,
+}, async () => {
+  const { connection } = await openLiveDatabase();
+  try {
+    await applyMigrations(connection, await loadMigrations());
+    const suffix = randomUUID().replaceAll('-', '').slice(0, 16);
+    const source = validateSource({
+      schema: 1,
+      framework: 'qbx',
+      records: [{
+        license: `license:live-license-${suffix}`,
+        citizenid: `QBX-LIVE-${suffix}`,
+        charinfo: { firstname: 'Live', lastname: 'Import' },
+        money: { cash: 400, bank: 1600 },
+        job: { name: `job_${suffix}`, grade: { level: 2 } },
+        gang: { name: `group_${suffix}`, grade: { level: 1 } },
+      }],
+    });
+    const mapping = validateMapping({
+      schema: 1,
+      framework: 'qbx',
+      fields: {
+        userId: 'license',
+        characterId: 'citizenid',
+        firstName: 'charinfo.firstname',
+        lastName: 'charinfo.lastname',
+        money: { cash: 'money.cash', bank: 'money.bank' },
+        job: { name: 'job.name', grade: 'job.grade.level' },
+        group: { name: 'gang.name', grade: 'gang.grade.level' },
+      },
+    });
+    const plan = buildMigrationPlan(source, mapping, `live-source-${suffix}`);
+    const database = importDatabase(connection);
+    const first = await importReviewedMigrationPlan(plan, database, false);
+    assert.equal(first.alreadyApplied, false);
+    assert.deepEqual(first.counts, {
+      users: 1,
+      characters: 1,
+      identifiers: 1,
+      accounts: 2,
+      ledgerTransactions: 2,
+      groups: 2,
+      memberships: 2,
+    });
+
+    const userId = plan.bundle.users[0]?.id;
+    const characterId = plan.bundle.characters[0]?.id;
+    assert.ok(userId);
+    assert.ok(characterId);
+    const [journal] = await connection.query<RowDataPacket[]>(
+      `SELECT public_id, state, imported_user_count, imported_character_count
+       FROM synex_legacy_imports WHERE report_digest = ?`,
+      [plan.report.reportDigest],
+    );
+    assert.equal(journal.length, 1);
+    assert.equal(journal[0]?.state, 'completed');
+    assert.equal(asNumber(journal[0]?.imported_user_count as string | number), 1);
+    assert.equal(asNumber(journal[0]?.imported_character_count as string | number), 1);
+    const importId = String(journal[0]?.public_id);
+
+    const [identity] = await connection.query<RowDataPacket[]>(
+      `SELECT
+         (SELECT COUNT(*) FROM synex_users WHERE id = ?) AS user_count,
+         (SELECT COUNT(*) FROM synex_characters WHERE id = ? AND user_id = ? AND slot = 1) AS character_count,
+         (SELECT COUNT(*) FROM synex_legacy_id_mappings mapping
+            INNER JOIN synex_legacy_imports legacy_import ON legacy_import.id = mapping.import_id
+            WHERE legacy_import.report_digest = ?
+              AND mapping.legacy_id_hash REGEXP '^[0-9a-f]{64}$') AS mapping_count`,
+      [userId, characterId, userId, plan.report.reportDigest],
+    );
+    assert.equal(asNumber(identity[0]?.user_count as string | number), 1);
+    assert.equal(asNumber(identity[0]?.character_count as string | number), 1);
+    assert.equal(asNumber(identity[0]?.mapping_count as string | number), 2);
+    const [identifiers] = await connection.query<RowDataPacket[]>(
+      `SELECT identifier_type, identifier_value FROM synex_identifiers WHERE user_id = ?`,
+      [userId],
+    );
+    assert.equal(identifiers.length, 1);
+    assert.equal(identifiers[0]?.identifier_type, 'license');
+    assert.equal(identifiers[0]?.identifier_value, `live-license-${suffix}`);
+
+    const [domain] = await connection.query<RowDataPacket[]>(
+      `SELECT
+         (SELECT COUNT(*) FROM synex_account_owners owner
+            INNER JOIN synex_accounts account ON account.id = owner.account_id
+            INNER JOIN synex_currencies currency ON currency.id = account.currency_id
+            WHERE owner.owner_kind = 'character' AND owner.owner_ref = ?
+              AND account.account_role = 'asset' AND currency.currency_code IN ('cash', 'bank')) AS account_count,
+         (SELECT COUNT(*) FROM synex_group_memberships
+            WHERE subject_kind = 'character' AND subject_ref = ? AND status = 'active') AS membership_count,
+         (SELECT COUNT(*) FROM synex_account_operations operation
+            INNER JOIN synex_ledger_transactions ledger_transaction ON ledger_transaction.operation_id = operation.id
+            INNER JOIN synex_ledger_postings posting ON posting.transaction_id = ledger_transaction.id
+            WHERE operation.operation_name = 'legacy_opening_balance'
+              AND operation.request_fingerprint LIKE ?
+              AND posting.debit_minor = posting.credit_minor) AS balanced_opening_count`,
+      [characterId, characterId, `qbx:${characterId}:%`],
+    );
+    assert.equal(asNumber(domain[0]?.account_count as string | number), 2);
+    assert.equal(asNumber(domain[0]?.membership_count as string | number), 2);
+    assert.equal(asNumber(domain[0]?.balanced_opening_count as string | number), 2);
+
+    const [reconciliation] = await connection.query<RowDataPacket[]>(
+      `SELECT COUNT(*) AS run_count
+       FROM synex_economy_reconciliation_runs reconciliation
+       INNER JOIN synex_account_operations operation ON operation.id = reconciliation.operation_id
+       WHERE reconciliation.requested_by_ref = 'legacy_migration:qbx'
+         AND operation.operation_name = 'legacy_reconciliation'
+         AND operation.request_fingerprint IN (?, ?)
+         AND reconciliation.status = 'healthy' AND reconciliation.finding_count = 0
+         AND reconciliation.total_debit_minor = reconciliation.total_credit_minor
+         AND reconciliation.total_booked_minor = 0`,
+      [
+        createHash('sha256').update(`${importId}:cash`, 'utf8').digest('hex'),
+        createHash('sha256').update(`${importId}:bank`, 'utf8').digest('hex'),
+      ],
+    );
+    // The read model is the authoritative current integrity view; both imported currencies must be healthy.
+    const [integrity] = await connection.query<RowDataPacket[]>(
+      `SELECT COUNT(*) AS healthy_count
+       FROM synex_economy_integrity_read_models model
+       INNER JOIN synex_currencies currency ON currency.id = model.currency_id
+       WHERE currency.currency_code IN ('cash', 'bank')
+         AND model.status = 'healthy' AND model.finding_count = 0
+         AND model.total_debit_minor = model.total_credit_minor AND model.total_booked_minor = 0`,
+    );
+    assert.equal(asNumber(integrity[0]?.healthy_count as string | number), 2);
+    assert.equal(asNumber(reconciliation[0]?.run_count as string | number), 2);
+
+    const replay = await importReviewedMigrationPlan(plan, database, false);
+    assert.equal(replay.alreadyApplied, true);
+    const [afterReplay] = await connection.query<RowDataPacket[]>(
+      'SELECT COUNT(*) AS import_count FROM synex_legacy_imports WHERE report_digest = ?',
+      [plan.report.reportDigest],
+    );
+    assert.equal(asNumber(afterReplay[0]?.import_count as string | number), 1);
+  } finally {
+    await connection.end();
+  }
+});

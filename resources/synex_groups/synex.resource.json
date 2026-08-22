@@ -1,0 +1,83 @@
+{
+  "$schema": "../../schemas/resource.schema.json",
+  "schema": 1,
+  "name": "synex_groups",
+  "version": "0.1.0",
+  "synex": "^1.0.0",
+  "critical": true,
+  "capabilities": {
+    "request": ["synex.events.durable"]
+  },
+  "services": {
+    "provide": ["synex.groups@1"],
+    "require": ["synex.runtime@1"],
+    "optional": []
+  },
+  "contracts": {
+    "provide": [
+      "synex.groups.create",
+      "synex.groups.get",
+      "synex.groups.add_membership",
+      "synex.groups.change_membership",
+      "synex.groups.remove_membership",
+      "synex.groups.create_grade",
+      "synex.groups.set_grade_capability",
+      "synex.groups.set_primary_membership",
+      "synex.groups.get_read_model",
+      "synex.groups.check_capability"
+    ],
+    "consume": []
+  },
+  "dependencies": {
+    "required": [
+      {
+        "name": "synex_core",
+        "version": ">=0.1.0"
+      },
+      {
+        "name": "oxmysql",
+        "version": ">=2.14.1"
+      }
+    ],
+    "optional": [],
+    "development": []
+  },
+  "migrations": [
+    {
+      "id": "001_groups",
+      "path": "migrations/001_groups.sql",
+      "transactional": false
+    },
+    {
+      "id": "002_grades_primary_read_models",
+      "path": "migrations/002_grades_primary_read_models.sql",
+      "transactional": false
+    },
+    {
+      "id": "003_character_lifecycle",
+      "path": "migrations/003_character_lifecycle.sql",
+      "transactional": false
+    }
+  ],
+  "dataOwnership": {
+    "tables": [
+      "synex_groups",
+      "synex_group_memberships",
+      "synex_group_membership_events",
+      "synex_group_operations",
+      "synex_group_outbox",
+      "synex_group_grades",
+      "synex_group_grade_capabilities",
+      "synex_group_membership_grades",
+      "synex_group_primary_memberships",
+      "synex_group_primary_membership_events",
+      "synex_group_read_model_versions",
+      "synex_group_character_deletions"
+    ],
+    "characterDelete": "anonymize"
+  },
+  "stateSnapshot": {
+    "supported": true,
+    "schemaVersion": 1
+  }
+}

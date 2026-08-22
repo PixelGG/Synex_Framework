@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://synex.dev/schemas/capability-policy.schema.json",
+  "title": "Synex resource capability policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["default", "resources"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "default": { "$ref": "#/$defs/grants" },
+    "resources": {
+      "type": "object",
+      "propertyNames": { "pattern": "^synex_[a-z0-9_]+$", "maxLength": 64 },
+      "additionalProperties": { "$ref": "#/$defs/grants" },
+      "maxProperties": 1024
+    }
+  },
+  "$defs": {
+    "capability": {
+      "type": "string",
+      "pattern": "^(?:\\*|[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*(?:\\.\\*)?)$",
+      "maxLength": 128
+    },
+    "grants": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allow", "deny"],
+      "properties": {
+        "allow": { "type": "array", "uniqueItems": true, "maxItems": 512, "items": { "$ref": "#/$defs/capability" } },
+        "deny": { "type": "array", "uniqueItems": true, "maxItems": 512, "items": { "$ref": "#/$defs/capability" } }
+      }
+    }
+  }
+}

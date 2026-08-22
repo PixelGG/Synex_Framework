@@ -1,0 +1,54 @@
+{
+  "$schema": "../../schemas/resource.schema.json",
+  "schema": 1,
+  "name": "synex_control",
+  "version": "0.1.0",
+  "synex": "^1.0.0",
+  "critical": false,
+  "capabilities": {
+    "request": [
+      "synex.accounts.integrity.read",
+      "synex.audit.summary",
+      "synex.entities.read",
+      "synex.groups.read",
+      "synex.metrics.read",
+      "synex.runtime.read"
+    ]
+  },
+  "services": {
+    "provide": [],
+    "require": [
+      "synex.runtime@1"
+    ],
+    "optional": [
+      "synex.accounts@1",
+      "synex.entities@1",
+      "synex.groups@1"
+    ]
+  },
+  "contracts": {
+    "provide": [],
+    "consume": [
+      "synex.runtime.status"
+    ]
+  },
+  "dependencies": {
+    "required": [
+      {
+        "name": "synex_core",
+        "version": ">=0.1.0"
+      }
+    ],
+    "optional": [],
+    "development": []
+  },
+  "migrations": [],
+  "dataOwnership": {
+    "tables": [],
+    "characterDelete": "none"
+  },
+  "stateSnapshot": {
+    "supported": false,
+    "schemaVersion": 1
+  }
+}

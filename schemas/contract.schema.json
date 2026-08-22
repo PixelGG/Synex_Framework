@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://synex.dev/schemas/contract.schema.json",
+  "title": "Synex contract collection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "domain", "contracts"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema": { "const": 1 },
+    "domain": { "$ref": "#/$defs/name" },
+    "contracts": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/contract" }
+    }
+  },
+  "$defs": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "maxLength": 128
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|(?:[0-9]*[A-Za-z-][0-9A-Za-z-]*))(?:\\.(?:(?:0|[1-9][0-9]*)|(?:[0-9]*[A-Za-z-][0-9A-Za-z-]*)))*)?$"
+    },
+    "jsonSchema": {
+      "type": "object"
+    },
+    "rateLimit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capacity", "refillPerSecond"],
+      "properties": {
+        "capacity": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "refillPerSecond": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000 }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version",
+        "kind",
+        "provider",
+        "stability",
+        "network",
+        "input",
+        "output",
+        "errors"
+      ],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "version": { "$ref": "#/$defs/semver" },
+        "kind": { "enum": ["rpc", "event", "hook", "service"] },
+        "provider": {
+          "type": "string",
+          "pattern": "^synex_[a-z0-9_]+$",
+          "maxLength": 64
+        },
+        "stability": { "enum": ["experimental", "stable", "deprecated", "internal"] },
+        "network": { "enum": ["none", "client-to-server", "server-to-client"] },
+        "capability": {
+          "anyOf": [
+            { "$ref": "#/$defs/name" },
+            { "type": "null" }
+          ]
+        },
+        "sessionStates": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "CONNECTING",
+              "AUTHENTICATING",
+              "AUTHENTICATED",
+              "SELECTING_CHARACTER",
+              "LOADING_CHARACTER",
+              "ACTIVE",
+              "UNLOADING_CHARACTER",
+              "DISCONNECTING",
+              "CLOSED"
+            ]
+          }
+        },
+        "input": { "$ref": "#/$defs/jsonSchema" },
+        "output": { "$ref": "#/$defs/jsonSchema" },
+        "errors": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]{1,63}$"
+          }
+        },
+        "idempotent": { "type": "boolean", "default": false },
+        "rateLimit": { "$ref": "#/$defs/rateLimit" },
+        "deprecatedSince": { "$ref": "#/$defs/semver" },
+        "replacement": { "$ref": "#/$defs/name" }
+      }
+    }
+  }
+}
