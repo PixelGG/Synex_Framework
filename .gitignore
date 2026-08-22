@@ -1,0 +1,72 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+server.cfg
+*.local.cfg
+*.pem
+*.key
+*.p12
+*.pfx
+
+# FiveM server state
+cache/
+server-cache/
+server-cache-priv/
+txData/
+
+# Dependencies and package-manager caches
+node_modules/
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+
+# Test, build, and tool caches
+coverage/
+.cache/
+.parcel-cache/
+.vite/
+.temp/
+tmp/
+
+# Logs and diagnostics
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.dump
+
+# Editor and IDE state
+.vscode/
+.idea/
+.vs/
+AGENTS.md
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temporary and backup files
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+
+# Local archives and source design files
+*.zip
+*.7z
+*.rar
+*.psd
+*.xcf
+
+# NUI distribution output is intentionally not ignored. Verify each resource's
+# manifest and release workflow before deciding whether built assets are tracked.
