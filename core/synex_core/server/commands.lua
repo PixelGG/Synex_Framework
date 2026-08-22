@@ -16,7 +16,7 @@ factories.commands = function(deps)
     local registry = {}
     local bound = false
     local maximumEntries = 256
-    local usage = 'synex <status|doctor|resources|sessions|permissions|trace|migrations|ledger|entities|access|ban|unban|allow|unallow>'
+    local usage = 'synex <overview|status|doctor|resources|sessions|permissions|trace|migrations|ledger|entities|access|ban|unban|allow|unallow>'
 
     local function commandError(code, message, retryable)
         return foundation.error(code, message, { retryable = retryable == true })
@@ -32,6 +32,10 @@ factories.commands = function(deps)
     end
 
     local function emit(commandSource, command, result, err)
+        if command == 'overview' and err == nil then
+            for _, line in ipairs(result.lines) do platform.print(line) end
+            return true
+        end
         local payload = {
             ok = err == nil,
             command = command,
@@ -102,7 +106,23 @@ factories.commands = function(deps)
         }
     end
 
-    local function serviceSummary(name, method)
+    local function serviceSummary(name, method, resource)
+        local state = platform.resourceState(resource)
+        if state == 'missing' then
+            return { available = false, status = 'NOT_INSTALLED', resource = resource }, nil
+        end
+        if type(state) ~= 'string' or state == '' then
+            return {
+                available = false,
+                status = 'DEGRADED',
+                resource = resource,
+                error = safeError(commandError('RESOURCE_STATE_UNAVAILABLE',
+                    'The optional resource state could not be determined.', true))
+            }, nil
+        end
+        if state ~= 'started' and state ~= 'starting' then
+            return { available = false, status = 'STOPPED', resource = resource, resourceState = state }, nil
+        end
         local epoch = registries.owners:epoch(coreResource)
         if not registries.owners:isCurrent(coreResource, epoch) then
             return { available = false }, commandError('CORE_NOT_READY', 'The Core service owner is not active.', true)
@@ -110,10 +130,56 @@ factories.commands = function(deps)
         local result, err = messaging.services:call(coreResource, epoch, name, '^1.0.0', method, {}, {
             traceId = foundation.nextId('trace')
         })
-        if err then return { available = false }, err end
-        return { available = true, summary = result }, nil
+        if err then
+            return {
+                available = false,
+                status = state == 'starting' and 'STARTING' or 'DEGRADED',
+                resource = resource,
+                error = safeError(err)
+            }, nil
+        end
+        return { available = true, status = 'HEALTHY', resource = resource, summary = result }, nil
     end
 
+    registry.overview = {
+        minimum = 1, maximum = 1,
+        run = function()
+            local doctor, doctorError = runtime:doctor()
+            if not doctor then return nil, doctorError end
+            local migrations, migrationError = persistence.migrations:snapshot(maximumEntries)
+            if not migrations then return nil, migrationError end
+            local lifecycleSnapshot = lifecycle.core:snapshot()
+            local resources = registries.resources:summary()
+            local sessions = registries.players:summary()
+            local workers = workerSummary()
+            local cluster = persistence.instances:snapshot()
+            local checks = {}
+            for _, check in ipairs(doctor.checks or {}) do checks[check.name] = check.status end
+            local version = platform.resourceMetadata(coreResource, 'version', 0) or 'unknown'
+            local lines = {
+                ('[synex] Overview | core %s | lifecycle %s | doctor %s'):format(
+                    tostring(version), tostring(lifecycleSnapshot.state), tostring(doctor.status)),
+                ('[synex] Database %s | UTC %s | transaction isolation %s'):format(
+                    tostring(checks.database or 'UNKNOWN'), tostring(checks['database-utc'] or 'UNKNOWN'),
+                    tostring(checks['database-transaction-isolation'] or 'UNKNOWN')),
+                ('[synex] Resources %d | healthy %d | degraded %d | unhealthy %d | unknown %d'):format(
+                    resources.total, resources.healthy, resources.degraded, resources.unhealthy, resources.unknown),
+                ('[synex] Sessions %d active | %d pending | oldest pending %dms%s | %d expired'):format(
+                    sessions.activeSessions, sessions.pendingConnections,
+                    sessions.oldestPendingAgeMs, sessions.pendingAgeCapped and '+' or '',
+                    sessions.expiredPendingConnections),
+                ('[synex] Workers %d | healthy %d | degraded %d | unhealthy %d | pending %d'):format(
+                    workers.total, workers.healthy, workers.degraded, workers.unhealthy, workers.pending),
+                ('[synex] Cluster %d healthy | %d stale | %d total'):format(
+                    cluster.healthy, cluster.stale, cluster.total),
+                ('[synex] Migrations %d/%d applied | %d applying | %d failed'):format(
+                    migrations.totals.applied, migrations.totals.defined,
+                    migrations.totals.applying, migrations.totals.failed),
+                '[synex] Details: synex status | synex doctor | synex sessions | synex migrations'
+            }
+            return { generatedAt = foundation.utcIso(), status = doctor.status, lines = lines }, nil
+        end
+    }
     registry.status = {
         minimum = 1, maximum = 1,
         run = function()
@@ -121,7 +187,7 @@ factories.commands = function(deps)
                 generatedAt = foundation.utcIso(),
                 lifecycle = lifecycle.core:snapshot(),
                 cluster = persistence.instances:snapshot(),
-                resources = { total = #registries.resources:list() },
+                resources = registries.resources:summary(),
                 sessions = registries.players:summary(),
                 workers = workerSummary()
             }, nil
@@ -164,11 +230,11 @@ factories.commands = function(deps)
     }
     registry.ledger = {
         minimum = 1, maximum = 1,
-        run = function() return serviceSummary('synex.accounts', 'get_control_summary') end
+        run = function() return serviceSummary('synex.accounts', 'get_control_summary', 'synex_accounts') end
     }
     registry.entities = {
         minimum = 1, maximum = 1,
-        run = function() return serviceSummary('synex.entities', 'getControlSummary') end
+        run = function() return serviceSummary('synex.entities', 'getControlSummary', 'synex_entities') end
     }
     local function accessContext()
         return { actor = 'console', actorType = 'system', traceId = foundation.nextId('trace') }

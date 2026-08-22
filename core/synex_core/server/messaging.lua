@@ -730,7 +730,8 @@ factories.messaging = function(deps)
                 sendResponse(playerSource, requestId, traceId, nil, foundation.error('TOO_MANY_PENDING_REQUESTS', 'The source has too many active RPC requests.', { retryable = true }))
                 return
             end
-            local allowed, rateError = security.rateLimiter:consume('rpc:' .. playerSource .. ':' .. envelope.procedure,
+            local allowed, rateError = security.rateLimiter:consume(
+                ('rpc:%s:%s:%s'):format(playerSource, session.sourceGeneration, envelope.procedure),
                 config.burst or 24, config.rate or 12, 1)
             if not allowed then sendResponse(playerSource, requestId, traceId, nil, rateError) return end
             local contract, contractError = contracts.registry:resolve(envelope.procedure, envelope.version)
@@ -771,7 +772,8 @@ factories.messaging = function(deps)
             if not session or type(requestId) ~= 'string' or #requestId < 8
                 or #requestId > (protocol.limits.requestId or 96)
                 or not requestId:match('^[A-Za-z0-9_.:%-]+$') then return end
-            local accepted = security.rateLimiter:consume('rpc-cancel:' .. tostring(playerSource),
+            local accepted = security.rateLimiter:consume(
+                ('rpc-cancel:%s:%s:'):format(playerSource, session.sourceGeneration),
                 config.burst or 24, config.rate or 12, 1)
             if not accepted then return end
             local pendingKey = ('%s:%s:%s'):format(playerSource, session.sourceGeneration, requestId)
@@ -782,8 +784,8 @@ factories.messaging = function(deps)
         local prefix = ('%s:%s:'):format(playerSource, generation)
         for key, entry in pairs(activeInbound) do if key:sub(1, #prefix) == prefix then entry.cancelled = true; activeInbound[key] = nil end end
         for key, entry in pairs(pendingOutbound) do if key:sub(1, #prefix) == prefix then entry.cancelled = true; pendingOutbound[key] = nil end end
-        security.rateLimiter:purge('rpc:' .. tostring(playerSource) .. ':')
-        security.rateLimiter:purge('rpc-cancel:' .. tostring(playerSource))
+        security.rateLimiter:purge(('rpc:%s:%s:'):format(playerSource, generation))
+        security.rateLimiter:purge(('rpc-cancel:%s:%s:'):format(playerSource, generation))
         activeInboundCounts[('%s:%s'):format(playerSource, generation)] = nil
     end
     function network:snapshot()

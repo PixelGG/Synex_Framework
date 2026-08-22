@@ -100,16 +100,32 @@ factories.identityRepository = function(deps)
 
     local sessionRepository = {}
     function sessionRepository:create(session)
-        local _, err = database:insert([[INSERT INTO `synex_sessions`
+        local lease = session.clusterLease
+        local leaseName = type(lease) == 'table' and (lease.name or lease.leaseName) or nil
+        if type(leaseName) ~= 'string' or type(lease.owner) ~= 'string'
+            or type(lease.fencingToken) ~= 'number' then
+            return nil, foundation.error('LEASE_LOST', 'Session authority is missing or invalid.')
+        end
+        local affected, err = database:update([[INSERT INTO `synex_sessions`
             (`id`, `user_id`, `server_instance_id`, `source_value`, `source_generation`, `state`, `character_id`, `connected_at`, `last_seen_at`, `version`)
-            VALUES (?, ?, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), ?)]], {
-            session.id, session.userId, deps.instanceId, session.source, session.sourceGeneration or 0, session.state, session.version or 1
+            SELECT ?, ?, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), ?
+            FROM `synex_cluster_leases` AS `lease`
+            WHERE `lease`.`lease_name` = ? AND `lease`.`owner_id` = ?
+                AND `lease`.`fencing_token` = ? AND `lease`.`expires_at` > CURRENT_TIMESTAMP(6)]], {
+            session.id, session.userId, deps.instanceId, session.source, session.sourceGeneration or 0,
+            session.state, session.version or 1, leaseName, lease.owner, lease.fencingToken
         })
-        return err and nil or true, err
+        if err then return nil, err end
+        if tonumber(affected) ~= 1 then
+            return nil, foundation.error('LEASE_LOST', 'Session authority changed before persistence.', {
+                retryable = true
+            })
+        end
+        return true, nil
     end
     function sessionRepository:update(session)
         local affected, err = database:update([[UPDATE `synex_sessions`
-            SET `source_value` = ?, `source_generation` = ?, `state` = ?, `character_id` = ?,
+            SET `source_value` = COALESCE(?, `source_value`), `source_generation` = ?, `state` = ?, `character_id` = ?,
                 `last_seen_at` = CURRENT_TIMESTAMP(6), `version` = ?
             WHERE `id` = ? AND `version` = ?]], {
             session.source, session.sourceGeneration or 0, session.state, session.characterId,

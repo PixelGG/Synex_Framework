@@ -37,7 +37,7 @@ After the quality job passes, a separate job starts an isolated MariaDB service,
 
 | Suite | Verified behavior |
 | --- | --- |
-| `lua` | SHA-256, lifecycle/source-generation reuse, cluster duplicate handling, reserved/staff/reconnect queue admission, maintenance gating, persistent RBAC, character-deletion and unload-persistence reconciliation, non-destructive retention batches, owner cleanup/restarts, schema fuzzing, state authority, bounded diagnostics/commands, scheduler health, disconnect cleanup, and durable saga retry/deadline/compensation |
+| `lua` | SHA-256, lifecycle/source-generation reuse, cluster duplicate handling, instance heartbeat status preservation and transient status-write recovery, reserved/staff/reconnect queue admission, maintenance gating, persistent RBAC, character-deletion and unload-persistence reconciliation, non-destructive retention batches, owner cleanup/restarts, schema fuzzing, state authority, bounded pending diagnostics, dynamic admission/resource-health parity, operator commands, scheduler health, disconnect cleanup, and durable saga retry/deadline/compensation |
 | `core` | bounded owner quiesce/drain, pending-operation abort, reconstructable state handoff, malformed/replayed snapshot rejection, and repeated same-core restarts |
 | `stress` | 1,000 sequential session/index lifecycles through the production registry and 100,000 deterministic transfer commands through the real accounts validation path against an in-memory double-entry model, including nonnegative-total and idempotent-replay properties |
 | `tooling` | deterministic multi-target generation, drift/version metadata, graph and unused-declaration analysis, diagnostics redaction, scaffolding, upgrade/certification artifacts, reload plans/adapters, executable fuzzing, benchmark labeling, and AST security findings |
@@ -68,3 +68,16 @@ GitHub Actions supplies an isolated MariaDB service and enables this gate. A nor
 The stress suite is a deterministic, sequential Wasmoon model. It does not run FXServer, OneSync/network scheduling, concurrent Lua threads, or the SQL ledger path, and its operation counts are not benchmark results.
 
 The repository currently does not start FXServer in CI. There is no end-to-end Cfx client/server test, external-framework integration environment, browser automation run, production load test, or database-failure chaos environment. Run those checks against the exact deployment before release.
+
+## FXServer join acceptance
+
+Treat a join fix as live-verified only after the exact deployment has passed this sequence with a real FiveM client:
+
+1. Start the server, wait for Core `READY`, then run `synex overview` and `synex doctor`. Core resource health must be `HEALTHY` and Doctor must not report `UNKNOWN` as a pass.
+2. Join once without an immediate retry. One correlation ID must progress through `received`, `identity_ok`, `access_ok`, `lease_acquired`, `deferral_accepted`, `player_joining_received`, `join_identity_verified`, `join_lease_verified`, and `session_opened`, in that order.
+3. Run `synex sessions`. The accepted attempt must no longer be pending and must own exactly one persisted session. No successful deferral may produce the generic Cfx `Unknown error` rejection.
+4. Disconnect and confirm that the session closes, its network state is purged, and no active fenced session lease remains.
+5. Abort one connection after deferral acceptance. Without manual database intervention, pending count and admission reservation count must return to zero after `connections.pendingTtlMs` plus the bounded connection-heartbeat and batch-cleanup delay; a later retry must not remain blocked by `LEASE_BUSY`.
+6. Repeat ten clean join/disconnect cycles, five rapid retry attempts, and one restart each while pending, selecting a character, and active. Every deliberate rejection must carry a stable `Synex [CODE]` message, and `synex status`, `synex resources`, and `synex doctor` must agree on health.
+
+Connection-stage records intentionally contain a correlation ID, stage, elapsed time, and stable code only. Do not add raw identifiers, player names, source IDs, or database error text while collecting this evidence.

@@ -29,15 +29,48 @@ factories.lifecycle = function(deps)
     local transitions = {}
     local healthReasons = {}
     local criticalFoundationsValidated = false
+    local healthObserver = nil
     local stateMachine = {}
+
+    local function notifyHealthObserver()
+        if not healthObserver then return true end
+        local invoked, value, observerError = foundation.safeCall(healthObserver)
+        if invoked and value ~= nil and observerError == nil then return true end
+        local failure = invoked and observerError or value
+        logger:error('core health observer failed', {
+            code = type(failure) == 'table' and failure.code or 'HEALTH_OBSERVER_FAILED'
+        })
+        return false
+    end
 
     function stateMachine:get() return state, revision end
     function stateMachine:isOperational() return state == 'READY' or state == 'DEGRADED' end
+    function stateMachine:setHealthObserver(observer)
+        if type(observer) ~= 'function' then
+            return nil, foundation.error('INVALID_ARGUMENT', 'Core health observer must be a function.')
+        end
+        healthObserver = observer
+        if not notifyHealthObserver() then
+            healthObserver = nil
+            return nil, foundation.error('HEALTH_OBSERVER_FAILED', 'Core health observer initialization failed.')
+        end
+        return true, nil
+    end
     function stateMachine:setCriticalFoundationsValidated(validated)
         criticalFoundationsValidated = validated == true
+        notifyHealthObserver()
     end
     function stateMachine:canAdmitPlayers()
         return state == 'READY' and criticalFoundationsValidated and next(healthReasons) == nil
+    end
+    function stateMachine:healthStatus()
+        if state == 'UNHEALTHY' or state == 'FAILED' then return 'UNHEALTHY' end
+        if state == 'DEGRADED' or next(healthReasons) ~= nil
+            or (state == 'READY' and not self:canAdmitPlayers()) then
+            return 'DEGRADED'
+        end
+        if state == 'READY' then return 'HEALTHY' end
+        return 'UNKNOWN'
     end
     function stateMachine:transition(target, reason, expectedRevision)
         if expectedRevision ~= nil and expectedRevision ~= revision then
@@ -54,11 +87,13 @@ factories.lifecycle = function(deps)
         }
         metrics:increment('synex_lifecycle_transitions_total', { from = previous, to = target })
         logger:info('core lifecycle transition', { from = previous, to = target, reason = reason, revision = revision })
+        notifyHealthObserver()
         return revision, nil
     end
     function stateMachine:setHealth(component, status, reason)
         if status == 'HEALTHY' then healthReasons[component] = nil
         else healthReasons[component] = { status = status, reason = tostring(reason or 'unspecified') } end
+        notifyHealthObserver()
     end
     function stateMachine:snapshot()
         return {

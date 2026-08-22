@@ -88,14 +88,19 @@ test('player admission requires READY, completed critical validation, and no hea
     }) do assert(lifecycle.core:transition(target, 'fixture')) end
     assert(lifecycle.core:isOperational())
     assert(not lifecycle.core:canAdmitPlayers())
+    assert(lifecycle.core:healthStatus() == 'DEGRADED')
     lifecycle.core:setCriticalFoundationsValidated(true)
     assert(lifecycle.core:canAdmitPlayers())
+    assert(lifecycle.core:healthStatus() == 'HEALTHY')
     lifecycle.core:setHealth('cluster', 'DEGRADED', 'fixture failure')
     assert(not lifecycle.core:canAdmitPlayers())
+    assert(lifecycle.core:healthStatus() == 'DEGRADED')
     lifecycle.core:setHealth('cluster', 'HEALTHY')
     assert(lifecycle.core:canAdmitPlayers())
+    assert(lifecycle.core:healthStatus() == 'HEALTHY')
     assert(lifecycle.core:transition('DEGRADED', 'critical dependency'))
     assert(lifecycle.core:isOperational() and not lifecycle.core:canAdmitPlayers())
+    assert(lifecycle.core:healthStatus() == 'DEGRADED')
     return lifecycle.core:snapshot().playerAdmission
   `);
   assert.equal(result, false);
@@ -375,6 +380,75 @@ test('service registry injects the real caller and keeps capability-less methods
   `);
   assert.equal(result, 'synex_consumer');
   engine.global.close();
+});
+
+test('network RPC limiter state is fenced by source generation', async () => {
+  const engine = await createKernelEngine(['foundation', 'registries', 'messaging']);
+  try {
+    const result = await engine.doString(`
+      local handlers, consumed, purged = {}, {}, {}
+      local platform = setmetatable({
+        onNet = function(event, handler) handlers[event] = handler end,
+        triggerClientEvent = function() end,
+        jsonEncode = function() return '{}' end
+      }, { __index = FakePlatform })
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      foundation.configureIds('rpc-source-generation')
+      local registries = SynexCoreFactories.registries({ foundation = foundation })
+      local players, owners = registries.players, registries.owners
+      owners:activate('synex_core')
+      assert(players:createPending(-1, { sessionId = 'session-old' }))
+      local old = assert(players:bindJoined(-1, 42, {
+        id = 'session-old', userId = 'user-old', state = 'ACTIVE', version = 1
+      }))
+      local limiter = {}
+      function limiter:consume(key)
+        consumed[#consumed + 1] = key
+        return nil, foundation.error('RATE_LIMITED', 'fixture')
+      end
+      function limiter:purge(prefix) purged[#purged + 1] = prefix end
+      local security = {
+        validateNetworkEnvelope = function() return true, nil end,
+        rateLimiter = limiter
+      }
+      local messaging = SynexCoreFactories.messaging({
+        platform = platform, foundation = foundation,
+        contracts = { registry = { resolve = function() error('rate gate must run first') end } },
+        security = security, owners = owners, players = players, lifecycle = {},
+        protocol = SynexProtocol, config = {}, coreResource = 'synex_core'
+      })
+      messaging.network:bind()
+      source = 42
+      handlers[SynexProtocol.events.request]({
+        wire = 1, requestId = 'request-old', procedure = 'synex.fixture.read',
+        version = '1.0.0', payload = {}
+      })
+      handlers[SynexProtocol.events.cancel]('request-old')
+      messaging.network:purgeSource(42, old.sourceGeneration)
+      assert(players:detachSource(old.id, 42, old.sourceGeneration))
+      assert(players:removeSession(old.id))
+      assert(players:createPending(-2, { sessionId = 'session-new' }))
+      local replacement = assert(players:bindJoined(-2, 42, {
+        id = 'session-new', userId = 'user-new', state = 'ACTIVE', version = 1
+      }))
+      handlers[SynexProtocol.events.request]({
+        wire = 1, requestId = 'request-new', procedure = 'synex.fixture.read',
+        version = '1.0.0', payload = {}
+      })
+      handlers[SynexProtocol.events.cancel]('request-new')
+      assert(consumed[1] == ('rpc:42:%s:synex.fixture.read'):format(old.sourceGeneration))
+      assert(consumed[2] == ('rpc-cancel:42:%s:'):format(old.sourceGeneration))
+      assert(consumed[3] == ('rpc:42:%s:synex.fixture.read'):format(replacement.sourceGeneration))
+      assert(consumed[4] == ('rpc-cancel:42:%s:'):format(replacement.sourceGeneration))
+      assert(purged[1] == ('rpc:42:%s:'):format(old.sourceGeneration))
+      assert(purged[2] == ('rpc-cancel:42:%s:'):format(old.sourceGeneration))
+      assert(not purged[1]:find(':' .. replacement.sourceGeneration .. ':', 1, true))
+      return table.concat({old.sourceGeneration, replacement.sourceGeneration, #consumed, #purged}, ':')
+    `);
+    assert.equal(result, '1:3:4:2');
+  } finally {
+    engine.global.close();
+  }
 });
 
 test('service provider health and circuit state drive dependency validation and recover', async () => {

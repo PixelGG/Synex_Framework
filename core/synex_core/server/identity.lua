@@ -10,6 +10,8 @@ factories.identity = function(deps)
     local messaging = assert(deps.messaging, 'identity requires messaging')
     local leases = assert(deps.leases, 'identity requires cluster leases')
     local instances = assert(deps.instances, 'identity requires cluster instances')
+    local rateLimiter = assert(deps.rateLimiter, 'identity requires rate limiter')
+    local sha256 = assert(deps.sha256, 'identity requires SHA-256')
 
     local common = factories.identityCommon({
         foundation = foundation,
@@ -56,6 +58,8 @@ factories.identity = function(deps)
         userRepository = repositories.users,
         sessionRepository = repositories.sessions,
         accessRepository = repositories.access,
+        rateLimiter = rateLimiter,
+        sha256 = sha256,
         invokeOwned = common.invokeOwned,
         normalizeIdentifiers = common.normalizeIdentifiers,
         sessionTransitions = common.sessionTransitions,

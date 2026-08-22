@@ -16,8 +16,10 @@ factories.identityConnections = function(deps)
     local userRepository = assert(deps.userRepository, 'identity connections requires user repository')
     local sessionRepository = assert(deps.sessionRepository, 'identity connections requires session repository')
     local accessRepository = assert(deps.accessRepository, 'identity connections requires access repository')
+    local rateLimiter = assert(deps.rateLimiter, 'identity connections requires rate limiter')
     local invokeOwned = assert(deps.invokeOwned, 'identity connections requires owned invocation')
     local normalizeIdentifiers = assert(deps.normalizeIdentifiers, 'identity connections requires identifier normalization')
+    local sha256 = assert(deps.sha256, 'identity connections requires SHA-256')
     local sessionTransitions = assert(deps.sessionTransitions, 'identity connections requires transition map')
     local transition = assert(deps.transition, 'identity connections requires session transitions')
 
@@ -31,6 +33,38 @@ factories.identityConnections = function(deps)
     local reconnectGraceSize = 0
     local queueStats = { admitted = 0, timedOut = 0, rejected = 0, peak = 0 }
     local connectionPipeline = {}
+    local function identifierFingerprint(identifiers)
+        local canonical = {}
+        for _, identifier in ipairs(identifiers or {}) do
+            local normalized = identifier.normalized
+            if type(normalized) ~= 'string' then
+                normalized = type(identifier.type) == 'string' and type(identifier.value) == 'string'
+                    and (identifier.type .. ':' .. identifier.value) or nil
+            end
+            if type(normalized) == 'string' and normalized ~= '' then
+                canonical[#canonical + 1] = tostring(#normalized) .. ':' .. normalized
+            end
+        end
+        if #canonical == 0 then return nil end
+        table.sort(canonical)
+        return sha256('synex-connection-identity-v1\0' .. table.concat(canonical, '\0'))
+    end
+
+    local function logConnectionStage(connection, stage, code, level)
+        foundation.safeCall(function()
+            local elapsedMs = math.max(0,
+                foundation.monotonicMs() - (connection.receivedAt or foundation.monotonicMs()))
+            local fields = {
+                correlationId = connection.id,
+                stage = stage,
+                elapsedMs = elapsedMs,
+                code = code
+            }
+            foundation.safeCall(metrics.increment, metrics, 'synex_connection_stage_total', { stage = stage })
+            foundation.safeCall(metrics.observe, metrics, 'synex_connection_stage_elapsed_ms', { stage = stage }, elapsedMs)
+            foundation.safeCall(logger[level or 'info'], logger, 'connection stage', fields)
+        end)
+    end
 
     local function releaseAdmission(connection)
         local connectionId = type(connection) == 'table' and connection.id or connection
@@ -61,6 +95,7 @@ factories.identityConnections = function(deps)
             candidate.reconnectGrace = connection.reconnectGrace
             candidate.clusterLease = foundation.copy(connection.clusterLease)
             candidate.acceptedAt = connection.acceptedAt
+            candidate.expiresAt = connection.expiresAt
         end)
     end
 
@@ -78,10 +113,19 @@ factories.identityConnections = function(deps)
 
     local function releaseConnectionLease(connection)
         if connection and connection.clusterLease then
-            local _, err = leases:release(connection.clusterLease)
-            if err then logger:warn('cluster session lease release failed', { sessionId = connection.sessionId, code = err.code }) end
+            local invoked, released, err = foundation.safeCall(leases.release, leases, connection.clusterLease)
             connection.clusterLease = nil
-            return err == nil, err
+            if not invoked then
+                err = foundation.error('LEASE_RELEASE_FAILED', 'Cluster session authority could not be released.')
+                released = nil
+            end
+            if not released then
+                foundation.safeCall(logger.warn, logger, 'cluster session lease release failed', {
+                    correlationId = connection.id,
+                    code = type(err) == 'table' and err.code or 'LEASE_RELEASE_FAILED'
+                })
+            end
+            return released and true or nil, err
         end
         return true, nil
     end
@@ -132,26 +176,15 @@ factories.identityConnections = function(deps)
         end
         return priority
     end
-
-    local function replaceLocalSessions(userId)
-        for _, session in ipairs(players:sessionsByUser(userId)) do
-            if session.state == 'ACTIVE' then
-                local unloaded, unloadError = characters:unload(session.id, 'duplicate session replaced')
-                if not unloaded then return nil, unloadError end
-            end
-            local current = players:getSession(session.id) or session
-            local closed, closeError = sessionRepository:close(current, 'duplicate session replaced')
-            if not closed then return nil, closeError end
-            messaging.network:purgeSource(current.source, current.sourceGeneration)
-            releaseConnectionLease(current)
-            players:removeSession(current.id)
-            if current.source ~= nil then
-                platform.dropPlayer(current.source, 'This session was replaced by a newer connection.')
-            end
-        end
-        return true, nil
-    end
-
+    local replacements = factories.identityConnectionReplacement({
+        platform = platform,
+        foundation = foundation,
+        players = players,
+        messaging = messaging,
+        characters = characters,
+        sessionRepository = sessionRepository,
+        releaseConnectionLease = releaseConnectionLease
+    })
     function connectionPipeline:registerGate(owner, epoch, definition)
         if type(definition) ~= 'table' or type(definition.name) ~= 'string' or #definition.name < 3 or #definition.name > 96
             or definition.name:find('[%z\1-\31\127]') or type(definition.run) ~= 'function' then
@@ -173,7 +206,6 @@ factories.identityConnections = function(deps)
         if err then gates[token] = nil return nil, err end
         return token, nil
     end
-
     local function orderedGates()
         local result = {}
         for _, gate in pairs(gates) do if owners:isCurrent(gate.owner, gate.epoch) then result[#result + 1] = gate end end
@@ -267,358 +299,376 @@ factories.identityConnections = function(deps)
 
     function connectionPipeline:handleConnecting(tempSource, playerName, deferrals)
         tempSource = tonumber(tempSource) or tempSource
-        local done = false
-        local function finish(reason)
-            if done then return false end
-            done = true
-            platform.defer()
-            deferrals.done(reason)
-            return true
-        end
-        deferrals.defer()
-        platform.defer()
-        if not lifecycle.core:canAdmitPlayers() then
-            finish('Synex is starting. Please reconnect shortly.')
-            return
-        end
-        local maintenanceBypass = aceAllowed(tempSource, config.maintenanceBypassAce or 'synex.maintenance.bypass')
-        if config.maintenanceMode == true and not maintenanceBypass then
-            metrics:increment('synex_connections_total', { result = 'maintenance' })
-            finish(tostring(config.maintenanceMessage or 'Synex is currently in maintenance mode.'):sub(1, 256))
-            return
-        end
-        local rawIdentifiers = platform.getPlayerIdentifiers(tempSource)
-        local identifiers = normalizeIdentifiers(rawIdentifiers)
+        local receivedAt = foundation.monotonicMs()
         local connection = {
             id = foundation.nextId('connection'), sessionId = foundation.nextId('session'),
             tempSource = tempSource, playerName = tostring(playerName or ''):sub(1, 96),
-            state = 'CONNECTING', acceptedAt = nil, expiresAt = foundation.monotonicMs() + (config.pendingTtlMs or 120000),
-            staff = maintenanceBypass or aceAllowed(tempSource, config.queueStaffAce or 'synex.queue.staff')
+            state = 'CONNECTING', receivedAt = receivedAt, acceptedAt = nil,
+            expiresAt = receivedAt + (config.pendingTtlMs or 120000), staff = false
         }
-        local created, pendingError = players:createPending(tempSource, connection)
-        if not created then finish(pendingError.message) return end
-        deferrals.update('Synex: authenticating connection...')
-        platform.defer()
-        local user, authError = userRepository:authenticate(rawIdentifiers)
-        if not pendingIsCurrent(connection) then abandonConnection(connection) return end
-        if not user then
-            players:removePending(tempSource)
-            finish(authError and authError.message or 'Connection authentication failed.')
-            return
-        end
-        local allowed, accessError = accessRepository:check(user.id, identifiers)
-        if not pendingIsCurrent(connection) then abandonConnection(connection) return end
-        if not allowed then
-            players:removePending(tempSource)
-            finish(accessError and accessError.message or 'Connection access was denied.')
-            return
-        end
-        local policy = duplicatePolicy()
-        if policy == 'deny_new' and #players:sessionsByUser(user.id) > 0 then
-            players:removePending(tempSource)
-            finish('This account already has an active session.')
-            return
-        end
-        connection.userId = user.id
-        connection.priority = connectionPriority(connection, user.id)
-        local synced, syncError = syncPending(connection)
-        if not synced then
-            players:removePending(tempSource)
-            logger:warn('pending connection state synchronization failed', { code = syncError.code })
-            finish('Synex could not maintain the pending connection state.')
-            return
-        end
-        local admitted, queueError = waitForQueue(connection, deferrals)
-        if not pendingIsCurrent(connection) then abandonConnection(connection) return end
-        if not admitted then
-            releaseAdmission(connection)
-            players:removePending(tempSource)
-            finish(queueError.message)
-            return
-        end
-        if policy == 'deny_new' then
-            local leased, leaseError = acquireDuplicateAuthority(connection, user.id, deferrals)
-            if not pendingIsCurrent(connection) then abandonConnection(connection) return end
-            if not leased then
-                releaseAdmission(connection)
-                players:removePending(tempSource)
-                logger:warn('duplicate session lease denied', {
-                    userId = user.id, code = leaseError and leaseError.code or 'UNKNOWN'
-                })
-                finish('This account already has an active session on the Synex cluster.')
-                return
-            end
-            local leaseSynced, leaseSyncError = syncPending(connection)
-            if not leaseSynced then
-                abandonConnection(connection)
-                players:removePending(tempSource)
-                logger:warn('pending cluster authority synchronization failed', { code = leaseSyncError.code })
-                finish('Synex could not maintain cluster session authority.')
-                return
-            end
-        end
-        connection.state = 'AUTHENTICATING'
-        local authenticating, authenticatingError = syncPending(connection)
-        if not authenticating then
-            abandonConnection(connection)
-            players:removePending(tempSource)
-            logger:warn('pending authentication state synchronization failed', { code = authenticatingError.code })
-            finish('Synex could not maintain the pending authentication state.')
-            return
-        end
-        for _, gate in ipairs(orderedGates()) do
-            deferrals.update(('Synex: %s...'):format(gate.name))
+        local terminalState = 'open'
+        local terminalAttempted = false
+        local terminalAcceptance = false
+        local function finish(reason, code)
+            if terminalState ~= 'open' then return false end
             platform.defer()
-            local started = foundation.monotonicMs()
-            local ok, result, gateError = invokeOwned(gate, gate.run, foundation.readonly({
-                connectionId = connection.id, sessionId = connection.sessionId, tempSource = tempSource,
-                user = foundation.copy(user), identifiers = foundation.copy(identifiers)
-            }))
-            local elapsed = foundation.monotonicMs() - started
-            if not pendingIsCurrent(connection) then abandonConnection(connection) return end
-            if not ok or elapsed > gate.timeoutMs or result ~= true then
-                releaseAdmission(connection)
-                players:removePending(tempSource)
-                releaseConnectionLease(connection)
-                logger:warn('connection gate denied or failed', { gate = gate.name, userId = user.id, elapsedMs = elapsed, error = tostring(ok and gateError or result) })
-                finish(type(gateError) == 'table' and gateError.message or 'Connection validation failed.')
-                return
+            if terminalState ~= 'open' then return false end
+            terminalState = 'invoking'
+            terminalAttempted = true
+            terminalAcceptance = reason == nil
+            local safeCode = nil
+            local invoked = nil
+            if terminalAcceptance then
+                invoked = foundation.safeCall(deferrals.done)
+            else
+                safeCode = type(code) == 'string' and code:match('^[A-Z0-9_]+$') and code:sub(1, 48)
+                    or 'CONNECTION_REJECTED'
+                local safeReason = tostring(reason):gsub('[%z\1-\31\127]', ' '):sub(1, 180)
+                invoked = foundation.safeCall(deferrals.done,
+                    ('Synex [%s]: %s'):format(safeCode, safeReason):sub(1, 256))
             end
+            if not invoked then
+                terminalState = 'failed'
+                logConnectionStage(connection, 'deferral_terminal_failed',
+                    terminalAcceptance and 'DEFERRAL_ACCEPT_FAILED' or 'DEFERRAL_REJECT_FAILED', 'error')
+                return nil, foundation.error('DEFERRAL_TERMINATION_FAILED',
+                    'The Cfx connection deferral could not be finalized.')
+            end
+            terminalState = terminalAcceptance and 'accepted' or 'rejected'
+            foundation.safeCall(metrics.increment, metrics, 'synex_connections_total', {
+                result = terminalAcceptance and 'accepted' or 'rejected'
+            })
+            logConnectionStage(connection, terminalAcceptance and 'deferral_accepted' or 'rejected',
+                safeCode, terminalAcceptance and 'info' or 'warn')
+            return true
         end
-        if policy == 'kick_old' then
-            local replaced, replaceError = replaceLocalSessions(user.id)
-            if not pendingIsCurrent(connection) then abandonConnection(connection) return end
-            if not replaced then
-                releaseAdmission(connection)
-                players:removePending(tempSource)
-                logger:error('local duplicate session replacement failed', {
-                    userId = user.id, code = replaceError and replaceError.code or 'UNKNOWN'
-                })
-                finish('The existing session could not be replaced safely. Please retry.')
+        local ok, runtimeError = foundation.safeCall(function()
+            deferrals.defer()
+            platform.defer()
+            logConnectionStage(connection, 'received')
+            if not lifecycle.core:canAdmitPlayers() then
+                finish('The Synex runtime is not ready to admit players. Please reconnect shortly.', 'CORE_NOT_READY')
                 return
             end
-            local leased, leaseError = acquireDuplicateAuthority(connection, user.id, deferrals)
-            if not pendingIsCurrent(connection) then abandonConnection(connection) return end
-            if not leased then
-                releaseAdmission(connection)
-                players:removePending(tempSource)
-                logger:warn('cluster duplicate session replacement unavailable', {
-                    userId = user.id, code = leaseError and leaseError.code or 'UNKNOWN'
-                })
-                finish('The existing cluster session could not be replaced in time.')
+            local maintenanceBypass = aceAllowed(tempSource, config.maintenanceBypassAce or 'synex.maintenance.bypass')
+            if config.maintenanceMode == true and not maintenanceBypass then
+                finish(tostring(config.maintenanceMessage or 'Synex is currently in maintenance mode.'), 'MAINTENANCE')
                 return
             end
-            local leaseSynced, leaseSyncError = syncPending(connection)
-            if not leaseSynced then
+            local rawIdentifiers = platform.getPlayerIdentifiers(tempSource)
+            local identifiers = normalizeIdentifiers(rawIdentifiers)
+            connection.identityFingerprint = identifierFingerprint(identifiers)
+            connection.staff = maintenanceBypass or aceAllowed(tempSource, config.queueStaffAce or 'synex.queue.staff')
+            local created = players:createPending(tempSource, connection)
+            if not created then
+                finish('A previous connection attempt is still being cleaned up. Please wait a moment and reconnect.',
+                    'PENDING_CONNECTION_EXISTS')
+                return
+            end
+            deferrals.update('Synex: authenticating connection...')
+            platform.defer()
+            local user, authError = userRepository:authenticate(rawIdentifiers)
+            if not pendingIsCurrent(connection) then
+                abandonConnection(connection)
+                finish('The connection attempt was cancelled. Please reconnect.', 'CONNECTION_CANCELLED')
+                return
+            end
+            if not user then
+                players:removePending(tempSource)
+                local authenticationCode = authError and authError.code == 'IDENTIFIER_REQUIRED'
+                    and 'IDENTIFIER_REQUIRED' or 'AUTHENTICATION_FAILED'
+                local authenticationMessage = authenticationCode == 'IDENTIFIER_REQUIRED'
+                    and 'No supported platform identifier was provided.' or 'Connection authentication failed. Please retry.'
+                finish(authenticationMessage, authenticationCode)
+                return
+            end
+            logConnectionStage(connection, 'identity_ok')
+            local allowed, accessError = accessRepository:check(user.id, identifiers)
+            if not pendingIsCurrent(connection) then
+                abandonConnection(connection)
+                finish('The connection attempt was cancelled. Please reconnect.', 'CONNECTION_CANCELLED')
+                return
+            end
+            if not allowed then
+                players:removePending(tempSource)
+                local accessCode = accessError and accessError.code
+                if accessCode == 'ACCESS_BANNED' then
+                    finish(accessError.message or 'Access to this server is denied.', 'ACCESS_BANNED')
+                elseif accessCode == 'ALLOWLIST_REQUIRED' then
+                    finish('This server requires an active allowlist entry.', 'ALLOWLIST_REQUIRED')
+                else
+                    finish('The server could not verify access. Please retry shortly.', 'ACCESS_CHECK_FAILED')
+                end
+                return
+            end
+            logConnectionStage(connection, 'access_ok')
+            local policy = duplicatePolicy()
+            if policy == 'deny_new' and #players:sessionsByUser(user.id) > 0 then
+                players:removePending(tempSource)
+                finish('This account already has an active session.', 'DUPLICATE_SESSION')
+                return
+            end
+            connection.userId = user.id
+            connection.priority = connectionPriority(connection, user.id)
+            local synced, syncError = syncPending(connection)
+            if not synced then
+                players:removePending(tempSource)
+                logger:warn('pending connection state synchronization failed', {
+                    correlationId = connection.id, code = syncError.code
+                })
+                finish('Synex could not maintain the pending connection state.', 'PENDING_STATE_FAILED')
+                return
+            end
+            local admitted, queueError = waitForQueue(connection, deferrals)
+            if not pendingIsCurrent(connection) then
+                abandonConnection(connection)
+                finish('The connection attempt was cancelled. Please reconnect.', 'CONNECTION_CANCELLED')
+                return
+            end
+            if not admitted then
+                releaseAdmission(connection)
+                players:removePending(tempSource)
+                finish(queueError.message, queueError.code or 'QUEUE_REJECTED')
+                return
+            end
+            if policy == 'deny_new' then
+                local leased, leaseError = acquireDuplicateAuthority(connection, user.id, deferrals)
+                if not pendingIsCurrent(connection) then
+                    abandonConnection(connection)
+                    finish('The connection attempt was cancelled. Please reconnect.', 'CONNECTION_CANCELLED')
+                    return
+                end
+                if not leased then
+                    releaseAdmission(connection)
+                    players:removePending(tempSource)
+                    logger:warn('duplicate session lease denied', {
+                        correlationId = connection.id, code = leaseError and leaseError.code or 'UNKNOWN'
+                    })
+                    finish('This account already has an active session on the Synex cluster.', 'DUPLICATE_SESSION')
+                    return
+                end
+                logConnectionStage(connection, 'lease_acquired')
+                local leaseSynced, leaseSyncError = syncPending(connection)
+                if not leaseSynced then
+                    abandonConnection(connection)
+                    players:removePending(tempSource)
+                    logger:warn('pending cluster authority synchronization failed', {
+                        correlationId = connection.id, code = leaseSyncError.code
+                    })
+                    finish('Synex could not maintain cluster session authority.', 'LEASE_STATE_FAILED')
+                    return
+                end
+            end
+            connection.state = 'AUTHENTICATING'
+            local authenticating, authenticatingError = syncPending(connection)
+            if not authenticating then
                 abandonConnection(connection)
                 players:removePending(tempSource)
-                logger:warn('pending replacement authority synchronization failed', { code = leaseSyncError.code })
-                finish('Synex could not maintain replacement authority.')
-                return
-            end
-        elseif policy == 'allow' then
-            local leased, leaseError = acquireDuplicateAuthority(connection, user.id, deferrals)
-            if not pendingIsCurrent(connection) then abandonConnection(connection) return end
-            if not leased then
-                releaseAdmission(connection)
-                players:removePending(tempSource)
-                logger:error('parallel session authority failed', {
-                    userId = user.id, code = leaseError and leaseError.code or 'UNKNOWN'
+                logger:warn('pending authentication state synchronization failed', {
+                    correlationId = connection.id, code = authenticatingError.code
                 })
-                finish('Synex could not establish cluster session authority.')
+                finish('Synex could not maintain the pending authentication state.', 'PENDING_STATE_FAILED')
                 return
             end
-            local leaseSynced, leaseSyncError = syncPending(connection)
-            if not leaseSynced then
+            for _, gate in ipairs(orderedGates()) do
+                deferrals.update(('Synex: %s...'):format(gate.name))
+                platform.defer()
+                local started = foundation.monotonicMs()
+                local invoked, result, gateError = invokeOwned(gate, gate.run, foundation.readonly({
+                    connectionId = connection.id, sessionId = connection.sessionId, tempSource = tempSource,
+                    user = foundation.copy(user), identifiers = foundation.copy(identifiers)
+                }))
+                local elapsed = foundation.monotonicMs() - started
+                if not pendingIsCurrent(connection) then
+                    abandonConnection(connection)
+                    finish('The connection attempt was cancelled. Please reconnect.', 'CONNECTION_CANCELLED')
+                    return
+                end
+                if not invoked or elapsed > gate.timeoutMs or result ~= true then
+                    releaseAdmission(connection)
+                    players:removePending(tempSource)
+                    releaseConnectionLease(connection)
+                    logger:warn('connection gate denied or failed', {
+                        correlationId = connection.id, gate = gate.name, elapsedMs = elapsed,
+                        code = type(gateError) == 'table' and gateError.code or 'CONNECTION_GATE_DENIED'
+                    })
+                    finish('Connection validation failed.', 'CONNECTION_GATE_DENIED')
+                    return
+                end
+            end
+            if policy == 'kick_old' then
+                local replaced, replaceError = replacements:replace(user.id)
+                if not pendingIsCurrent(connection) then
+                    abandonConnection(connection)
+                    finish('The connection attempt was cancelled. Please reconnect.', 'CONNECTION_CANCELLED')
+                    return
+                end
+                if not replaced then
+                    releaseAdmission(connection)
+                    players:removePending(tempSource)
+                    logger:error('local duplicate session replacement failed', {
+                        correlationId = connection.id, code = replaceError and replaceError.code or 'UNKNOWN'
+                    })
+                    finish('The existing session could not be replaced safely. Please retry.', 'SESSION_REPLACE_FAILED')
+                    return
+                end
+                local leased, leaseError = acquireDuplicateAuthority(connection, user.id, deferrals)
+                if not pendingIsCurrent(connection) then
+                    abandonConnection(connection)
+                    finish('The connection attempt was cancelled. Please reconnect.', 'CONNECTION_CANCELLED')
+                    return
+                end
+                if not leased then
+                    releaseAdmission(connection)
+                    players:removePending(tempSource)
+                    logger:warn('cluster duplicate session replacement unavailable', {
+                        correlationId = connection.id, code = leaseError and leaseError.code or 'UNKNOWN'
+                    })
+                    finish('The existing cluster session could not be replaced in time.', 'SESSION_REPLACE_TIMEOUT')
+                    return
+                end
+                logConnectionStage(connection, 'lease_acquired')
+                local leaseSynced, leaseSyncError = syncPending(connection)
+                if not leaseSynced then
+                    abandonConnection(connection)
+                    players:removePending(tempSource)
+                    logger:warn('pending replacement authority synchronization failed', {
+                        correlationId = connection.id, code = leaseSyncError.code
+                    })
+                    finish('Synex could not maintain replacement authority.', 'LEASE_STATE_FAILED')
+                    return
+                end
+            elseif policy == 'allow' then
+                local leased, leaseError = acquireDuplicateAuthority(connection, user.id, deferrals)
+                if not pendingIsCurrent(connection) then
+                    abandonConnection(connection)
+                    finish('The connection attempt was cancelled. Please reconnect.', 'CONNECTION_CANCELLED')
+                    return
+                end
+                if not leased then
+                    releaseAdmission(connection)
+                    players:removePending(tempSource)
+                    logger:error('parallel session authority failed', {
+                        correlationId = connection.id, code = leaseError and leaseError.code or 'UNKNOWN'
+                    })
+                    finish('Synex could not establish cluster session authority.', 'LEASE_ACQUIRE_FAILED')
+                    return
+                end
+                logConnectionStage(connection, 'lease_acquired')
+                local leaseSynced, leaseSyncError = syncPending(connection)
+                if not leaseSynced then
+                    abandonConnection(connection)
+                    players:removePending(tempSource)
+                    logger:warn('pending parallel authority synchronization failed', {
+                        correlationId = connection.id, code = leaseSyncError.code
+                    })
+                    finish('Synex could not maintain parallel session authority.', 'LEASE_STATE_FAILED')
+                    return
+                end
+            end
+            connection.state = 'AUTHENTICATED'
+            connection.acceptedAt = foundation.monotonicMs()
+            connection.expiresAt = connection.acceptedAt + (config.pendingTtlMs or 120000)
+            local accepted, acceptanceError = syncPending(connection)
+            if not accepted then
                 abandonConnection(connection)
                 players:removePending(tempSource)
-                logger:warn('pending parallel authority synchronization failed', { code = leaseSyncError.code })
-                finish('Synex could not maintain parallel session authority.')
+                logger:warn('accepted connection state synchronization failed', {
+                    correlationId = connection.id, code = acceptanceError.code
+                })
+                finish('Synex could not finalize the pending connection.', 'PENDING_STATE_FAILED')
                 return
             end
+            finish()
+        end)
+        if not ok then
+            if not (terminalAttempted and terminalAcceptance) then
+                local pending = players:getPending(tempSource)
+                if pending and pending.id == connection.id then pending = players:removePending(tempSource) else pending = nil end
+                abandonConnection(pending or connection)
+            end
+            foundation.safeCall(logger.error, logger, 'connection pipeline failed', {
+                correlationId = connection.id, code = 'CONNECTION_PIPELINE_FAILED'
+            })
+            if not terminalAttempted then
+                foundation.safeCall(finish,
+                    'An internal connection error occurred. Please retry. If it persists, contact the server team.',
+                    'CONNECTION_PIPELINE_FAILED')
+            end
+            return nil, foundation.error('CONNECTION_PIPELINE_FAILED', 'The connection pipeline raised an exception.', {
+                details = { runtimeType = type(runtimeError) }
+            })
         end
-        connection.state = 'AUTHENTICATED'
-        connection.acceptedAt = foundation.monotonicMs()
-        local accepted, acceptanceError = syncPending(connection)
-        if not accepted then
-            abandonConnection(connection)
-            players:removePending(tempSource)
-            logger:warn('accepted connection state synchronization failed', { code = acceptanceError.code })
-            finish('Synex could not finalize the pending connection.')
-            return
+        if terminalState == 'failed' then
+            return nil, foundation.error('DEFERRAL_TERMINATION_FAILED',
+                'The Cfx connection deferral could not be finalized.')
         end
-        metrics:increment('synex_connections_total', { result = 'accepted' })
-        finish()
+        return true, nil
     end
 
-    function connectionPipeline:handleJoining(finalSource, oldSource)
-        finalSource = tonumber(finalSource) or finalSource
-        oldSource = tonumber(oldSource) or oldSource
-        local pending = players:getPending(oldSource)
-        if not pending or pending.state ~= 'AUTHENTICATED' or pending.expiresAt < foundation.monotonicMs() then
-            if pending then
-                players:removePending(oldSource)
-                releaseAdmission(pending)
-                releaseConnectionLease(pending)
-            end
-            platform.dropPlayer(finalSource, 'Synex could not bind this connection. Please reconnect.')
-            return nil, foundation.error('PENDING_CONNECTION_NOT_FOUND', 'The accepted connection is missing or expired.')
-        end
-        local session = {
-            id = pending.sessionId, userId = pending.userId, state = 'AUTHENTICATED',
-            source = finalSource, sourceGeneration = 0, characterId = nil, version = 1,
-            connectedAt = foundation.utcIso()
-        }
-        session.clusterLease = pending.clusterLease
-        local transitioned, transitionError = transition(session, 'SELECTING_CHARACTER')
-        if not transitioned then
-            players:removePending(oldSource)
-            releaseAdmission(pending)
-            releaseConnectionLease(pending)
-            platform.dropPlayer(finalSource, 'Synex could not initialize the session.')
-            return nil, transitionError
-        end
-        session.persistedVersion = session.version
-        local bound, bindError = players:bindJoined(oldSource, finalSource, session)
-        if not bound then
-            releaseAdmission(pending)
-            releaseConnectionLease(pending)
-            platform.dropPlayer(finalSource, 'Synex could not establish a session.')
-            return nil, bindError
-        end
-        releaseAdmission(pending)
-        local persisted, persistenceError = sessionRepository:create(bound)
-        if not persisted then
-            players:removeSession(bound.id)
-            releaseConnectionLease(bound)
-            platform.dropPlayer(finalSource, 'Synex could not persist the session. Please reconnect.')
-            return nil, persistenceError
-        end
-        if not players:isCurrent(bound.id, finalSource, bound.sourceGeneration) then
-            local _, closeError = sessionRepository:close(bound, 'disconnected during session creation')
-            if closeError then
-                logger:error('cancelled session persistence cleanup failed', {
-                    sessionId = bound.id, code = closeError.code
-                })
-            end
-            releaseConnectionLease(bound)
-            return nil, foundation.error('CONNECTION_CANCELLED', 'The player disconnected while the session was opening.')
-        end
-        logger:info('session opened', { sessionId = bound.id, userId = bound.userId, source = finalSource, generation = bound.sourceGeneration })
-        return bound, nil
-    end
+    local function clearQueueEntry(connection) if connection and connection.id then queueEntries[connection.id] = nil end end
+    local joinClaims = factories.identityConnectionClaims({ foundation = foundation })
+    local handleJoining = factories.identityConnectionJoin({
+        platform = platform,
+        foundation = foundation,
+        players = players,
+        rateLimiter = rateLimiter,
+        userRepository = userRepository,
+        sessionRepository = sessionRepository,
+        normalizeIdentifiers = normalizeIdentifiers,
+        identifierFingerprint = identifierFingerprint,
+        transition = transition,
+        leases = leases,
+        joinClaims = joinClaims,
+        logConnectionStage = logConnectionStage,
+        releaseAdmission = releaseAdmission,
+        releaseConnectionLease = releaseConnectionLease,
+        clearQueueEntry = clearQueueEntry
+    })
+    function connectionPipeline:handleJoining(finalSource, oldSource) return handleJoining(finalSource, oldSource) end
 
-    function connectionPipeline:handleDropped(playerSource, reason)
-        playerSource = tonumber(playerSource) or playerSource
-        local session = players:getBySource(playerSource)
-        if not session then
-            local pending = players:removePending(playerSource)
-            if pending then queueEntries[pending.id] = nil end
-            releaseAdmission(pending)
-            releaseConnectionLease(pending)
-            return
-        end
-        local failures = {}
-        local function capture(step, handler)
-            local ok, value, err = foundation.safeCall(handler)
-            if not ok or value == nil then
-                local failure = ok and err or value
-                failures[#failures + 1] = { step = step, code = type(failure) == 'table' and failure.code or 'RUNTIME_ERROR' }
-                logger:error('disconnect cleanup step failed', {
-                    step = step, sessionId = session.id, userId = session.userId,
-                    error = tostring(type(failure) == 'table' and (failure.code or failure.message) or failure)
-                })
-                return nil
-            end
-            return value
-        end
-        if session.state == 'ACTIVE' then
-            capture('character_unload', function() return characters:unload(session.id, 'disconnect') end)
-        end
-        local current = players:getSession(session.id) or session
-        if current.state ~= 'DISCONNECTING' and current.state ~= 'CLOSED' then
-            capture('session_transition', function() return players:updateSession(current.id, function(candidate)
-                if sessionTransitions[candidate.state] and sessionTransitions[candidate.state].DISCONNECTING then transition(candidate, 'DISCONNECTING') end
-            end) end)
-        end
-        current = players:getSession(session.id) or current
-        local closed = false
-        for attempt = 1, 2 do
-            local value = capture('session_close_' .. attempt, function() return sessionRepository:close(current, reason) end)
-            if value then closed = true break end
-            if attempt == 1 then platform.wait(25) end
-        end
-        capture('lease_release', function() return releaseConnectionLease(current) end)
-        local purged, purgeError = foundation.safeCall(messaging.network.purgeSource,
-            messaging.network, playerSource, session.sourceGeneration)
-        if not purged then failures[#failures + 1] = { step = 'network_purge', code = 'RUNTIME_ERROR' }; logger:error('disconnect network cleanup failed', { sessionId = session.id, error = tostring(purgeError) }) end
-        players:removeSession(session.id)
-        recordReconnectGrace(session.userId)
-        if #failures > 0 then
-            metrics:increment('synex_disconnect_cleanup_total', { result = 'partial' })
-            lifecycle.core:setHealth('disconnect-cleanup', 'DEGRADED', ('%d cleanup step(s) failed'):format(#failures))
-        else
-            metrics:increment('synex_disconnect_cleanup_total', { result = 'complete' })
-            lifecycle.core:setHealth('disconnect-cleanup', 'HEALTHY')
-        end
-        logger:info('session closed', { sessionId = session.id, userId = session.userId, reason = tostring(reason or 'dropped'):sub(1, 128) })
-        return { closed = closed, failures = failures }
-    end
-
-    function connectionPipeline:purgeExpired()
-        local now = foundation.monotonicMs()
-        local purged = 0
-        for _, entry in ipairs(players:listPending()) do
-            if entry.connection.expiresAt and entry.connection.expiresAt <= now then
-                local removed = players:removePending(entry.source)
-                if removed then queueEntries[removed.id] = nil end
-                releaseAdmission(removed)
-                releaseConnectionLease(removed)
-                purged = purged + 1
+    local maintenance = factories.identityConnectionMaintenance({
+        platform = platform,
+        foundation = foundation,
+        players = players,
+        lifecycle = lifecycle,
+        messaging = messaging,
+        config = config,
+        leases = leases,
+        instances = instances,
+        characters = characters,
+        sessionRepository = sessionRepository,
+        sessionTransitions = sessionTransitions,
+        transition = transition,
+        rateLimiter = rateLimiter,
+        joinClaims = joinClaims,
+        logConnectionStage = logConnectionStage,
+        releaseAdmission = releaseAdmission,
+        releaseConnectionLease = releaseConnectionLease,
+        clearQueueEntry = clearQueueEntry,
+        recordReconnectGrace = recordReconnectGrace,
+        purgeReconnectGrace = function(now)
+            for userId, entry in pairs(reconnectGrace) do
+                if entry.expiresAt <= now then
+                    reconnectGrace[userId] = nil
+                    reconnectGraceSize = math.max(0, reconnectGraceSize - 1)
+                end
             end
         end
-        for userId, entry in pairs(reconnectGrace) do
-            if entry.expiresAt <= now then reconnectGrace[userId] = nil; reconnectGraceSize = math.max(0, reconnectGraceSize - 1) end
-        end
-        return purged
-    end
-
+    })
+    function connectionPipeline:handleDropped(playerSource, reason) return maintenance:handleDropped(playerSource, reason) end
+    function connectionPipeline:purgeExpired(maximum) return maintenance:purgeExpired(maximum) end
     function connectionPipeline:heartbeat()
-        self:purgeExpired()
-        local sessions = players:snapshot().sessions
-        local sessionIds = {}
-        for _, session in ipairs(sessions) do
-            sessionIds[#sessionIds + 1] = session.id
-            if session.clusterLease then
-                local renewed, err = leases:renew(session.clusterLease)
-                if not renewed then
-                    logger:error('cluster session lease lost', { sessionId = session.id, userId = session.userId, code = err.code })
-                    if session.source ~= nil then platform.dropPlayer(session.source, 'Synex session authority was lost. Please reconnect.') end
-                end
-            end
+        local invoked, report, reconciliationError = foundation.safeCall(replacements.reconcile, replacements, 8)
+        if not invoked or not report then
+            foundation.safeCall(metrics.increment, metrics,
+                'synex_replacement_close_reconciliation_total', { result = 'failed' })
+            foundation.safeCall(logger.error, logger, 'replacement session close reconciliation failed', {
+                code = invoked and reconciliationError and reconciliationError.code or 'RUNTIME_ERROR'
+            })
         end
-        local touched, touchError = instances:touchSessions(sessionIds)
-        if not touched then logger:error('session heartbeat persistence failed', { code = touchError.code }) end
-        local cluster, heartbeatError = instances:heartbeat(config.clusterSessionLeaseSeconds or 45)
-        if not cluster then logger:error('instance heartbeat failed', { code = heartbeatError.code }) end
-        local controls, controlError = instances:pendingLocalControls()
-        if not controls then
-            logger:error('cluster control polling failed', { code = controlError.code })
-        else
-            for _, control in ipairs(controls) do
-                local target = players:getSession(control.target_session_id)
-                if target and target.source ~= nil and control.action == 'kick' then
-                    platform.dropPlayer(target.source, tostring(control.reason or 'Session replaced.'):sub(1, 128))
-                end
-                local completed, completionError = instances:completeControl(control.request_id)
-                if not completed and completionError then logger:error('cluster control completion failed', { code = completionError.code }) end
-            end
-        end
-        local healthy = touched and cluster and controls ~= nil
-        lifecycle.core:setHealth('cluster', healthy and 'HEALTHY' or 'DEGRADED', healthy and nil or 'cluster heartbeat or control polling failed')
-        return healthy, healthy and nil or (touchError or heartbeatError or controlError)
+        return maintenance:heartbeat()
     end
-
     function connectionPipeline:snapshot()
         local queued, oldestWaitMs = 0, 0
         local now = foundation.monotonicMs()

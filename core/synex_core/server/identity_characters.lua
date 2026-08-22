@@ -300,7 +300,7 @@ factories.identityCharacters = function(deps)
     function characters:create(sessionId, input)
         local session = players:getSession(sessionId)
         if not session then return nil, foundation.error('SESSION_NOT_FOUND', 'The session does not exist.') end
-        if session.persistencePending then
+        if session.persistencePending or session.replacementClosePending then
             return nil, persistencePendingError('The session is waiting for a durable state update.')
         end
         if session.state ~= 'SELECTING_CHARACTER' then return nil, foundation.error('INVALID_SESSION_STATE', 'Characters can only be created while selecting a character.') end
@@ -320,7 +320,7 @@ factories.identityCharacters = function(deps)
     function characters:delete(sessionId, characterId)
         local session = players:getSession(sessionId)
         if not session then return nil, foundation.error('SESSION_NOT_FOUND', 'The session does not exist.') end
-        if session.persistencePending then
+        if session.persistencePending or session.replacementClosePending then
             return nil, persistencePendingError('The session is waiting for a durable state update.')
         end
         if session.state ~= 'SELECTING_CHARACTER' then return nil, foundation.error('INVALID_SESSION_STATE', 'An active character cannot be deleted.') end
@@ -406,7 +406,7 @@ factories.identityCharacters = function(deps)
     function characters:select(sessionId, characterId)
         local session = players:getSession(sessionId)
         if not session then return nil, foundation.error('SESSION_NOT_FOUND', 'The session does not exist.') end
-        if session.persistencePending or pendingUnloadCharacters[characterId] ~= nil then
+        if session.persistencePending or session.replacementClosePending or pendingUnloadCharacters[characterId] ~= nil then
             return nil, persistencePendingError('The requested character is waiting for a durable session update.')
         end
         if session.state ~= 'SELECTING_CHARACTER' then return nil, foundation.error('INVALID_SESSION_STATE', 'The session is not selecting a character.') end
@@ -500,7 +500,7 @@ factories.identityCharacters = function(deps)
     function characters:unload(sessionId, reason)
         local session = players:getSession(sessionId)
         if not session then return nil, foundation.error('SESSION_NOT_FOUND', 'The session does not exist.') end
-        if session.persistencePending then
+        if session.persistencePending or session.replacementClosePending then
             return nil, persistencePendingError('The session is waiting for a durable state update.')
         end
         if session.state ~= 'ACTIVE' or type(session.characterId) ~= 'string' then

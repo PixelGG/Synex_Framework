@@ -33,7 +33,7 @@ An empty instance ID is allowed outside strict production and produces an epheme
 
 Database credentials belong to the database adapter's secure runtime configuration, not to these files.
 
-The accounting concurrency model expects the oxmysql ConVar `mysql_transaction_isolation_level` to be `2` (`READ COMMITTED`). This is an operator setting, not a Synex setting, and Core does not override it.
+The accounting concurrency model expects the oxmysql ConVar `mysql_transaction_isolation_level` to be `2` (`READ COMMITTED`). This is an operator setting, not a Synex setting, and Core does not override it. `synex doctor` reports the current Cfx ConVar and fails the isolation check unless its exact value is `2`. Set it before oxmysql starts and restart the adapter after changing it: a later ConVar read does not prove what existing pooled connections previously applied, nor the state of an arbitrary independent database session.
 
 ## Active default sections
 

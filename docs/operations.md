@@ -14,11 +14,12 @@ The complete lifecycle and allowed transitions are documented in [Runtime model]
 
 | Surface | Access | Scope |
 | --- | --- | --- |
+| `synex overview` | Restricted, console-only Cfx command | Compact human-readable boot, database, resource, session, worker, cluster, and migration summary |
 | `synex status` | Restricted, console-only Cfx command | Lifecycle, cluster, resource, session, and worker summary |
 | `synex doctor` | Restricted, console-only Cfx command | Database, migration attempts, oxmysql, services, contracts, RBAC, and lifecycle checks |
 | `synex resources` / `sessions` / `permissions` / `migrations` | Restricted, console-only Cfx commands | Bounded redacted operational read models |
 | `synex trace <kind> <value> [limit]` | Restricted, console-only Cfx command | Exact audit search for `trace`, `character`, `transaction`, or `resource`; optional limit `1..64` |
-| `synex ledger` / `entities` | Restricted, console-only Cfx commands | Read-only optional service summaries; fail explicitly when the provider is unavailable |
+| `synex ledger` / `entities` | Restricted, console-only Cfx commands | Read-only optional service summaries with explicit `NOT_INSTALLED`, `STOPPED`, `STARTING`, `DEGRADED`, or `HEALTHY` status |
 | `synex access <userId> [limit]` | Restricted, console-only Cfx command | Bounded ban/allowlist history for one user; optional limit `1..64` per list |
 | `synex ban` / `unban` / `allow` / `unallow` | Restricted, console-only Cfx commands | Audited mutation of Core-owned durable access records |
 | `GetRuntimeStatus` | Caller-bound export with `synex.runtime.read` | Redacted lifecycle snapshot |
@@ -27,7 +28,9 @@ The complete lifecycle and allowed transitions are documented in [Runtime model]
 | `api.Metrics.getSnapshot()` | Caller-bound facade with `synex.metrics.read` | In-memory counters, gauges, and bounded histograms |
 | `synex_control` | In-game read-only NUI | Sanitized Core and optional domain operational views plus exact audit search |
 
-All console commands emit structured JSON and reject player execution even when a Cfx command principal was misconfigured. `synex_status` and `synex_doctor` remain restricted aliases. Access mutations use an operator-supplied record ID, user ID where applicable, and bounded reason; quote multi-word reasons. `ban` and `allow` create records, while `unban` and `unallow` revoke an existing record by ID. The change and its before/after audit evidence share one transaction.
+All existing diagnostic and mutation commands continue to emit structured JSON and reject player execution even when a Cfx command principal was misconfigured. `synex overview` is the single human-oriented exception and emits eight bounded `[synex]` lines without identifiers or payloads. `synex_status` and `synex_doctor` remain restricted aliases. Access mutations use an operator-supplied record ID, user ID where applicable, and bounded reason; quote multi-word reasons. `ban` and `allow` create records, while `unban` and `unallow` revoke an existing record by ID. The change and its before/after audit evidence share one transaction.
+
+Core health changes are synchronized into the resource registry through the lifecycle observer, including post-boot health reasons and admission changes. Only `READY` with player admission open and no health reasons is `HEALTHY`; blocked admission or degradation is `DEGRADED`, failed boot is `UNHEALTHY`, and `UNKNOWN` is never a Doctor pass. Resource counts in `status`, `resources`, `doctor`, and `overview` use the same registry semantics. Session summaries expose only bounded aggregates: pending count, expired count, and an oldest age capped at 600000 ms with an explicit cap marker.
 
 ```text
 synex ban <id> <userId> <reason>
@@ -61,7 +64,7 @@ Archive mode is deliberately non-destructive. It creates idempotent mirror rows 
 - Player admission is stricter than internal kernel availability: new connections are accepted only while Core is exactly `READY`, the post-boot critical-foundation validation has completed, and no Core health reason is present. `DEGRADED` remains available to server resources for diagnostics and recovery but never admits a player.
 - Database errors return bounded `DATABASE_ERROR` results; persistent mutations must not report success.
 - When durable events are enabled, Core and the groups/accounts domain workers process bounded outbox batches and report dispatch failures. Domain events are delivered at least once through the capability-gated outbox publication path; consumers deduplicate by stable event ID. Disabled Core outbox operations fail with `FEATURE_DISABLED`.
-- Cluster session leases are renewed by heartbeat; losing ownership closes the affected session rather than allowing two authoritative sessions.
+- The dependency-health worker reconciles the persisted Core instance status from effective lifecycle health: only healthy `READY` with open admission is `ready`; health reasons or blocked admission persist as `degraded`. Component callbacks update the in-memory lifecycle and registry immediately without adding a database write to every health signal. The Core instance heartbeat preserves that explicit status and may recover only a row another node marked `stale`; it cannot overwrite a concurrent `ready`/`degraded` update. Cluster session leases are renewed by heartbeat for authenticated pending connections and bound sessions. `playerJoining` revalidates the server-derived identifier fingerprint and fenced lease immediately before binding; losing ownership fails closed rather than allowing two authoritative sessions.
 - `kick_old` replaces a local session only after the incoming connection passes every gate. For remote ownership it writes a bounded persisted control request for the owning instance, waits for that instance to close the old session and release its fenced lease, and rejects fail-closed when the handoff does not complete. `replace_old` remains a compatibility alias for this policy; no client-provided kick target is trusted.
 - Source IDs are ephemeral. Async work must retain and revalidate the Synex source generation.
 - Resource-stop cleanup is synchronous and owner-aware; handlers, subscriptions, services, state definitions, schedules, and pending ownership tokens are revoked by epoch.

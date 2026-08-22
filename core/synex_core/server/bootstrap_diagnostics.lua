@@ -216,6 +216,17 @@ factories.bootstrapDiagnostics = function(deps)
         local utcSession, utcSessionError = persistence.database:validateUtcSession()
         add('database-utc', utcSession and 'PASS' or 'FAIL',
             utcSession and 'CURRENT_TIMESTAMP resolves to UTC' or utcSessionError.code)
+        local isolationLevels = {
+            ['1'] = 'REPEATABLE READ',
+            ['2'] = 'READ COMMITTED',
+            ['3'] = 'READ UNCOMMITTED',
+            ['4'] = 'SERIALIZABLE'
+        }
+        local isolationLevel = platform.getConvar('mysql_transaction_isolation_level', '2')
+        local isolationName = isolationLevels[isolationLevel]
+        add('database-transaction-isolation', isolationLevel == '2' and 'PASS' or 'FAIL',
+            isolationName and ('current Cfx ConVar level %s (%s)'):format(isolationLevel, isolationName)
+                or 'mysql_transaction_isolation_level must be an integer from 1 through 4')
         local dirtyMigrations, dirtyMigrationError = persistence.database:scalar([[SELECT COUNT(*)
             FROM `synex_schema_migration_attempts` WHERE `state` <> 'applied']], {})
         local dirtyCount = tonumber(dirtyMigrations) or 0
@@ -233,13 +244,26 @@ factories.bootstrapDiagnostics = function(deps)
         local contractCount = #contractSystem.registry:list()
         add('contracts', contractCount > 0 and 'PASS' or 'FAIL', ('%d registered contract(s)'):format(contractCount))
         local lifecycleSnapshot = lifecycle.core:snapshot()
-        add('lifecycle', lifecycleSnapshot.operational and 'PASS' or 'FAIL', lifecycleSnapshot.state)
+        local lifecycleReasonCount = 0
+        for _ in pairs(lifecycleSnapshot.reasons or {}) do lifecycleReasonCount = lifecycleReasonCount + 1 end
+        local lifecycleStatus = not lifecycleSnapshot.operational and 'FAIL'
+            or (lifecycleSnapshot.state ~= 'READY' or lifecycleSnapshot.playerAdmission ~= true
+                or lifecycleReasonCount > 0) and 'WARN' or 'PASS'
+        add('lifecycle', lifecycleStatus,
+            ('%s; admission=%s; %d health reason(s)'):format(
+                lifecycleSnapshot.state,
+                lifecycleSnapshot.playerAdmission == true and 'open' or 'blocked', lifecycleReasonCount))
         local cluster = persistence.instances:snapshot()
         add('cluster-instances', cluster.stale > 0 and 'WARN' or 'PASS',
             ('%d healthy, %d stale, %d total'):format(cluster.healthy, cluster.stale, cluster.total))
         local queue = identity.connections:snapshot()
-        add('connection-queue', queue.queued >= queue.maximumQueued and 'FAIL' or 'PASS',
-            ('%d/%d queued; policy=%s'):format(queue.queued, queue.maximumQueued, queue.duplicatePolicy))
+        local players = registries.players:summary()
+        local pendingProblem = players.expiredPendingConnections > 0 or players.pendingAgeCapped == true
+        add('connection-queue', queue.queued >= queue.maximumQueued and 'FAIL' or (pendingProblem and 'WARN' or 'PASS'),
+            ('%d/%d queued; policy=%s; %d pending; oldest=%dms%s; expired=%d'):format(
+                queue.queued, queue.maximumQueued, queue.duplicatePolicy,
+                players.pendingConnections, players.oldestPendingAgeMs,
+                players.pendingAgeCapped and '+' or '', players.expiredPendingConnections))
         local rbac = security.rbac:snapshot()
         local rbacSummary, rbacSummaryError = persistence.rbac:summary()
         add('rbac', rbacSummaryError and 'FAIL' or (rbac.hydrated and rbac.persistent and 'PASS' or 'WARN'),
@@ -257,13 +281,11 @@ factories.bootstrapDiagnostics = function(deps)
         local sagaPersistence = sagaSnapshot.persisted or {}
         add('saga-worker', sagaPersistence.available == false and 'WARN' or 'PASS',
             ('%d handler(s); %d persisted saga(s)'):format(#sagaSnapshot.handlers, tonumber(sagaPersistence.total) or 0))
-        local resourceFailures = 0
-        for _, resource in ipairs(registries.resources:list()) do
-            if resource.health and (resource.health.status == 'DEGRADED' or resource.health.status == 'UNHEALTHY') then
-                resourceFailures = resourceFailures + 1
-            end
-        end
-        add('resource-health', resourceFailures > 0 and 'WARN' or 'PASS', ('%d unhealthy/degraded resource(s)'):format(resourceFailures))
+        local resources = registries.resources:summary()
+        local resourceProblems = resources.degraded + resources.unhealthy + resources.unknown
+        add('resource-health', resourceProblems > 0 and 'WARN' or 'PASS',
+            ('%d healthy, %d degraded, %d unhealthy, %d unknown'):format(
+                resources.healthy, resources.degraded, resources.unhealthy, resources.unknown))
         local overall = 'PASS'
         for _, check in ipairs(checks) do
             if check.status == 'FAIL' then overall = 'FAIL' break end

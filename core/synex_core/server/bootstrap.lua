@@ -110,7 +110,9 @@ factories.bootstrap = function(deps)
         instanceId = defaultConfig.instanceId,
         coreResource = coreResource,
         leases = persistence.leases,
-        instances = runtimePersistence.instances
+        instances = runtimePersistence.instances,
+        rateLimiter = security.rateLimiter,
+        sha256 = persistence.sha256
     })
     local stateService = factories.state({
         platform = platform,

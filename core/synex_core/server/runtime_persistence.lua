@@ -55,9 +55,13 @@ factories.runtimePersistence = function(deps)
 
     function instances:heartbeat(staleSeconds)
         staleSeconds = math.max(10, math.min(math.floor(tonumber(staleSeconds) or 45), 300))
+        local recoveryStatus = instanceSnapshot.status
         local updated, updateError = database:update([[UPDATE `synex_instances`
-            SET `heartbeat_at` = CURRENT_TIMESTAMP(6), `status` = 'ready', `version` = `version` + 1
-            WHERE `instance_id` = ? AND `status` NOT IN ('stopping', 'stopped')]], { instanceId })
+            SET `heartbeat_at` = CURRENT_TIMESTAMP(6),
+                `status` = CASE WHEN `status` = 'stale' THEN ? ELSE `status` END,
+                `version` = `version` + 1
+            WHERE `instance_id` = ? AND `status` NOT IN ('stopping', 'stopped')]],
+            { recoveryStatus, instanceId })
         if updateError then return nil, updateError end
         if tonumber(updated) ~= 1 then
             return nil, foundation.error('INSTANCE_HEARTBEAT_REJECTED', 'The instance heartbeat was rejected.', { retryable = true })
@@ -88,7 +92,6 @@ factories.runtimePersistence = function(deps)
             FROM `synex_session_control_requests` WHERE `state` = 'pending']], {})
         if pendingError then return nil, pendingError end
         local summary = rows and rows[1] or {}
-        instanceSnapshot.status = 'ready'
         instanceSnapshot.total = tonumber(summary.total_count) or 0
         instanceSnapshot.healthy = tonumber(summary.healthy_count) or 0
         instanceSnapshot.stale = tonumber(summary.stale_count) or 0

@@ -46,6 +46,74 @@ factories.bootstrapLifecycle = function(deps)
     local instanceStatusInitialized = false
     local lastInstanceStatus = nil
 
+    local function synchronizeCoreResourceHealth()
+        local registered = registries.resources:get(coreResource)
+        if not registered then return true, nil end
+        local snapshot = lifecycle.core:snapshot()
+        local status = lifecycle.core:healthStatus()
+        local reasons = {}
+        local components = {}
+        for component in pairs(snapshot.reasons) do components[#components + 1] = component end
+        table.sort(components)
+        for _, component in ipairs(components) do
+            local reason = snapshot.reasons[component]
+            reasons[#reasons + 1] = {
+                component = component,
+                status = reason.status,
+                message = reason.reason
+            }
+        end
+        if status ~= 'HEALTHY' and status ~= 'UNKNOWN' and #reasons == 0 then
+            reasons[1] = {
+                component = snapshot.state == 'READY' and 'player-admission' or 'lifecycle',
+                status = status,
+                message = snapshot.state == 'READY' and 'player admission is disabled' or snapshot.state
+            }
+        end
+        return registries.resources:setState(coreResource,
+            snapshot.operational and 'STARTED' or registered.state,
+            { status = status, reasons = reasons })
+    end
+
+    local healthObserved, healthObserverError = lifecycle.core:setHealthObserver(synchronizeCoreResourceHealth)
+    if not healthObserved then error(healthObserverError.message) end
+
+    local function desiredInstanceHealthStatus()
+        local snapshot = lifecycle.core:snapshot()
+        if not snapshot.operational then return nil end
+        if snapshot.state ~= 'READY' then return 'degraded' end
+        for component in pairs(snapshot.reasons) do
+            if component ~= 'instance-status' then return 'degraded' end
+        end
+        if snapshot.playerAdmission ~= true and snapshot.reasons['instance-status'] == nil then
+            return 'degraded'
+        end
+        return 'ready'
+    end
+
+    local function synchronizeInstanceHealthStatus()
+        if not instanceStatusInitialized then return nil end
+        local desiredStatus = desiredInstanceHealthStatus()
+        if not desiredStatus then return nil end
+        local synchronizationPending = lifecycle.core:snapshot().reasons['instance-status'] ~= nil
+        if desiredStatus == lastInstanceStatus and not synchronizationPending then return nil end
+        local synchronized, synchronizationError = persistence.instances:setStatus(desiredStatus)
+        if synchronized then
+            lastInstanceStatus = desiredStatus
+            lifecycle.core:setHealth('instance-status', 'HEALTHY')
+            return nil
+        end
+        local failure = synchronizationError
+            or foundation.error('INSTANCE_STATUS_SYNC_FAILED', 'The cluster instance status could not be synchronized.')
+        lifecycle.core:setHealth('instance-status', 'DEGRADED',
+            'cluster instance lifecycle status could not be synchronized')
+        logger:error('instance lifecycle status synchronization failed', {
+            status = desiredStatus,
+            code = failure.code
+        })
+        return failure
+    end
+
     local function refreshDependencyHealth(inactiveResource)
         local findings = validateActive(inactiveResource, enforceCriticalResources)
         local critical = 0
@@ -104,30 +172,18 @@ factories.bootstrapLifecycle = function(deps)
             lifecycle.core:transition('READY', 'live dependency and capability validation recovered')
         end
         local currentAfterRefresh = lifecycle.core:get()
-        local desiredInstanceStatus = currentAfterRefresh == 'READY' and 'ready'
-            or (currentAfterRefresh == 'DEGRADED' and 'degraded' or nil)
-        local instanceStatusError = nil
-        if instanceStatusInitialized and desiredInstanceStatus
-            and desiredInstanceStatus ~= lastInstanceStatus then
-            local synchronized, synchronizationError = persistence.instances:setStatus(desiredInstanceStatus)
-            if synchronized then
-                lastInstanceStatus = desiredInstanceStatus
-                lifecycle.core:setHealth('instance-status', 'HEALTHY')
-            else
-                instanceStatusError = synchronizationError
-                lifecycle.core:setHealth('instance-status', 'DEGRADED',
-                    'cluster instance lifecycle status could not be synchronized')
-                logger:error('instance lifecycle status synchronization failed', {
-                    status = desiredInstanceStatus,
-                    code = synchronizationError and synchronizationError.code or 'UNKNOWN'
-                })
-            end
-        end
+        local instanceStatusError = synchronizeInstanceHealthStatus()
         lifecycle.core:setCriticalFoundationsValidated(
             instanceStatusInitialized and instanceStatusError == nil
                 and enforceCriticalResources and critical == 0
                 and currentAfterRefresh == 'READY'
                 and next(lifecycle.core:snapshot().reasons) == nil)
+        if instanceStatusError == nil then
+            instanceStatusError = synchronizeInstanceHealthStatus()
+            if instanceStatusError then lifecycle.core:setCriticalFoundationsValidated(false) end
+        end
+        local _, registryHealthError = synchronizeCoreResourceHealth()
+        if registryHealthError then return findings, critical, registryHealthError end
         return findings, critical, instanceStatusError
     end
 
@@ -156,17 +212,33 @@ factories.bootstrapLifecycle = function(deps)
             return guarded(caller, epoch, 'synex.runtime.read', 'GetRuntimeStatus', function() return lifecycle.core:snapshot(), nil end)
         end)
         messaging.network:bind()
+        platform.registerNetEvent('playerJoining')
         platform.addEventHandler('playerConnecting', function(name, _, deferrals)
             local tempSource = source
-            identity.connections:handleConnecting(tempSource, name, deferrals)
+            local invoked, connected, connectionError = foundation.safeCall(
+                identity.connections.handleConnecting, identity.connections, tempSource, name, deferrals)
+            if not invoked or connected == nil then
+                logger:error('playerConnecting handler failed', {
+                    code = invoked and connectionError and connectionError.code or 'CONNECTION_HANDLER_FAILED'
+                })
+            end
         end)
         platform.addEventHandler('playerJoining', function(oldSource)
             local finalSource = source
-            identity.connections:handleJoining(finalSource, oldSource)
+            local invoked, joined = foundation.safeCall(
+                identity.connections.handleJoining, identity.connections, finalSource, oldSource)
+            if not invoked then
+                foundation.safeCall(logger.error, logger,
+                    'playerJoining handler failed', { code = 'JOIN_HANDLER_FAILED' })
+            elseif joined == nil then
+                logger:warn('playerJoining did not open a session', { code = 'SESSION_NOT_OPENED' })
+            end
         end)
         platform.addEventHandler('playerDropped', function(reason)
             local playerSource = source
-            identity.connections:handleDropped(playerSource, reason)
+            local invoked = foundation.safeCall(
+                identity.connections.handleDropped, identity.connections, playerSource, reason)
+            if not invoked then logger:error('playerDropped handler failed', { code = 'DROP_HANDLER_FAILED' }) end
         end)
         platform.addEventHandler('onResourceStart', function(resource)
             if resource == coreResource then return end
@@ -412,6 +484,8 @@ factories.bootstrapLifecycle = function(deps)
             lifecycle.core:setCriticalFoundationsValidated(
                 postBootCritical == 0 and lifecycle.core:get() == 'READY'
                     and next(lifecycle.core:snapshot().reasons) == nil)
+            local _, coreHealthError = synchronizeCoreResourceHealth()
+            if coreHealthError then error(coreHealthError.message) end
             logger:info('Synex core kernel services started', {
                 apiVersion = SynexProtocol.api,
                 instanceId = defaultConfig.instanceId,
@@ -423,6 +497,7 @@ factories.bootstrapLifecycle = function(deps)
             persistence.instances:setStatus('degraded')
             local current = lifecycle.core:get()
             if current ~= 'FAILED' and current ~= 'STOPPING' and current ~= 'STOPPED' then lifecycle.core:transition('FAILED', 'boot failure') end
+            synchronizeCoreResourceHealth()
             logger:fatal('Synex core failed to start', { error = tostring(err) })
             return nil, foundation.error('BOOT_FAILED', 'Synex core failed to start.')
         end

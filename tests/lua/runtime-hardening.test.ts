@@ -162,6 +162,61 @@ test('access management commits audit atomically and replays identical determini
   }
 });
 
+test('cluster heartbeat preserves the explicit local lifecycle status', async () => {
+  const engine = await coreEngine(['foundation', 'runtime_persistence']);
+  try {
+    const result = await engine.doString(`
+      local heartbeatWrites, explicitStatuses, databaseStatus = 0, {}, 'starting'
+      local platform = {
+        nowGame = function() return 1000 end, random = function() return 1 end,
+        print = function() end, jsonEncode = function() return '{}' end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      local database = {}
+      function database:update(sql, parameters)
+        if sql:find("NOT IN ('stopping', 'stopped')", 1, true)
+            and sql:find('CASE WHEN', 1, true) then
+          heartbeatWrites = heartbeatWrites + 1
+          assert(#parameters == 2 and parameters[2] == 'instance-a')
+          if databaseStatus == 'stale' then databaseStatus = parameters[1] end
+        elseif #parameters == 2 and parameters[2] == 'instance-a'
+            and (parameters[1] == 'degraded' or parameters[1] == 'ready') then
+          explicitStatuses[#explicitStatuses + 1] = parameters[1]
+          databaseStatus = parameters[1]
+        end
+        return 1, nil
+      end
+      function database:query()
+        return {{ total_count = 1, healthy_count = 1, stale_count = 0 }}, nil
+      end
+      function database:scalar() return 0, nil end
+      local instances = SynexCoreFactories.runtimePersistence({
+        foundation = foundation, database = database, platform = platform,
+        instanceId = 'instance-a'
+      }).instances
+      assert(instances:register('Instance A'))
+      assert(instances:setStatus('degraded'))
+      local degraded = assert(instances:heartbeat(45))
+      assert(degraded.status == 'degraded' and instances:snapshot().status == 'degraded')
+      assert(databaseStatus == 'degraded')
+      assert(instances:setStatus('ready'))
+      databaseStatus = 'degraded'
+      local concurrent = assert(instances:heartbeat(45))
+      assert(concurrent.status == 'ready' and databaseStatus == 'degraded')
+      databaseStatus = 'stale'
+      local ready = assert(instances:heartbeat(45))
+      assert(ready.status == 'ready' and instances:snapshot().status == 'ready')
+      assert(databaseStatus == 'ready')
+      assert(heartbeatWrites == 3)
+      assert(explicitStatuses[1] == 'degraded' and explicitStatuses[2] == 'ready')
+      return table.concat(explicitStatuses, ':') .. ':' .. heartbeatWrites
+    `);
+    assert.equal(result, 'degraded:ready:3');
+  } finally {
+    engine.global.close();
+  }
+});
+
 test('persistent RBAC mutations write actor, reason, before, and after in the same transaction', async () => {
   const engine = await coreEngine(['foundation', 'runtime_persistence']);
   try {
@@ -879,6 +934,9 @@ test('dependency health refresh clears recovered registry findings without chang
       local foundation = SynexCoreFactories.foundation({ platform = platform })
       local registries = SynexCoreFactories.registries({ foundation = foundation })
       registries.owners:activate('synex_core')
+      registries.resources:upsert('synex_core', {
+        name = 'synex_core', critical = true, services = { provide = {'synex.runtime@1'} }
+      }, 'started')
       registries.resources:upsert('synex_provider', {
         name = 'synex_provider', critical = true, services = { provide = {'synex.fixture@1'} }
       }, 'STARTED')
@@ -915,24 +973,175 @@ test('dependency health refresh clears recovered registry findings without chang
       local first, firstCritical = runtime:refreshDependencyHealth()
       local degraded = assert(registries.resources:get('synex_provider'))
       local dependencyDegraded = assert(registries.resources:get('synex_consumer'))
+      local coreDegraded = assert(registries.resources:get('synex_core'))
       assert(#first == 2 and firstCritical == 1)
       assert(degraded.state == 'STARTED' and degraded.health.status == 'UNHEALTHY')
       assert(dependencyDegraded.state == 'STARTED' and dependencyDegraded.health.status == 'DEGRADED')
+      assert(coreDegraded.state == 'STARTED' and coreDegraded.health.status == 'DEGRADED')
       assert(lifecycle.core:get() == 'DEGRADED')
       findings = {}
       local recovered, recoveredCritical = runtime:refreshDependencyHealth()
       local healthy = assert(registries.resources:get('synex_provider'))
       local dependencyHealthy = assert(registries.resources:get('synex_consumer'))
+      lifecycle.core:setCriticalFoundationsValidated(true)
+      local coreHealthy = assert(registries.resources:get('synex_core'))
       assert(#recovered == 0 and recoveredCritical == 0)
       assert(healthy.state == 'STARTED' and healthy.health.status == 'HEALTHY')
       assert(dependencyHealthy.state == 'STARTED' and dependencyHealthy.health.status == 'HEALTHY')
+      assert(coreHealthy.state == 'STARTED' and coreHealthy.health.status == 'HEALTHY')
       assert(#healthy.health.reasons == 0 and lifecycle.core:get() == 'READY')
+      lifecycle.core:setHealth('cluster', 'DEGRADED', 'fixture heartbeat failure')
+      local dynamicallyDegraded = assert(registries.resources:get('synex_core'))
+      assert(dynamicallyDegraded.health.status == 'DEGRADED')
+      lifecycle.core:setHealth('cluster', 'HEALTHY')
+      local dynamicallyRecovered = assert(registries.resources:get('synex_core'))
+      assert(dynamicallyRecovered.health.status == 'HEALTHY')
+      lifecycle.core:setCriticalFoundationsValidated(false)
+      local admissionBlocked = assert(registries.resources:get('synex_core'))
+      assert(admissionBlocked.health.status == 'DEGRADED')
+      assert(admissionBlocked.health.reasons[1].component == 'player-admission')
+      lifecycle.core:setCriticalFoundationsValidated(true)
+      local admissionRecovered = assert(registries.resources:get('synex_core'))
+      assert(admissionRecovered.health.status == 'HEALTHY')
       return table.concat({
         degraded.health.status, dependencyDegraded.health.status,
-        healthy.health.status, dependencyHealthy.health.status, healthy.state
+        healthy.health.status, dependencyHealthy.health.status, coreDegraded.health.status,
+        coreHealthy.health.status, dynamicallyDegraded.health.status,
+        dynamicallyRecovered.health.status, admissionBlocked.health.status,
+        admissionRecovered.health.status, healthy.state
       }, ':')
     `);
-    assert.equal(result, 'UNHEALTHY:DEGRADED:HEALTHY:HEALTHY:STARTED');
+    assert.equal(
+      result,
+      'UNHEALTHY:DEGRADED:HEALTHY:HEALTHY:DEGRADED:HEALTHY:DEGRADED:HEALTHY:DEGRADED:HEALTHY:STARTED',
+    );
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('instance status synchronization clears a failed write after desired status reverses', async () => {
+  const engine = await coreEngine(['foundation', 'registries', 'lifecycle', 'bootstrap_lifecycle']);
+  try {
+    const result = await engine.doString(`
+      local criticalFinding, failNextReady = true, false
+      local persistedStatus, statusWrites = 'starting', {}
+      local platform = {
+        nowGame = function() return 1000 end, random = function() return 1 end,
+        print = function() end, jsonEncode = function() return '{}' end,
+        resourceState = function() return 'started' end,
+        resourceMetadata = function(name, key)
+          if name == 'oxmysql' and key == 'version' then return '2.14.1' end
+        end,
+        setTimeout = function() end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      local registries = SynexCoreFactories.registries({ foundation = foundation })
+      registries.owners:activate('synex_core')
+      registries.resources:upsert('synex_core', {
+        name = 'synex_core', critical = true, services = { provide = {'synex.runtime@1'} }
+      }, 'STARTED')
+      local lifecycle = SynexCoreFactories.lifecycle({
+        platform = platform, foundation = foundation, owners = registries.owners
+      })
+      local instances = {}
+      function instances:register()
+        persistedStatus = 'starting'
+        return true, nil
+      end
+      function instances:setStatus(status)
+        statusWrites[#statusWrites + 1] = status
+        if status == 'ready' and failNextReady then
+          failNextReady = false
+          persistedStatus = status
+          return nil, foundation.error('TRANSIENT_STATUS_WRITE', 'fixture transient failure')
+        end
+        persistedStatus = status
+        return true, nil
+      end
+      local migrations = {
+        bootstrap = function() return true, nil end,
+        acquireLease = function() return true, nil end,
+        apply = function() return true, nil end,
+        releaseLease = function() return true, nil end
+      }
+      SynexCoreFactories.commands = function() return { bind = function() return true end } end
+      local noop = function() return true, nil end
+      local runtime = {}
+      SynexCoreFactories.bootstrapLifecycle({
+        runtime = runtime, platform = platform, foundation = foundation,
+        coreResource = 'synex_core', registries = registries, lifecycle = lifecycle,
+        reloadSnapshots = {}, facadeCache = {}, manifests = {}, reliability = {},
+        sagaRuntime = {}, retention = {},
+        messaging = { network = {} },
+        identity = {
+          connections = { heartbeat = noop },
+          characters = { reconcileDeletions = noop, reconcileUnloads = noop }
+        },
+        security = { rbac = { hydrate = noop } },
+        persistence = {
+          database = { validateUtcSession = noop }, migrations = migrations, instances = instances
+        },
+        defaultConfig = {
+          instanceName = 'Instance A', database = { minimumOxmysqlVersion = '2.14.1' },
+          features = { durableEvents = false, sagas = false },
+          retention = { audit = { mode = 'retain_forever' }, workerIntervalMs = 60000 },
+          connections = { clusterHeartbeatMs = 10000 }
+        },
+        api = {
+          getAPIForCaller = noop, invokeForCaller = noop, guarded = noop,
+          registerCoreContracts = noop, registerCoreServices = noop
+        },
+        discovery = {
+          discoverResource = noop, discoverAll = noop, ensureOwner = noop,
+          supportsStateHandoff = noop, captureStateHandoff = noop, restoreStateHandoff = noop,
+          validateActive = function(_, enforceCritical)
+            if enforceCritical and criticalFinding then
+              return {{ kind = 'resource', severity = 'error' }}
+            end
+            return {}
+          end
+        }
+      })
+      assert(runtime:start())
+      assert(lifecycle.core:get() == 'DEGRADED' and persistedStatus == 'degraded')
+
+      criticalFinding, failNextReady = false, true
+      local _, _, firstError = runtime:refreshDependencyHealth()
+      local failedSnapshot = lifecycle.core:snapshot()
+      assert(firstError and firstError.code == 'TRANSIENT_STATUS_WRITE')
+      assert(persistedStatus == 'ready' and failedSnapshot.state == 'READY')
+      assert(failedSnapshot.reasons['instance-status'] ~= nil)
+      assert(failedSnapshot.playerAdmission == false)
+
+      criticalFinding = true
+      local _, _, reversedError = runtime:refreshDependencyHealth()
+      local reversedSnapshot = lifecycle.core:snapshot()
+      assert(reversedError == nil and persistedStatus == 'degraded')
+      assert(reversedSnapshot.state == 'DEGRADED')
+      assert(reversedSnapshot.reasons['instance-status'] == nil)
+      assert(reversedSnapshot.reasons['runtime-dependencies'] ~= nil)
+      assert(reversedSnapshot.playerAdmission == false)
+      assert(#statusWrites == 3 and statusWrites[3] == 'degraded',
+        'unexpected writes before recovery: ' .. table.concat(statusWrites, ':'))
+
+      criticalFinding = false
+      local _, _, recoveredError = runtime:refreshDependencyHealth()
+      local recoveredSnapshot = lifecycle.core:snapshot()
+      assert(recoveredError == nil and persistedStatus == 'ready')
+      assert(recoveredSnapshot.state == 'READY')
+      assert(recoveredSnapshot.reasons['instance-status'] == nil)
+      assert(recoveredSnapshot.playerAdmission == true)
+      assert(statusWrites[1] == 'degraded')
+      assert(statusWrites[2] == 'ready' and statusWrites[4] == 'ready')
+      return table.concat({
+        statusWrites[1], statusWrites[2], statusWrites[3], statusWrites[4],
+        failedSnapshot.playerAdmission and 'open' or 'blocked',
+        reversedSnapshot.playerAdmission and 'open' or 'blocked',
+        recoveredSnapshot.playerAdmission and 'open' or 'blocked'
+      }, ':')
+    `);
+    assert.equal(result, 'degraded:ready:degraded:ready:blocked:blocked:open');
   } finally {
     engine.global.close();
   }
@@ -1105,7 +1314,11 @@ test('control diagnostic search crosses its declared and granted capability gate
 });
 
 test('queue admission preserves reserved slots for ACE staff and maintenance fails closed', async () => {
-  const engine = await coreEngine(['foundation', 'registries', 'identity_connections']);
+  const engine = await coreEngine([
+    'foundation', 'registries', 'identity_connection_replacement',
+    'identity_connection_claims', 'identity_connection_join',
+    'identity_connection_maintenance', 'identity_connections',
+  ]);
   try {
     const result = await engine.doString(`
       local now, completions, leaseNames = 1000, {}, {}
@@ -1159,6 +1372,8 @@ test('queue admission preserves reserved slots for ACE staff and maintenance fai
         } },
         messaging = { network = { purgeSource = function() end } }, config = config,
         instanceId = 'instance-a', coreResource = 'synex_core', leases = leases, instances = instances,
+        rateLimiter = { consume = function() return true, nil end, purge = function() end },
+        sha256 = function(value) return value end,
         characters = {}, userRepository = { authenticate = function(_, identifiers)
           return { id = identifiers[1]:gsub('[^A-Za-z0-9_-]', '_'), status = 'active' }, nil
         end },
@@ -1174,7 +1389,7 @@ test('queue admission preserves reserved slots for ACE staff and maintenance fai
         }
       end
       connection:handleConnecting(-5, 'NotReady', deferrals(-5))
-      assert(completions[-5]:find('starting', 1, true) and players:getPending(-5) == nil)
+      assert(completions[-5]:find('[CORE_NOT_READY]', 1, true) and players:getPending(-5) == nil)
       admission = true
       connection:handleConnecting(-2, 'Ordinary', deferrals(-2))
       assert(completions[-2]:find('active session limit', 1, true))
@@ -1197,7 +1412,11 @@ test('queue admission preserves reserved slots for ACE staff and maintenance fai
 });
 
 test('disconnect cleanup attempts every step and always removes runtime authority', async () => {
-  const engine = await coreEngine(['foundation', 'registries', 'identity_connections']);
+  const engine = await coreEngine([
+    'foundation', 'registries', 'identity_connection_replacement',
+    'identity_connection_claims', 'identity_connection_join',
+    'identity_connection_maintenance', 'identity_connections',
+  ]);
   try {
     const result = await engine.doString(`
       local now, closeAttempts, purges = 1000, 0, 0
@@ -1226,6 +1445,8 @@ test('disconnect cleanup attempts every step and always removes runtime authorit
         messaging = { network = { purgeSource = function() purges = purges + 1 error('purge failed') end } },
         config = { duplicatePolicy = 'deny_new', clusterSessionLeaseSeconds = 45, queueReconnectGraceMs = 60000 },
         instanceId = 'instance-a', coreResource = 'synex_core',
+        rateLimiter = { consume = function() return true, nil end, purge = function() end },
+        sha256 = function(value) return value end,
         leases = { release = function() return nil, { code = 'LEASE_RELEASE_FAILED' } end },
         instances = {},
         characters = { unload = function() return nil, { code = 'UNLOAD_FAILED' } end },
@@ -1314,15 +1535,128 @@ test('diagnostic audit search is bounded, exact, and redacts unsafe references',
   }
 });
 
+test('runtime doctor reports unknown resource health, bounded pending age, and oxmysql isolation config', async () => {
+  const engine = await coreEngine(['foundation', 'registries', 'bootstrap_diagnostics']);
+  try {
+    const result = await engine.doString(`
+      local now, isolation = 1000, '2'
+      local lifecycleReasons, playerAdmission = {}, true
+      local platform = {
+        nowGame = function() return now end, random = function() return 1 end,
+        resourceMetadata = function(name, key)
+          if name == 'oxmysql' and key == 'version' then return '2.14.1' end
+        end,
+        getConvar = function(name, fallback)
+          if name == 'mysql_transaction_isolation_level' then return isolation end
+          return fallback
+        end,
+        print = function() end, jsonEncode = function() return '{}' end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      local registries = SynexCoreFactories.registries({ foundation = foundation })
+      registries.resources:upsert('synex_core', { version = '0.1.0', critical = true }, 'STARTED')
+      assert(registries.players:createPending(-1, { sessionId = 'session-pending', expiresAt = 1050 }))
+      now = 700001
+      local runtime = {}
+      SynexCoreFactories.bootstrapDiagnostics({
+        runtime = runtime, reloadSnapshots = {},
+        defaultConfig = {
+          instanceId = 'instance-a', environment = 'development', features = {},
+          database = { minimumOxmysqlVersion = '2.14.1' }
+        },
+        lifecycle = {
+          core = { snapshot = function() return {
+            state = 'READY', operational = true,
+            playerAdmission = playerAdmission, reasons = lifecycleReasons
+          } end },
+          dependencies = { snapshot = function() return {} end, validate = function() return {} end },
+          scheduler = { snapshot = function() return {} end, count = function() return 0 end }
+        },
+        registries = registries,
+        messaging = {
+          services = { snapshot = function() return {} end },
+          network = { snapshot = function() return {} end },
+          events = { snapshot = function() return {} end },
+          hooks = { snapshot = function() return {} end },
+          deprecations = { snapshot = function() return {} end }
+        },
+        stateService = { snapshot = function() return {} end }, foundation = foundation,
+        persistence = {
+          database = {
+            scalar = function(_, sql)
+              if sql:find('COUNT', 1, true) then return 0, nil end
+              return 1, nil
+            end,
+            validateUtcSession = function() return true, nil end
+          },
+          instances = { snapshot = function() return { healthy = 1, stale = 0, total = 1 } end },
+          migrations = { snapshot = function() return { resources = {}, totals = {} }, nil end },
+          rbac = { summary = function() return { roles = 1, activeAssignments = 0 }, nil end }
+        },
+        platform = platform,
+        contractSystem = { registry = { list = function() return {{ name = 'synex.runtime.status' }} end } },
+        security = {
+          rbac = { snapshot = function() return { hydrated = true, persistent = true, cachedSubjects = 0 } end },
+          capabilities = { snapshot = function() return {} end }
+        },
+        identity = {
+          connections = { snapshot = function() return {
+            queued = 0, maximumQueued = 128, duplicatePolicy = 'deny_new'
+          } end },
+          characters = { cacheSnapshot = function() return {} end }
+        },
+        sagaRuntime = { snapshot = function() return { handlers = {}, persisted = { available = true, total = 0 } } end }
+      })
+      local function check(report, name)
+        for _, entry in ipairs(report.checks) do if entry.name == name then return entry end end
+      end
+      local unknown = assert(runtime:doctor())
+      local unknownHealth = assert(check(unknown, 'resource-health'))
+      local pending = assert(check(unknown, 'connection-queue'))
+      local configured = assert(check(unknown, 'database-transaction-isolation'))
+      assert(unknown.status == 'WARN' and unknownHealth.status == 'WARN')
+      assert(unknownHealth.detail:find('1 unknown', 1, true))
+      assert(pending.status == 'WARN' and pending.detail:find('oldest=600000ms+', 1, true))
+      assert(configured.status == 'PASS' and configured.detail:find('READ COMMITTED', 1, true))
+
+      registries.players:removePending(-1)
+      assert(registries.resources:setState('synex_core', 'STARTED', { status = 'HEALTHY', reasons = {} }))
+      local healthy = assert(runtime:doctor())
+      assert(healthy.status == 'PASS' and check(healthy, 'resource-health').status == 'PASS')
+      playerAdmission = false
+      lifecycleReasons = { cluster = { status = 'DEGRADED', reason = 'fixture' } }
+      local blocked = assert(runtime:doctor())
+      assert(blocked.status == 'WARN' and check(blocked, 'lifecycle').status == 'WARN')
+      isolation = '1'
+      local invalid = assert(runtime:doctor())
+      assert(invalid.status == 'FAIL' and check(invalid, 'database-transaction-isolation').status == 'FAIL')
+      return table.concat({unknown.status, pending.status, healthy.status, blocked.status, invalid.status}, ':')
+    `);
+    assert.equal(result, 'WARN:WARN:PASS:WARN:FAIL');
+  } finally {
+    engine.global.close();
+  }
+});
+
 test('operator command registry is console-only, typed, bounded, and service-backed', async () => {
   const engine = await coreEngine(['foundation', 'commands']);
   try {
     const result = await engine.doString(`
-      local registered, emitted, serviceCalls, auditCalls = {}, {}, 0, 0
+      local registered, emitted, printed, serviceCalls, auditCalls = {}, {}, {}, 0, 0
+      local resourceStates = { synex_accounts = 'started', synex_entities = 'started' }
       local platform = {
         nowGame = function() return 1000 end, random = function() return 1 end,
-        print = function() end,
+        print = function(line)
+          if type(line) == 'string' and line:sub(1, 7) == '[synex]' then printed[#printed + 1] = line end
+        end,
         jsonEncode = function(value) emitted[#emitted + 1] = value return '{}' end,
+        resourceState = function(name)
+          if resourceStates[name] == false then return nil end
+          return resourceStates[name] or 'missing'
+        end,
+        resourceMetadata = function(name, key)
+          if name == 'synex_core' and key == 'version' then return '0.1.0' end
+        end,
         registerCommand = function(name, handler, restricted)
           registered[name] = { handler = handler, restricted = restricted }
         end
@@ -1335,7 +1669,13 @@ test('operator command registry is console-only, typed, bounded, and service-bac
       }
       local commands = SynexCoreFactories.commands({
         platform = platform, foundation = foundation, coreResource = 'synex_core',
-        runtime = { doctor = function() return { status = 'PASS' }, nil end },
+        runtime = { doctor = function() return {
+          status = 'PASS', checks = {
+            { name = 'database', status = 'PASS' },
+            { name = 'database-utc', status = 'PASS' },
+            { name = 'database-transaction-isolation', status = 'PASS' }
+          }
+        }, nil end },
         lifecycle = {
           core = { snapshot = function() return { state = 'READY', operational = true } end },
           scheduler = { snapshot = function() return {{ health = 'HEALTHY' }} end }
@@ -1345,13 +1685,21 @@ test('operator command registry is console-only, typed, bounded, and service-bac
           resources = { list = function() return {{
             name = 'synex_fixture', state = 'STARTED', epoch = 1,
             manifest = { version = '1.0.0' }, health = { status = 'HEALTHY' }
-          }} end },
-          players = { summary = function() return { activeSessions = 0, pendingConnections = 0 } end }
+          }} end, summary = function() return {
+            total = 1, healthy = 1, degraded = 0, unhealthy = 0, unknown = 0
+          } end },
+          players = { summary = function() return {
+            activeSessions = 0, pendingConnections = 0,
+            oldestPendingAgeMs = 600000, pendingAgeCapped = true,
+            expiredPendingConnections = 0
+          } end }
         },
         identity = { connections = { snapshot = function() return { queued = 0, maximumQueued = 128 } end } },
         persistence = {
           instances = { snapshot = function() return { total = 1, healthy = 1, stale = 0 } end },
-          migrations = { snapshot = function() return { resources = {}, totals = {}, truncated = false }, nil end },
+          migrations = { snapshot = function() return {
+            resources = {}, totals = { defined = 10, applied = 10, applying = 0, failed = 0 }, truncated = false
+          }, nil end },
           rbac = { summary = function() return { roles = 1, activeAssignments = 0 }, nil end }
         },
         reliability = { audit = { search = function(_, request)
@@ -1384,10 +1732,25 @@ test('operator command registry is console-only, typed, bounded, and service-bac
       local entities = assert(commands:dispatch(0, {'entities'}))
       assert(ledger.available and ledger.summary.service == 'synex.accounts')
       assert(entities.available and entities.summary.service == 'synex.entities')
-      assert(serviceCalls == 2 and emitted[#emitted].ok == true)
-      return table.concat({deniedError.code, invalidError.code, trace.limit, serviceCalls}, ':')
+      assert(ledger.status == 'HEALTHY' and entities.status == 'HEALTHY')
+      resourceStates.synex_accounts = 'missing'
+      local notInstalled = assert(commands:dispatch(0, {'ledger'}))
+      assert(notInstalled.available == false and notInstalled.status == 'NOT_INSTALLED' and serviceCalls == 2)
+      resourceStates.synex_accounts = false
+      local unknownState = assert(commands:dispatch(0, {'ledger'}))
+      assert(unknownState.available == false and unknownState.status == 'DEGRADED')
+      assert(unknownState.error.code == 'RESOURCE_STATE_UNAVAILABLE' and serviceCalls == 2)
+      local overview = assert(commands:dispatch(0, {'overview'}))
+      assert(overview.status == 'PASS' and #overview.lines == 8 and #printed == 8)
+      assert(printed[1]:find('lifecycle READY', 1, true))
+      assert(printed[4]:find('oldest pending 600000ms+', 1, true))
+      assert(emitted[#emitted].ok == true)
+      return table.concat({
+        deniedError.code, invalidError.code, trace.limit, serviceCalls,
+        notInstalled.status, unknownState.status, #printed
+      }, ':')
     `);
-    assert.equal(result, 'CONSOLE_ONLY:INVALID_ARGUMENT:8:2');
+    assert.equal(result, 'CONSOLE_ONLY:INVALID_ARGUMENT:8:2:NOT_INSTALLED:DEGRADED:8');
   } finally {
     engine.global.close();
   }

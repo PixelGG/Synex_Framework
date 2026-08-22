@@ -13,6 +13,7 @@ factories.registries = function(deps)
     local byUser = {}
     local byCharacter = {}
     local byIdentifier = {}
+    local maximumPendingDiagnosticAgeMs = 600000
 
     local ownerIndex = {}
     function ownerIndex:epoch(resource)
@@ -192,11 +193,24 @@ factories.registries = function(deps)
         table.sort(list, function(a, b) return a.name < b.name end)
         return list
     end
+    function resourceRegistry:summary()
+        local summary = { total = 0, healthy = 0, degraded = 0, unhealthy = 0, unknown = 0, states = {} }
+        for _, resource in pairs(resources) do
+            summary.total = summary.total + 1
+            summary.states[resource.state] = (summary.states[resource.state] or 0) + 1
+            local status = resource.health and resource.health.status or 'UNKNOWN'
+            local key = type(status) == 'string' and status:lower() or 'unknown'
+            if summary[key] == nil then key = 'unknown' end
+            summary[key] = summary[key] + 1
+        end
+        return summary
+    end
 
     local playerRegistry = {}
     function playerRegistry:createPending(tempSource, connection)
         if pending[tempSource] then return nil, foundation.error('DUPLICATE_PENDING', 'A pending connection already uses this source.') end
         pending[tempSource] = foundation.copy(connection)
+        pending[tempSource].createdAtMs = foundation.monotonicMs()
         return foundation.copy(pending[tempSource]), nil
     end
     function playerRegistry:getPending(tempSource) return pending[tempSource] and foundation.copy(pending[tempSource]) or nil end
@@ -260,6 +274,20 @@ factories.registries = function(deps)
     function playerRegistry:isCurrent(sessionId, source, generation)
         local index = bySource[source]
         return index ~= nil and index.sessionId == sessionId and index.generation == generation
+    end
+    function playerRegistry:detachSource(sessionId, source, generation)
+        local session = sessions[sessionId]
+        local index = bySource[source]
+        if not session or session.source ~= source or session.sourceGeneration ~= generation
+            or not index or index.sessionId ~= sessionId or index.generation ~= generation then
+            return nil, foundation.error('SOURCE_NOT_CURRENT', 'The player source binding is no longer current.')
+        end
+        local detached = foundation.copy(session)
+        bySource[source] = nil
+        sourceEpoch[source] = math.max(sourceEpoch[source] or 0, generation) + 1
+        session.source = nil
+        session.sourceGeneration = sourceEpoch[source]
+        return detached, nil
     end
     function playerRegistry:updateSession(sessionId, mutator)
         local session = sessions[sessionId]
@@ -336,12 +364,32 @@ factories.registries = function(deps)
         return output
     end
     function playerRegistry:summary()
-        local summary = { activeSessions = 0, pendingConnections = 0, states = {} }
+        local summary = {
+            activeSessions = 0,
+            pendingConnections = 0,
+            expiredPendingConnections = 0,
+            oldestPendingAgeMs = 0,
+            pendingAgeCapped = false,
+            states = {}
+        }
         for _, session in pairs(sessions) do
             summary.activeSessions = summary.activeSessions + 1
             summary.states[session.state] = (summary.states[session.state] or 0) + 1
         end
-        for _ in pairs(pending) do summary.pendingConnections = summary.pendingConnections + 1 end
+        local now = foundation.monotonicMs()
+        for _, connection in pairs(pending) do
+            summary.pendingConnections = summary.pendingConnections + 1
+            local createdAt = tonumber(connection.createdAtMs) or now
+            local age = math.max(0, math.floor(now - createdAt))
+            if age > maximumPendingDiagnosticAgeMs then
+                age = maximumPendingDiagnosticAgeMs
+                summary.pendingAgeCapped = true
+            end
+            summary.oldestPendingAgeMs = math.max(summary.oldestPendingAgeMs, age)
+            if type(connection.expiresAt) == 'number' and connection.expiresAt <= now then
+                summary.expiredPendingConnections = summary.expiredPendingConnections + 1
+            end
+        end
         return summary
     end
 
