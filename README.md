@@ -30,13 +30,20 @@
   <a href="#implemented-foundation">Foundation</a> &middot;
   <a href="#architecture">Architecture</a> &middot;
   <a href="#getting-started">Getting started</a> &middot;
-  <a href="./docs/README.md">Documentation</a>
+  <a href="./docs/README.md">Documentation</a> &middot;
+  <a href="https://discord.gg/heJU5t2Hfa">Discord</a>
 </p>
 
 <p align="center">
   <img alt="Target: FiveM" src="https://img.shields.io/badge/target-FiveM-5ed7ff?style=flat-square&amp;labelColor=111827">
   <img alt="Release: 0.1.0 experimental" src="https://img.shields.io/badge/release-0.1.0%20experimental-8b73ff?style=flat-square&amp;labelColor=111827">
   <img alt="API: 1.0.0 experimental" src="https://img.shields.io/badge/API-1.0.0%20experimental-45c9a5?style=flat-square&amp;labelColor=111827">
+</p>
+
+<p align="center">
+  <a href="https://discord.gg/heJU5t2Hfa">
+    <img src="./.github/assets/readme/discord-community.svg" width="720" alt="Join the official Synex Discord">
+  </a>
 </p>
 
 <p align="center">

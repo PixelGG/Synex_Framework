@@ -26,6 +26,12 @@
 </p>
 
 <p align="center">
+  <a href="https://discord.gg/heJU5t2Hfa">
+    <img src="../../../.github/assets/readme/discord-community.svg" width="720" alt="Unirse al Discord oficial de Synex">
+  </a>
+</p>
+
+<p align="center">
   <img src="../../../.github/assets/readme/hero.webp" width="1200" alt="Ilustración abstracta de la red modular Synex">
 </p>
 
