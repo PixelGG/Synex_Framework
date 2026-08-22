@@ -62,7 +62,7 @@ L’écosystème d’un Framework commence par une répartition explicite des re
 | `core/` | Emplacement du Core du Framework | Scaffold `synex_core` |
 | `resources/` | Resources métier officielles | 10 scaffolds nommés |
 | `libraries/` | Bibliothèques partagées du Framework | Scaffolds `synex_ui` et `synex_bridge` |
-| `docs/`, `examples/`, `tools/` | Documentation du projet, exemples et outils | Structure des README localisés ; `examples/` et `tools/` réservés |
+| `docs/`, `examples/`, `tools/` | Documentation du projet, exemples et outils | README localisés et guide d’intégration Discord ; `examples/` et `tools/` réservés |
 
 Cette organisation établit uniquement la répartition des responsabilités au sein du dépôt. Elle ne définit pas encore les dépendances Runtime, les contrats publics, les frontières Client/Server ni le comportement des services.
 
@@ -125,16 +125,12 @@ Il n’existe pas encore de procédure d’installation vérifiée : le dépôt 
 Synex_Framework/
 ├── .gitattributes
 ├── .github/
-│   └── assets/
-│       ├── branding/
-│       │   ├── synex-mark.svg
-│       │   ├── synex-mark.png
-│       │   ├── synex-mark-512.png
-│       │   ├── synex-mark-256.png
-│       │   ├── synex-mark-128.png
-│       │   └── synex-mark-animated.gif
-│       └── readme/
-│           └── hero.webp
+│   ├── assets/
+│   │   ├── branding/
+│   │   └── readme/
+│   ├── scripts/
+│   │   └── discord/
+│   └── workflows/
 ├── .gitignore
 ├── core/
 │   └── synex_core/
@@ -154,6 +150,7 @@ Synex_Framework/
 │   └── synex_bridge/
 ├── tools/
 ├── docs/
+│   ├── discord-notifications.md
 │   └── locales/
 │       ├── README.md
 │       ├── de/README.md
@@ -170,23 +167,27 @@ Les répertoires des modules ne contiennent actuellement que des fichiers `.gitk
 
 ## État de la pile technologique
 
-FiveM est la plateforme cible déclarée. Le langage Runtime, la stack NUI, le moteur de base de données, le gestionnaire de paquets et le pipeline de build ne peuvent pas encore être déterminés à partir du contenu du dépôt.
+FiveM est la plateforme cible déclarée. L’automatisation du dépôt utilise des modules JavaScript sans dépendances sur Node.js 24 via GitHub Actions. Le langage d’exécution du framework, la stack NUI, le moteur de base de données, le gestionnaire de paquets et le pipeline de build des Resources ne peuvent pas encore être déterminés à partir du contenu du dépôt.
 
 ## État du développement
 
 | Domaine | État vérifié |
 | --- | --- |
 | Organisation du dépôt | Présente |
+| Flux de développement GitHub vers Discord | Implémenté et couvert par les tests d’automatisation du dépôt |
 | Modules du Core, des Resources et des bibliothèques | Scaffolds de répertoires uniquement |
 | Manifests de Resources et code Runtime | Absents |
 | API publiques, Events, Exports et Callbacks | Absents |
 | Base de données, configuration, permissions et systèmes de sécurité | Absents |
-| Workflow d’installation et guides détaillés | Indisponibles |
+| Workflow d’installation du framework et guides d’exécution | Indisponibles |
 | Licence | Non déclarée |
 
 ## Documentation
 
-Les [éditions localisées](../README.md) sont indexées dans `docs/locales/`. Aucun guide fondé sur une implémentation n’est encore publié.
+- [Configuration, exploitation et sécurité des notifications Discord](../../discord-notifications.md)
+- [Éditions localisées de cette landing page](../README.md)
+
+Les guides d’installation et d’exécution du framework ne sont pas encore disponibles.
 
 ---
 

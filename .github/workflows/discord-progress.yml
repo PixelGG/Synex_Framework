@@ -1,0 +1,98 @@
+name: Discord - Development Progress
+
+on:
+  workflow_dispatch:
+    inputs:
+      title:
+        description: Short development update title
+        required: true
+        type: string
+      component:
+        description: Synex repository component
+        required: true
+        default: Repository
+        type: choice
+        options:
+          - Repository
+          - synex_core
+          - synex_character
+          - synex_identity
+          - synex_inventory
+          - synex_banking
+          - synex_phone
+          - synex_radio
+          - synex_jobs
+          - synex_shops
+          - synex_vehicles
+          - synex_garages
+          - synex_ui
+          - synex_bridge
+      status:
+        description: Current development state
+        required: true
+        default: In Development
+        type: choice
+        options:
+          - Planning
+          - In Development
+          - Testing
+          - Blocked
+          - Ready
+          - Completed
+      progress:
+        description: Whole-number completion percentage from 0 to 100
+        required: true
+        default: 0
+        type: number
+      summary:
+        description: Current focus in one concise paragraph
+        required: true
+        type: string
+      highlights:
+        description: Optional completed items, one per line
+        required: false
+        type: string
+      next_steps:
+        description: Optional next steps, one per line
+        required: false
+        type: string
+      target:
+        description: Optional target such as a verified release or milestone
+        required: false
+        type: string
+      dry_run:
+        description: Validate the embed without publishing to Discord
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    name: Publish development progress
+    if: ${{ github.run_attempt == '1' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out trusted default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Render and deliver notification
+        env:
+          DISCORD_WEBHOOK_PROGRESS: ${{ secrets.DISCORD_WEBHOOK_PROGRESS }}
+          DISCORD_WEBHOOK_DEFAULT: ${{ secrets.DISCORD_WEBHOOK_DEFAULT }}
+          DISCORD_WEBHOOK_NAME: ${{ vars.DISCORD_WEBHOOK_NAME }}
+          DISCORD_BRAND_ICON_URL: ${{ vars.DISCORD_BRAND_ICON_URL }}
+        run: node .github/scripts/discord/send.mjs --type progress

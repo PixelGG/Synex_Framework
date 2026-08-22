@@ -1,0 +1,35 @@
+name: Discord - Code Updates
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    name: Publish code update
+    if: ${{ github.run_attempt == '1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out trusted revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Render and deliver notification
+        env:
+          DISCORD_WEBHOOK_COMMITS: ${{ secrets.DISCORD_WEBHOOK_COMMITS }}
+          DISCORD_WEBHOOK_DEFAULT: ${{ secrets.DISCORD_WEBHOOK_DEFAULT }}
+          DISCORD_WEBHOOK_NAME: ${{ vars.DISCORD_WEBHOOK_NAME }}
+          DISCORD_BRAND_ICON_URL: ${{ vars.DISCORD_BRAND_ICON_URL }}
+        run: node .github/scripts/discord/send.mjs --type push

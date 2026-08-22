@@ -62,7 +62,7 @@ Um ecossistema de framework começa com responsabilidades explícitas. O Synex e
 | `core/` | Área reservada ao Core do framework | Scaffold de `synex_core` |
 | `resources/` | Resources de domínio do próprio projeto | 10 scaffolds nomeados |
 | `libraries/` | Libraries compartilhadas do framework | Scaffolds de `synex_ui` e `synex_bridge` |
-| `docs/`, `examples/`, `tools/` | Diretrizes do projeto, exemplos e ferramentas | Estrutura de READMEs traduzidas; exemplos e ferramentas reservados |
+| `docs/`, `examples/`, `tools/` | Diretrizes do projeto, exemplos e ferramentas | READMEs traduzidos e guia de integração do Discord; exemplos e ferramentas reservados |
 
 O layout estabelece apenas a divisão de responsabilidades no repositório. Ele ainda não define dependências de runtime, contratos públicos, limites entre Client e Server ou comportamento de serviços.
 
@@ -125,16 +125,12 @@ Ainda não existe um procedimento de instalação verificado: atualmente, o repo
 Synex_Framework/
 ├── .gitattributes
 ├── .github/
-│   └── assets/
-│       ├── branding/
-│       │   ├── synex-mark.svg
-│       │   ├── synex-mark.png
-│       │   ├── synex-mark-512.png
-│       │   ├── synex-mark-256.png
-│       │   ├── synex-mark-128.png
-│       │   └── synex-mark-animated.gif
-│       └── readme/
-│           └── hero.webp
+│   ├── assets/
+│   │   ├── branding/
+│   │   └── readme/
+│   ├── scripts/
+│   │   └── discord/
+│   └── workflows/
 ├── .gitignore
 ├── core/
 │   └── synex_core/
@@ -154,6 +150,7 @@ Synex_Framework/
 │   └── synex_bridge/
 ├── tools/
 ├── docs/
+│   ├── discord-notifications.md
 │   └── locales/
 │       ├── README.md
 │       ├── de/README.md
@@ -170,23 +167,27 @@ Atualmente, os diretórios dos módulos contêm apenas placeholders `.gitkeep`.
 
 ## Status tecnológico
 
-FiveM é a plataforma-alvo declarada. Com base no conteúdo atual do repositório, ainda não é possível determinar a linguagem de runtime, a stack NUI, a engine de banco de dados, o gerenciador de pacotes ou o pipeline de build.
+FiveM é a plataforma-alvo declarada. A automação do repositório usa módulos JavaScript sem dependências no Node.js 24 por meio do GitHub Actions. Com base no conteúdo atual, ainda não é possível determinar a linguagem de runtime do framework, a stack NUI, a engine de banco de dados, o gerenciador de pacotes ou o pipeline de build dos resources.
 
 ## Status de desenvolvimento
 
 | Área | Estado verificado |
 | --- | --- |
 | Organização do repositório | Presente |
+| Feed de desenvolvimento do GitHub para o Discord | Implementado e coberto pelos testes de automação do repositório |
 | Módulos de Core, resources e libraries | Apenas scaffolds de diretórios |
 | Manifestos de resources e código de runtime | Ausentes |
 | APIs públicas, eventos, Exports e callbacks | Ausentes |
 | Banco de dados, configuração, permissões e sistemas de segurança | Ausentes |
-| Fluxo de instalação e guias detalhados | Não disponíveis |
+| Fluxo de instalação do framework e guias de runtime | Não disponíveis |
 | Licença | Não declarada |
 
 ## Documentação
 
-As versões localizadas desta landing page estão indexadas em [`docs/locales/`](../README.md). Ainda não foram publicados guias baseados em uma implementação.
+- [Configuração, operação e segurança das notificações do Discord](../../discord-notifications.md)
+- [Versões localizadas desta landing page](../README.md)
+
+Os guias de instalação e runtime do framework ainda não estão disponíveis.
 
 ---
 

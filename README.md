@@ -62,7 +62,7 @@ A framework ecosystem starts with explicit ownership. Synex establishes those bo
 | `core/` | Home of the framework core | `synex_core` scaffold |
 | `resources/` | First-party domain resources | 10 named scaffolds |
 | `libraries/` | Shared framework libraries | `synex_ui` and `synex_bridge` scaffolds |
-| `docs/`, `examples/`, `tools/` | Project guidance, examples, and tooling | Localized README structure; examples and tools reserved |
+| `docs/`, `examples/`, `tools/` | Project guidance, examples, and tooling | Localized READMEs and Discord integration guide; examples and tools reserved |
 
 The layout establishes repository ownership only. It does not yet define runtime dependencies, public contracts, client/server boundaries, or service behavior.
 
@@ -125,16 +125,12 @@ There is no verified installation path yet: the repository does not currently co
 Synex_Framework/
 ├── .gitattributes
 ├── .github/
-│   └── assets/
-│       ├── branding/
-│       │   ├── synex-mark.svg
-│       │   ├── synex-mark.png
-│       │   ├── synex-mark-512.png
-│       │   ├── synex-mark-256.png
-│       │   ├── synex-mark-128.png
-│       │   └── synex-mark-animated.gif
-│       └── readme/
-│           └── hero.webp
+│   ├── assets/
+│   │   ├── branding/
+│   │   └── readme/
+│   ├── scripts/
+│   │   └── discord/
+│   └── workflows/
 ├── .gitignore
 ├── core/
 │   └── synex_core/
@@ -154,6 +150,7 @@ Synex_Framework/
 │   └── synex_bridge/
 ├── tools/
 ├── docs/
+│   ├── discord-notifications.md
 │   └── locales/
 │       ├── README.md
 │       ├── de/README.md
@@ -170,23 +167,27 @@ The module directories currently contain only `.gitkeep` placeholders.
 
 ## Technology status
 
-FiveM is the declared target platform. A runtime language, NUI stack, database engine, package manager, and build pipeline cannot yet be determined from the repository contents.
+FiveM is the declared target platform. The repository automation uses dependency-free JavaScript modules on Node.js 24 through GitHub Actions. A framework runtime language, NUI stack, database engine, package manager, and resource build pipeline cannot yet be determined from the repository contents.
 
 ## Development status
 
 | Area | Verified state |
 | --- | --- |
 | Repository organization | Present |
+| GitHub-to-Discord development feed | Implemented and covered by repository automation tests |
 | Core, resource, and library modules | Directory scaffolds only |
 | Resource manifests and runtime code | Not present |
 | Public APIs, events, exports, and callbacks | Not present |
 | Database, configuration, permissions, and security systems | Not present |
-| Installation workflow and detailed guides | Not available |
+| Framework installation workflow and runtime guides | Not available |
 | License | Not declared |
 
 ## Documentation
 
-Localized editions of this landing page are indexed in [`docs/locales/`](./docs/locales/README.md). No implementation-backed guides are published yet.
+- [Discord notification setup, operation, and security](./docs/discord-notifications.md)
+- [Localized editions of this landing page](./docs/locales/README.md)
+
+Framework installation and runtime guides are not available yet.
 
 ---
 

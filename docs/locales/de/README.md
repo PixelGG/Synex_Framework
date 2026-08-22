@@ -62,7 +62,7 @@ Ein Framework-Ökosystem beginnt mit expliziten Verantwortlichkeiten. Synex legt
 | `core/` | Bereich des Framework-Cores | `synex_core`-Scaffold |
 | `resources/` | Eigene Domain-Resources | 10 benannte Scaffolds |
 | `libraries/` | Gemeinsam genutzte Framework-Libraries | `synex_ui`- und `synex_bridge`-Scaffolds |
-| `docs/`, `examples/`, `tools/` | Projektleitfäden, Beispiele und Tools | Lokalisierte README-Struktur; `examples/` und `tools/` reserviert |
+| `docs/`, `examples/`, `tools/` | Projektleitfäden, Beispiele und Tools | Lokalisierte READMEs und Discord-Integrationsleitfaden; `examples/` und `tools/` reserviert |
 
 Die Struktur legt ausschließlich die Verantwortlichkeiten innerhalb des Repositories fest. Sie definiert noch keine Runtime-Dependencies, öffentlichen Verträge, Client-/Server-Grenzen oder das Verhalten von Services.
 
@@ -125,16 +125,12 @@ Es gibt noch keinen verifizierten Installationsweg: Das Repository enthält derz
 Synex_Framework/
 ├── .gitattributes
 ├── .github/
-│   └── assets/
-│       ├── branding/
-│       │   ├── synex-mark.svg
-│       │   ├── synex-mark.png
-│       │   ├── synex-mark-512.png
-│       │   ├── synex-mark-256.png
-│       │   ├── synex-mark-128.png
-│       │   └── synex-mark-animated.gif
-│       └── readme/
-│           └── hero.webp
+│   ├── assets/
+│   │   ├── branding/
+│   │   └── readme/
+│   ├── scripts/
+│   │   └── discord/
+│   └── workflows/
 ├── .gitignore
 ├── core/
 │   └── synex_core/
@@ -154,6 +150,7 @@ Synex_Framework/
 │   └── synex_bridge/
 ├── tools/
 ├── docs/
+│   ├── discord-notifications.md
 │   └── locales/
 │       ├── README.md
 │       ├── de/README.md
@@ -170,23 +167,27 @@ Die Modulverzeichnisse enthalten derzeit ausschließlich `.gitkeep`-Platzhalter.
 
 ## Technologiestatus
 
-FiveM ist die deklarierte Zielplattform. Runtime-Sprache, NUI-Stack, Datenbank-Engine, Package-Manager und Build-Pipeline lassen sich aus dem aktuellen Inhalt des Repositories noch nicht bestimmen.
+FiveM ist die deklarierte Zielplattform. Die Repository-Automatisierung verwendet dependency-freie JavaScript-Module unter Node.js 24 über GitHub Actions. Eine Framework-Runtime-Sprache, der NUI-Stack, die Datenbank-Engine, ein Package-Manager und die Resource-Build-Pipeline lassen sich aus dem aktuellen Inhalt des Repositories noch nicht bestimmen.
 
 ## Entwicklungsstatus
 
 | Bereich | Nachgewiesener Status |
 | --- | --- |
 | Repository-Organisation | Vorhanden |
+| GitHub-zu-Discord-Development-Feed | Implementiert und durch Repository-Automatisierungstests abgedeckt |
 | Core-, Resource- und Library-Module | Nur Verzeichnis-Scaffolds |
 | Resource-Manifeste und Runtime-Code | Nicht vorhanden |
 | Öffentliche APIs, Events, Exports und Callbacks | Nicht vorhanden |
 | Datenbank-, Konfigurations-, Berechtigungs- und Sicherheitssysteme | Nicht vorhanden |
-| Installationsablauf und detaillierte Leitfäden | Nicht verfügbar |
+| Framework-Installationsablauf und Runtime-Leitfäden | Nicht verfügbar |
 | Lizenz | Nicht deklariert |
 
 ## Dokumentation
 
-Die lokalisierten Versionen dieser Landing Page sind im [Locale-Index](../README.md) aufgeführt. Leitfäden auf Grundlage einer Implementierung wurden noch nicht veröffentlicht.
+- [Einrichtung, Betrieb und Sicherheit der Discord-Benachrichtigungen](../../discord-notifications.md)
+- [Lokalisierte Versionen dieser Landing Page](../README.md)
+
+Leitfäden zur Framework-Installation und Runtime sind noch nicht verfügbar.
 
 ---
 
