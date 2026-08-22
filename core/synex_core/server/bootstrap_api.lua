@@ -16,6 +16,7 @@ factories.bootstrapApi = function(deps)
     local reliability = assert(deps.reliability, 'bootstrap API requires reliability')
     local sagaRuntime = assert(deps.sagaRuntime, 'bootstrap API requires saga runtime')
     local facadeCache = assert(deps.facadeCache, 'bootstrap API requires facade cache')
+    local runtimeGate = assert(deps.runtimeGate, 'bootstrap API requires runtime gate')
     local ensureOwner = assert(deps.ensureOwner, 'bootstrap API requires owner discovery')
     local defaultConfig = assert(deps.defaultConfig, 'bootstrap API requires effective configuration')
 
@@ -30,6 +31,8 @@ factories.bootstrapApi = function(deps)
     end
 
     local function ownerOperation(caller, epoch, operation, handler, traceId)
+        local available, availabilityError = runtimeGate:requireAvailable()
+        if not available then return nil, availabilityError end
         if not registries.owners:isCurrent(caller, epoch) then return nil, foundation.error('STALE_RESOURCE', 'The calling resource restarted.') end
         local invocation = { cancelled = false, reason = nil }
         local token, operationError = registries.owners:beginOperation(caller, epoch, function(reason)
@@ -58,6 +61,8 @@ factories.bootstrapApi = function(deps)
     end
 
     local function guarded(caller, epoch, capability, operation, handler)
+        local available, availabilityError = runtimeGate:requireAvailable()
+        if not available then return nil, availabilityError end
         if not registries.owners:isCurrent(caller, epoch) then return nil, foundation.error('STALE_RESOURCE', 'The calling resource restarted.') end
         local traceId = foundation.nextId('trace')
         local allowed, err = security.capabilities:check(caller, capability, { traceId = traceId, operation = operation })
@@ -509,10 +514,26 @@ factories.bootstrapApi = function(deps)
                 end)
             end
         }
+        for _, namespace in pairs(facade) do
+            if type(namespace) == 'table' then
+                for name, handler in pairs(namespace) do
+                    if type(handler) == 'function' then
+                        local guardedHandler = handler
+                        namespace[name] = function(...)
+                            local available, availabilityError = runtimeGate:requireAvailable()
+                            if not available then return nil, availabilityError end
+                            return guardedHandler(...)
+                        end
+                    end
+                end
+            end
+        end
         return facade
     end
 
     local function getAPIForCaller(caller, versionRange)
+        local available, availabilityError = runtimeGate:requireAvailable()
+        if not available then return nil, availabilityError end
         if type(caller) ~= 'string' or caller == '' then
             return nil, foundation.error('CALLER_REQUIRED', 'External Synex exports require an invoking resource.')
         end
@@ -527,6 +548,8 @@ factories.bootstrapApi = function(deps)
     end
 
     local function invokeForCaller(caller, name, version, request, options)
+        local available, availabilityError = runtimeGate:requireAvailable()
+        if not available then return nil, availabilityError end
         if type(caller) ~= 'string' or caller == '' then
             return nil, foundation.error('CALLER_REQUIRED', 'External Synex exports require an invoking resource.')
         end

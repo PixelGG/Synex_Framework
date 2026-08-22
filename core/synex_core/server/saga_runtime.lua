@@ -6,6 +6,7 @@ factories.sagaRuntime = function(deps)
     local store = assert(deps.sagas, 'saga runtime requires saga persistence')
     local audit = assert(deps.audit, 'saga runtime requires audit persistence')
     local leases = assert(deps.leases, 'saga runtime requires cluster leases')
+    local instances = assert(deps.instances, 'saga runtime requires cluster instances')
     local owners = assert(deps.owners, 'saga runtime requires owner registry')
     local instanceId = assert(deps.instanceId, 'saga runtime requires an instance ID')
     local enabled = deps.enabled ~= false
@@ -15,7 +16,6 @@ factories.sagaRuntime = function(deps)
     local definitionCount = 0
     local dispatching = false
     local lastDispatch = nil
-
     local function plainObject(value)
         return type(value) == 'table' and getmetatable(value) == nil
     end
@@ -30,6 +30,12 @@ factories.sagaRuntime = function(deps)
         return type(value) == 'string' and #value >= 1 and #value <= maximum
             and value:match('^[a-z][a-z0-9_.%-]*$') ~= nil
             and not value:match('[%._%-]$') and not value:match('[%._%-][%._%-]')
+    end
+
+    local function nextSagaLeaseOwner()
+        local owner = tostring(instanceId) .. ':saga:' .. foundation.nextId('saga')
+        if #owner > 96 then error('saga lease owner exceeds the persisted bound') end
+        return owner
     end
 
     local function integer(value, defaultValue, minimum, maximum)
@@ -399,12 +405,14 @@ factories.sagaRuntime = function(deps)
         local report = { claimed = 0, processed = 0, deferred = 0, failed = 0, leaseBusy = 0 }
         local firstError = nil
         local ok, unexpected = xpcall(function()
+            local activeBootId, bootError = instances:bootId()
+            if not activeBootId then firstError = bootError return end
             local candidates, candidateError = store:candidates(maximum)
             if not candidates then firstError = candidateError return end
             report.claimed = #candidates
             for _, candidate in ipairs(candidates) do
-                local leaseOwner = instanceId .. ':saga'
-                local lease, leaseError = leases:acquire('saga:' .. candidate.publicId, leaseOwner, 45)
+                local lease, leaseError = leases:acquire('saga:' .. candidate.publicId,
+                    nextSagaLeaseOwner(), 45, instanceId, activeBootId)
                 if not lease then
                     if leaseError and leaseError.code == 'LEASE_BUSY' then report.leaseBusy = report.leaseBusy + 1
                     else report.failed = report.failed + 1; firstError = firstError or leaseError end

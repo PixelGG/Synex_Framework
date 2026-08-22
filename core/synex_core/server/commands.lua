@@ -16,7 +16,7 @@ factories.commands = function(deps)
     local registry = {}
     local bound = false
     local maximumEntries = 256
-    local usage = 'synex <overview|status|doctor|resources|sessions|permissions|trace|migrations|ledger|entities|access|ban|unban|allow|unallow>'
+    local usage = 'synex <overview|status|doctor|resources|sessions|permissions|trace|migrations|ledger|entities|prepare-restart|access|ban|unban|allow|unallow>'
 
     local function commandError(code, message, retryable)
         return foundation.error(code, message, { retryable = retryable == true })
@@ -235,6 +235,16 @@ factories.commands = function(deps)
     registry.entities = {
         minimum = 1, maximum = 1,
         run = function() return serviceSummary('synex.entities', 'getControlSummary', 'synex_entities') end
+    }
+    registry['prepare-restart'] = {
+        minimum = 1, maximum = 1,
+        run = function()
+            if type(runtime.prepareRestart) ~= 'function' then
+                return nil, commandError('RESTART_PREPARATION_UNAVAILABLE',
+                    'The Core restart preparation workflow is unavailable.')
+            end
+            return runtime:prepareRestart()
+        end
     }
     local function accessContext()
         return { actor = 'console', actorType = 'system', traceId = foundation.nextId('trace') }

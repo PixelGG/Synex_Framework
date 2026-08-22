@@ -1,5 +1,4 @@
 local factories = assert(SynexCoreFactories, 'factories must be loaded first')
-
 factories.identityCharacters = function(deps)
     local platform = assert(deps.platform, 'identity characters requires platform')
     local foundation = assert(deps.foundation, 'identity characters requires foundation')
@@ -15,8 +14,8 @@ factories.identityCharacters = function(deps)
     local invokeOwned = assert(deps.invokeOwned, 'identity characters requires owned invocation')
     local transition = assert(deps.transition, 'identity characters requires session transitions')
     local leases = assert(deps.leases, 'identity characters requires cluster leases')
+    local instances = assert(deps.instances, 'identity characters requires cluster instances')
     local instanceId = assert(deps.instanceId, 'identity characters requires instance ID')
-
     local participants = {}
     local participantSequence = 0
     local participantCount = 0
@@ -30,6 +29,11 @@ factories.identityCharacters = function(deps)
     local pendingUnloadCount = 0
     local pendingUnloadMaximum = math.max(64, math.min(tonumber(deps.pendingUnloadMaximum) or 1024, 4096))
     local characters = {}
+    local function nextDeletionLeaseOwner()
+        local owner = tostring(instanceId) .. ':character-delete:' .. foundation.nextId('delete')
+        if #owner > 96 then error('character deletion lease owner exceeds the persisted bound') end
+        return owner
+    end
     local function clearPendingUnload(sessionId)
         local entry = pendingUnloads[sessionId]
         if not entry then return end
@@ -45,7 +49,6 @@ factories.identityCharacters = function(deps)
         return foundation.error('SESSION_PERSISTENCE_PENDING', message,
             { retryable = true, details = details })
     end
-
     local function invokeParticipant(participant, handler, ...)
         local started = foundation.monotonicMs()
         local invoked, result, handlerError = invokeOwned(participant, handler, ...)
@@ -65,7 +68,6 @@ factories.identityCharacters = function(deps)
         end
         return result == nil and true or result, nil
     end
-
     local function cacheCharacter(character)
         if type(character) ~= 'table' or type(character.id) ~= 'string' then return end
         local now = foundation.monotonicMs()
@@ -88,12 +90,10 @@ factories.identityCharacters = function(deps)
             expiresAt = now + cacheTtlMs, touchedAt = now
         }
     end
-
     local function invalidateCharacter(characterId)
         if cache[characterId] then cache[characterId] = nil; cacheSize = math.max(0, cacheSize - 1) end
         metrics:increment('synex_character_cache_total', { result = 'invalidation' })
     end
-
     function characters:registerParticipant(owner, epoch, definition)
         local timeoutMs = type(definition) == 'table' and (definition.timeoutMs or 5000) or nil
         local priority = type(definition) == 'table' and (definition.priority or 0) or nil
@@ -138,7 +138,6 @@ factories.identityCharacters = function(deps)
         if err then participants[token] = nil; participantCount = participantCount - 1; return nil, err end
         return token, nil
     end
-
     local function orderedParticipants(reverse)
         local result = {}
         for _, participant in pairs(participants) do
@@ -150,7 +149,6 @@ factories.identityCharacters = function(deps)
         end)
         return result
     end
-
     local function findParticipant(action)
         for _, participant in pairs(participants) do
             if participant.owner == action.owner and owners:isCurrent(participant.owner, participant.epoch)
@@ -214,8 +212,10 @@ factories.identityCharacters = function(deps)
             local _, markerError = markDeletionFailed(planId, validationError.code)
             return nil, markerError or validationError
         end
+        local activeBootId, bootError = instances:bootId()
+        if not activeBootId then return nil, bootError end
         local lease, leaseError = leases:acquire('character-delete:' .. planId,
-            tostring(instanceId):sub(1, 72) .. ':character-delete', 30)
+            nextDeletionLeaseOwner(), 30, instanceId, activeBootId)
         if not lease then return nil, leaseError end
         local function release()
             local _, releaseError = leases:release(lease)

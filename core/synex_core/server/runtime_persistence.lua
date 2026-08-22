@@ -6,6 +6,16 @@ factories.runtimePersistence = function(deps)
     local platform = assert(deps.platform, 'runtime persistence requires platform')
     local instanceId = assert(deps.instanceId, 'runtime persistence requires an instance ID')
     local metrics = foundation.metrics
+    local bootId = nil
+    local bootRegistered = false
+
+    local function requireBootAuthority()
+        if not bootRegistered then
+            return nil, foundation.error('INSTANCE_BOOT_NOT_REGISTERED',
+                'The runtime boot generation is not registered.')
+        end
+        return bootId, nil
+    end
 
     local instanceSnapshot = {
         localInstanceId = instanceId,
@@ -22,24 +32,123 @@ factories.runtimePersistence = function(deps)
         if type(name) ~= 'string' or #name < 1 or #name > 96 or name:find('[%z\1-\31\127]') then
             return nil, foundation.error('INVALID_INSTANCE_NAME', 'Instance name must be a bounded printable string.')
         end
-        local affected, err = database:update([[INSERT INTO `synex_instances`
-            (`instance_id`, `name`, `started_at`, `heartbeat_at`, `status`, `version`)
-            VALUES (?, ?, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), 'starting', 1)
-            ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `started_at` = CURRENT_TIMESTAMP(6),
-                `heartbeat_at` = CURRENT_TIMESTAMP(6), `status` = 'starting', `version` = `version` + 1]],
-            { instanceId, name })
-        if err then return nil, err end
+        local candidateBootId = foundation.nextId('boot')
+        if type(candidateBootId) ~= 'string' or #candidateBootId < 1 or #candidateBootId > 36 then
+            return nil, foundation.error('INVALID_BOOT_ID', 'The runtime boot generation is invalid.')
+        end
+        bootRegistered = false
+        bootId = nil
+        local registered, err = database:transaction({
+            {
+                query = [[INSERT INTO `synex_instances`
+                    (`instance_id`, `name`, `started_at`, `heartbeat_at`, `status`, `version`)
+                    VALUES (?, ?, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), 'starting', 1)
+                    ON DUPLICATE KEY UPDATE `name` = VALUES(`name`), `started_at` = CURRENT_TIMESTAMP(6),
+                        `heartbeat_at` = CURRENT_TIMESTAMP(6), `status` = 'starting', `version` = `version` + 1]],
+                values = { instanceId, name }
+            },
+            {
+                query = [[INSERT INTO `synex_instance_boots` (`instance_id`, `boot_id`, `registered_at`)
+                    VALUES (?, ?, CURRENT_TIMESTAMP(6))
+                    ON DUPLICATE KEY UPDATE `boot_id` = VALUES(`boot_id`),
+                        `registered_at` = CURRENT_TIMESTAMP(6)]],
+                values = { instanceId, candidateBootId }
+            }
+        })
+        if not registered then return nil, err end
+        bootId = candidateBootId
+        bootRegistered = true
         instanceSnapshot.status = 'starting'
         instanceSnapshot.refreshedAt = foundation.utcIso()
-        return affected, nil
+        return true, nil
+    end
+
+    function instances:bootId()
+        return requireBootAuthority()
+    end
+
+    function instances:terminateLocalSessions(reason)
+        if type(reason) ~= 'string' or #reason < 1 or #reason > 128 or reason:find('[%z\1-\31\127]') then
+            return nil, foundation.error('INVALID_CLOSE_REASON',
+                'Local session termination requires a bounded printable reason.')
+        end
+        local activeBootId, bootError = requireBootAuthority()
+        if not activeBootId then return nil, bootError end
+        local leaseOwnerPrefix = instanceId .. ':'
+        local authorityError = nil
+        local terminated, terminationError = database:withTransaction(function(query)
+            local authority = query([[SELECT `boot_id` FROM `synex_instance_boots`
+                WHERE `instance_id` = ? AND `boot_id` = ? FOR UPDATE]],
+                { instanceId, activeBootId }) or {}
+            if not authority[1] then
+                authorityError = foundation.error('INSTANCE_BOOT_AUTHORITY_LOST',
+                    'The runtime boot generation no longer owns the instance.')
+                return false
+            end
+            query([[UPDATE `synex_cluster_leases` AS `lease`
+                SET `lease`.`expires_at` = CURRENT_TIMESTAMP(6)
+                WHERE LEFT(`lease`.`lease_name`, 8) = 'session:'
+                    AND LEFT(`lease`.`owner_id`, ?) = ?]],
+                { #leaseOwnerPrefix, leaseOwnerPrefix })
+            query([[UPDATE `synex_session_control_requests` AS `request`
+                INNER JOIN `synex_sessions` AS `session` ON `session`.`id` = `request`.`target_session_id`
+                SET `request`.`state` = 'expired', `request`.`completed_at` = CURRENT_TIMESTAMP(6)
+                WHERE `request`.`state` = 'pending'
+                    AND (`request`.`requested_by_instance_id` = ? OR `session`.`server_instance_id` = ?)]],
+                { instanceId, instanceId })
+            query([[UPDATE `synex_sessions` AS `session`
+                SET `session`.`state` = 'CLOSED', `session`.`closed_at` = CURRENT_TIMESTAMP(6),
+                    `session`.`close_reason` = ?, `session`.`version` = `session`.`version` + 1
+                WHERE `session`.`server_instance_id` = ? AND `session`.`closed_at` IS NULL]],
+                { reason, instanceId })
+            return true
+        end)
+        if not terminated then return nil, authorityError or terminationError end
+        metrics:increment('synex_local_session_termination_total', { result = 'complete' })
+        return true, nil
+    end
+
+    function instances:sourceGenerationFloor()
+        local activeBootId, bootError = requireBootAuthority()
+        if not activeBootId then return nil, bootError end
+        local rows, err = database:query([[SELECT COALESCE(MAX(`session`.`source_generation`), 0)
+                AS `source_generation_floor`
+            FROM `synex_instance_boots` AS `boot`
+            LEFT JOIN `synex_sessions` AS `session`
+                ON `session`.`server_instance_id` = `boot`.`instance_id`
+            WHERE `boot`.`instance_id` = ? AND `boot`.`boot_id` = ?
+            GROUP BY `boot`.`instance_id`]], { instanceId, activeBootId })
+        if err then return nil, err end
+        local row = rows and rows[1]
+        if not row then
+            return nil, foundation.error('INSTANCE_BOOT_AUTHORITY_LOST',
+                'The runtime boot generation no longer owns the instance.')
+        end
+        local generation = row and tonumber(row.source_generation_floor) or nil
+        if not generation or math.type(generation) ~= 'integer'
+            or generation < 0 or generation > 9007199254740990 then
+            return nil, foundation.error('INVALID_SOURCE_GENERATION',
+                'The persisted source generation floor is invalid.')
+        end
+        return generation, nil
     end
 
     function instances:setStatus(status)
         local allowed = { starting = true, ready = true, degraded = true, stopping = true, stopped = true, stale = true }
         if not allowed[status] then return nil, foundation.error('INVALID_INSTANCE_STATUS', 'Instance status is invalid.') end
-        local affected, err = database:update([[UPDATE `synex_instances`
-            SET `status` = ?, `heartbeat_at` = CURRENT_TIMESTAMP(6), `version` = `version` + 1
-            WHERE `instance_id` = ?]], { status, instanceId })
+        local activeBootId, bootError = requireBootAuthority()
+        if not activeBootId then return nil, bootError end
+        local affected, err = database:update([[UPDATE `synex_instances` AS `instance`
+            INNER JOIN `synex_instance_boots` AS `boot`
+                ON `boot`.`instance_id` = `instance`.`instance_id` AND `boot`.`boot_id` = ?
+            SET `instance`.`status` = ?, `instance`.`heartbeat_at` = CURRENT_TIMESTAMP(6),
+                `instance`.`version` = `instance`.`version` + 1
+            WHERE `instance`.`instance_id` = ?
+                AND (CASE
+                    WHEN ? IN ('ready', 'degraded') THEN `instance`.`status` NOT IN ('stopping', 'stopped')
+                    WHEN ? IN ('starting', 'stopping', 'stale') THEN `instance`.`status` <> 'stopped'
+                    ELSE TRUE
+                END)]], { activeBootId, status, instanceId, status, status })
         if err then return nil, err end
         if tonumber(affected) ~= 1 then
             return nil, foundation.error('INSTANCE_NOT_REGISTERED', 'The runtime instance is not registered.', { retryable = true })
@@ -53,43 +162,76 @@ factories.runtimePersistence = function(deps)
         return true, nil
     end
 
-    function instances:heartbeat(staleSeconds)
+    function instances:heartbeat(staleSeconds, authorityGuard)
+        authorityGuard = type(authorityGuard) == 'function' and authorityGuard or function() return true end
+        if not authorityGuard() then return foundation.copy(instanceSnapshot), nil end
+        local activeBootId, bootError = requireBootAuthority()
+        if not activeBootId then return nil, bootError end
         staleSeconds = math.max(10, math.min(math.floor(tonumber(staleSeconds) or 45), 300))
         local recoveryStatus = instanceSnapshot.status
-        local updated, updateError = database:update([[UPDATE `synex_instances`
-            SET `heartbeat_at` = CURRENT_TIMESTAMP(6),
-                `status` = CASE WHEN `status` = 'stale' THEN ? ELSE `status` END,
-                `version` = `version` + 1
-            WHERE `instance_id` = ? AND `status` NOT IN ('stopping', 'stopped')]],
-            { recoveryStatus, instanceId })
+        local updated, updateError = database:update([[UPDATE `synex_instances` AS `instance`
+            INNER JOIN `synex_instance_boots` AS `boot`
+                ON `boot`.`instance_id` = `instance`.`instance_id` AND `boot`.`boot_id` = ?
+            SET `instance`.`heartbeat_at` = CURRENT_TIMESTAMP(6),
+                `instance`.`status` = CASE WHEN `instance`.`status` = 'stale' THEN ? ELSE `instance`.`status` END,
+                `instance`.`version` = `instance`.`version` + 1
+            WHERE `instance`.`instance_id` = ? AND `instance`.`status` NOT IN ('stopping', 'stopped')]],
+            { activeBootId, recoveryStatus, instanceId })
+        if not authorityGuard() then return foundation.copy(instanceSnapshot), nil end
         if updateError then return nil, updateError end
         if tonumber(updated) ~= 1 then
             return nil, foundation.error('INSTANCE_HEARTBEAT_REJECTED', 'The instance heartbeat was rejected.', { retryable = true })
         end
-        local _, staleError = database:update([[UPDATE `synex_instances`
-            SET `status` = 'stale', `version` = `version` + 1
-            WHERE `instance_id` <> ? AND `status` NOT IN ('stale', 'stopped')
-                AND `heartbeat_at` < TIMESTAMPADD(SECOND, -?, CURRENT_TIMESTAMP(6))]], { instanceId, staleSeconds })
+        local _, staleError = database:update([[UPDATE `synex_instances` AS `candidate`
+            INNER JOIN `synex_instance_boots` AS `authority`
+                ON `authority`.`instance_id` = ? AND `authority`.`boot_id` = ?
+            SET `candidate`.`status` = 'stale', `candidate`.`version` = `candidate`.`version` + 1
+            WHERE `candidate`.`instance_id` <> ? AND `candidate`.`status` NOT IN ('stale', 'stopped')
+                AND `candidate`.`heartbeat_at` < TIMESTAMPADD(SECOND, -?, CURRENT_TIMESTAMP(6))]],
+            { instanceId, activeBootId, instanceId, staleSeconds })
+        if not authorityGuard() then return foundation.copy(instanceSnapshot), nil end
         if staleError then return nil, staleError end
         local _, sessionError = database:update([[UPDATE `synex_sessions` AS `session`
             INNER JOIN `synex_instances` AS `instance` ON `instance`.`instance_id` = `session`.`server_instance_id`
+            INNER JOIN `synex_instance_boots` AS `authority`
+                ON `authority`.`instance_id` = ? AND `authority`.`boot_id` = ?
             SET `session`.`state` = 'CLOSED', `session`.`closed_at` = CURRENT_TIMESTAMP(6),
                 `session`.`close_reason` = 'instance heartbeat expired', `session`.`version` = `session`.`version` + 1
             WHERE `session`.`closed_at` IS NULL AND `instance`.`status` = 'stale'
-                AND `session`.`last_seen_at` < TIMESTAMPADD(SECOND, -?, CURRENT_TIMESTAMP(6))]], { staleSeconds })
+                AND `session`.`last_seen_at` < TIMESTAMPADD(SECOND, -?, CURRENT_TIMESTAMP(6))]],
+            { instanceId, activeBootId, staleSeconds })
+        if not authorityGuard() then return foundation.copy(instanceSnapshot), nil end
         if sessionError then return nil, sessionError end
-        local _, expiredError = database:update([[UPDATE `synex_session_control_requests`
-            SET `state` = 'expired', `completed_at` = CURRENT_TIMESTAMP(6)
-            WHERE `state` = 'pending' AND `expires_at` <= CURRENT_TIMESTAMP(6)]], {})
+        local _, expiredError = database:update([[UPDATE `synex_session_control_requests` AS `request`
+            INNER JOIN `synex_instances` AS `requester`
+                ON `requester`.`instance_id` = `request`.`requested_by_instance_id`
+            INNER JOIN `synex_instance_boots` AS `authority`
+                ON `authority`.`instance_id` = ? AND `authority`.`boot_id` = ?
+            LEFT JOIN `synex_session_control_authority` AS `request_claim`
+                ON `request_claim`.`request_id` = `request`.`request_id`
+            LEFT JOIN `synex_instance_boots` AS `requester_boot`
+                ON `requester_boot`.`instance_id` = `requester`.`instance_id`
+            SET `request`.`state` = 'expired', `request`.`completed_at` = CURRENT_TIMESTAMP(6)
+            WHERE `request`.`state` = 'pending'
+                AND (`request`.`expires_at` <= CURRENT_TIMESTAMP(6)
+                    OR `requester`.`status` <> 'ready'
+                    OR `request`.`created_at` < `requester`.`started_at`
+                    OR `request_claim`.`request_id` IS NULL
+                    OR `requester_boot`.`boot_id` IS NULL
+                    OR `request_claim`.`requester_boot_id` <> `requester_boot`.`boot_id`)]],
+            { instanceId, activeBootId })
+        if not authorityGuard() then return foundation.copy(instanceSnapshot), nil end
         if expiredError then return nil, expiredError end
         local rows, summaryError = database:query([[SELECT
                 COUNT(*) AS `total_count`,
                 SUM(CASE WHEN `status` IN ('starting', 'ready', 'degraded') THEN 1 ELSE 0 END) AS `healthy_count`,
                 SUM(CASE WHEN `status` = 'stale' THEN 1 ELSE 0 END) AS `stale_count`
             FROM `synex_instances`]], {})
+        if not authorityGuard() then return foundation.copy(instanceSnapshot), nil end
         if summaryError then return nil, summaryError end
         local pending, pendingError = database:scalar([[SELECT COUNT(*)
             FROM `synex_session_control_requests` WHERE `state` = 'pending']], {})
+        if not authorityGuard() then return foundation.copy(instanceSnapshot), nil end
         if pendingError then return nil, pendingError end
         local summary = rows and rows[1] or {}
         instanceSnapshot.total = tonumber(summary.total_count) or 0
@@ -102,12 +244,16 @@ factories.runtimePersistence = function(deps)
         return foundation.copy(instanceSnapshot), nil
     end
 
-    function instances:touchSessions(sessionIds)
+    function instances:touchSessions(sessionIds, authorityGuard)
         if type(sessionIds) ~= 'table' then return nil, foundation.error('INVALID_ARGUMENT', 'Session IDs must be an array.') end
         if #sessionIds == 0 then return true, nil end
+        authorityGuard = type(authorityGuard) == 'function' and authorityGuard or function() return true end
+        local activeBootId, bootError = requireBootAuthority()
+        if not activeBootId then return nil, bootError end
         local offset = 1
         while offset <= #sessionIds do
-            local parameters = { instanceId }
+            if not authorityGuard() then return true, nil end
+            local parameters = { activeBootId, instanceId }
             local placeholders = {}
             local maximum = math.min(offset + 99, #sessionIds)
             for index = offset, maximum do
@@ -118,20 +264,60 @@ factories.runtimePersistence = function(deps)
                 placeholders[#placeholders + 1] = '?'
                 parameters[#parameters + 1] = sessionId
             end
-            local _, err = database:update([[UPDATE `synex_sessions`
-                SET `last_seen_at` = CURRENT_TIMESTAMP(6)
-                WHERE `server_instance_id` = ? AND `closed_at` IS NULL AND `id` IN (]]
+            local _, err = database:update([[UPDATE `synex_sessions` AS `session`
+                INNER JOIN `synex_instance_boots` AS `boot`
+                    ON `boot`.`instance_id` = `session`.`server_instance_id` AND `boot`.`boot_id` = ?
+                SET `session`.`last_seen_at` = CURRENT_TIMESTAMP(6)
+                WHERE `session`.`server_instance_id` = ? AND `session`.`closed_at` IS NULL
+                    AND `session`.`id` IN (]]
                 .. table.concat(placeholders, ',') .. ')', parameters)
+            if not authorityGuard() then return true, nil end
             if err then return nil, err end
             offset = maximum + 1
         end
         return true, nil
     end
 
-    function instances:requestRemoteKicks(userId, ttlSeconds)
+    function instances:requestRemoteKicks(userId, ttlSeconds, authorityGuard)
         if type(userId) ~= 'string' or #userId < 1 or #userId > 36 then
             return nil, foundation.error('INVALID_USER_ID', 'Remote session replacement requires a valid user ID.')
         end
+        if type(authorityGuard) ~= 'function' then
+            return nil, foundation.error('CONTROL_AUTHORITY_REQUIRED',
+                'Remote session replacement requires a live admission authority guard.')
+        end
+        local activeBootId, bootError = requireBootAuthority()
+        if not activeBootId then return nil, bootError end
+        local function authorityIsCurrent()
+            local invoked, current = foundation.safeCall(authorityGuard)
+            return invoked and current == true
+        end
+        local function authorityError()
+            return foundation.error('CORE_STOPPING',
+                'Remote session replacement was cancelled because admission authority changed.')
+        end
+        local issuedRequestIds = {}
+        local function expireIssuedRequests()
+            if #issuedRequestIds == 0 then return true, nil end
+            local placeholders = {}
+            for _ = 1, #issuedRequestIds do placeholders[#placeholders + 1] = '?' end
+            local parameters = { activeBootId, instanceId }
+            for _, requestId in ipairs(issuedRequestIds) do parameters[#parameters + 1] = requestId end
+            local _, expiryError = database:update([[UPDATE `synex_session_control_requests` AS `request`
+                INNER JOIN `synex_session_control_authority` AS `request_claim`
+                    ON `request_claim`.`request_id` = `request`.`request_id`
+                        AND `request_claim`.`requester_boot_id` = ?
+                INNER JOIN `synex_instance_boots` AS `boot`
+                    ON `boot`.`instance_id` = `request`.`requested_by_instance_id`
+                        AND `boot`.`boot_id` = `request_claim`.`requester_boot_id`
+                SET `request`.`state` = 'expired', `request`.`completed_at` = CURRENT_TIMESTAMP(6)
+                WHERE `request`.`requested_by_instance_id` = ? AND `request`.`state` = 'pending'
+                    AND `request`.`request_id` IN (]]
+                .. table.concat(placeholders, ',') .. ')', parameters)
+            if expiryError then return nil, expiryError end
+            return true, nil
+        end
+        if not authorityIsCurrent() then return nil, authorityError() end
         ttlSeconds = math.max(10, math.min(math.floor(tonumber(ttlSeconds) or 45), 300))
         local sessions, queryError = database:query([[SELECT `id` FROM `synex_sessions`
             WHERE `user_id` = ? AND `server_instance_id` <> ? AND `closed_at` IS NULL
@@ -139,28 +325,89 @@ factories.runtimePersistence = function(deps)
         if queryError then return nil, queryError end
         local requested = 0
         for _, session in ipairs(sessions or {}) do
+            if not authorityIsCurrent() then
+                local expired, expiryError = expireIssuedRequests()
+                if not expired then return nil, expiryError end
+                return nil, authorityError()
+            end
             local requestId = foundation.nextId('control')
-            local _, insertError = database:update([[INSERT INTO `synex_session_control_requests`
-                (`request_id`, `target_session_id`, `requested_by_instance_id`, `action`, `state`, `reason`, `expires_at`)
-                VALUES (?, ?, ?, 'kick', 'pending', 'duplicate session replaced',
-                    TIMESTAMPADD(SECOND, ?, CURRENT_TIMESTAMP(6)))
-                ON DUPLICATE KEY UPDATE `expires_at` = VALUES(`expires_at`), `reason` = VALUES(`reason`)]],
-                { requestId, session.id, instanceId, ttlSeconds })
-            if insertError then return nil, insertError end
-            requested = requested + 1
+            local issuedRequestId, issueError = nil, nil
+            local committed, transactionError = database:withTransaction(function(query)
+                local requester = query([[SELECT `requester`.`instance_id`
+                    FROM `synex_instances` AS `requester`
+                    INNER JOIN `synex_instance_boots` AS `boot`
+                        ON `boot`.`instance_id` = `requester`.`instance_id` AND `boot`.`boot_id` = ?
+                    WHERE `requester`.`instance_id` = ? AND `requester`.`status` = 'ready'
+                    FOR UPDATE]], { activeBootId, instanceId }) or {}
+                if not requester[1] then issueError = authorityError(); return false end
+                local target = query([[SELECT `id` FROM `synex_sessions`
+                    WHERE `id` = ? AND `closed_at` IS NULL FOR UPDATE]], { session.id }) or {}
+                if not target[1] then return true end
+                local pending = query([[SELECT `request_id` FROM `synex_session_control_requests`
+                    WHERE `target_session_id` = ? AND `action` = 'kick' AND `state` = 'pending'
+                    LIMIT 1 FOR UPDATE]], { session.id }) or {}
+                issuedRequestId = pending[1] and pending[1].request_id or requestId
+                if pending[1] then
+                    query([[UPDATE `synex_session_control_requests`
+                        SET `requested_by_instance_id` = ?, `reason` = 'duplicate session replaced',
+                            `created_at` = CURRENT_TIMESTAMP(6),
+                            `expires_at` = TIMESTAMPADD(SECOND, ?, CURRENT_TIMESTAMP(6))
+                        WHERE `request_id` = ? AND `state` = 'pending']],
+                        { instanceId, ttlSeconds, issuedRequestId })
+                else
+                    query([[INSERT INTO `synex_session_control_requests`
+                        (`request_id`, `target_session_id`, `requested_by_instance_id`, `action`, `state`,
+                            `reason`, `expires_at`)
+                        VALUES (?, ?, ?, 'kick', 'pending', 'duplicate session replaced',
+                            TIMESTAMPADD(SECOND, ?, CURRENT_TIMESTAMP(6)))]],
+                        { issuedRequestId, session.id, instanceId, ttlSeconds })
+                end
+                query([[INSERT INTO `synex_session_control_authority`
+                    (`request_id`, `requester_boot_id`, `recorded_at`)
+                    VALUES (?, ?, CURRENT_TIMESTAMP(6))
+                    ON DUPLICATE KEY UPDATE `requester_boot_id` = VALUES(`requester_boot_id`),
+                        `recorded_at` = CURRENT_TIMESTAMP(6)]], { issuedRequestId, activeBootId })
+                return true
+            end)
+            if issueError or not committed then
+                local expired, expiryError = expireIssuedRequests()
+                if not expired then return nil, expiryError end
+                return nil, issueError or transactionError
+            end
+            if issuedRequestId then issuedRequestIds[#issuedRequestIds + 1] = issuedRequestId end
+            if not authorityIsCurrent() then
+                local expired, expiryError = expireIssuedRequests()
+                if not expired then return nil, expiryError end
+                return nil, authorityError()
+            end
+            if issuedRequestId then requested = requested + 1 end
         end
         metrics:increment('synex_cluster_control_requests_total', { action = 'kick' }, requested)
         return requested, nil
     end
 
     function instances:pendingLocalControls()
+        local activeBootId, bootError = requireBootAuthority()
+        if not activeBootId then return nil, bootError end
         local rows, err = database:query([[SELECT `request`.`request_id`, `request`.`target_session_id`,
                 `request`.`action`, `request`.`reason`
             FROM `synex_session_control_requests` AS `request`
             INNER JOIN `synex_sessions` AS `session` ON `session`.`id` = `request`.`target_session_id`
+            INNER JOIN `synex_instance_boots` AS `target_boot`
+                ON `target_boot`.`instance_id` = `session`.`server_instance_id`
+                    AND `target_boot`.`boot_id` = ?
+            INNER JOIN `synex_instances` AS `requester`
+                ON `requester`.`instance_id` = `request`.`requested_by_instance_id`
+            INNER JOIN `synex_session_control_authority` AS `request_claim`
+                ON `request_claim`.`request_id` = `request`.`request_id`
+            INNER JOIN `synex_instance_boots` AS `requester_boot`
+                ON `requester_boot`.`instance_id` = `requester`.`instance_id`
+                    AND `requester_boot`.`boot_id` = `request_claim`.`requester_boot_id`
             WHERE `request`.`state` = 'pending' AND `request`.`expires_at` > CURRENT_TIMESTAMP(6)
                 AND `session`.`server_instance_id` = ? AND `session`.`closed_at` IS NULL
-            ORDER BY `request`.`created_at` ASC LIMIT 32]], { instanceId })
+                AND `requester`.`status` = 'ready'
+                AND `request`.`created_at` >= `requester`.`started_at`
+            ORDER BY `request`.`created_at` ASC LIMIT 32]], { activeBootId, instanceId })
         if err then return nil, err end
         return rows or {}, nil
     end
@@ -169,9 +416,28 @@ factories.runtimePersistence = function(deps)
         if type(requestId) ~= 'string' or #requestId < 1 or #requestId > 36 then
             return nil, foundation.error('INVALID_CONTROL_REQUEST', 'Control request ID is invalid.')
         end
-        local affected, err = database:update([[UPDATE `synex_session_control_requests`
-            SET `state` = 'completed', `completed_at` = CURRENT_TIMESTAMP(6)
-            WHERE `request_id` = ? AND `state` = 'pending']], { requestId })
+        local activeBootId, bootError = requireBootAuthority()
+        if not activeBootId then return nil, bootError end
+        local affected, err = database:update([[UPDATE `synex_session_control_requests` AS `request`
+            INNER JOIN `synex_sessions` AS `session`
+                ON `session`.`id` = `request`.`target_session_id`
+            INNER JOIN `synex_instance_boots` AS `target_boot`
+                ON `target_boot`.`instance_id` = `session`.`server_instance_id`
+                    AND `target_boot`.`boot_id` = ?
+            INNER JOIN `synex_instances` AS `requester`
+                ON `requester`.`instance_id` = `request`.`requested_by_instance_id`
+            INNER JOIN `synex_session_control_authority` AS `request_claim`
+                ON `request_claim`.`request_id` = `request`.`request_id`
+            INNER JOIN `synex_instance_boots` AS `requester_boot`
+                ON `requester_boot`.`instance_id` = `requester`.`instance_id`
+                    AND `requester_boot`.`boot_id` = `request_claim`.`requester_boot_id`
+            SET `request`.`state` = 'completed', `request`.`completed_at` = CURRENT_TIMESTAMP(6)
+            WHERE `request`.`request_id` = ? AND `request`.`state` = 'pending'
+                AND `request`.`expires_at` > CURRENT_TIMESTAMP(6)
+                AND `session`.`server_instance_id` = ? AND `session`.`closed_at` IS NULL
+                AND `requester`.`status` = 'ready'
+                AND `request`.`created_at` >= `requester`.`started_at`]],
+            { activeBootId, requestId, instanceId })
         if err then return nil, err end
         return tonumber(affected) == 1, nil
     end

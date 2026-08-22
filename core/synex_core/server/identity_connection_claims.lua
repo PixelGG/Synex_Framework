@@ -26,5 +26,14 @@ factories.identityConnectionClaims = function(deps)
         active[playerSource] = nil
     end
 
+    function claims:invalidateAll()
+        local invalidated = 0
+        for playerSource in pairs(active) do
+            active[playerSource] = nil
+            invalidated = invalidated + 1
+        end
+        return invalidated
+    end
+
     return claims
 end

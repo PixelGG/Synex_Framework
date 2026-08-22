@@ -44,7 +44,9 @@
     { "id": "007_cluster_runtime", "path": "migrations/007_cluster_runtime.sql", "transactional": false },
     { "id": "008_core_rbac", "path": "migrations/008_core_rbac.sql", "transactional": false },
     { "id": "009_legacy_import", "path": "migrations/009_legacy_import.sql", "transactional": false },
-    { "id": "010_retention_archive", "path": "migrations/010_retention_archive.sql", "transactional": false }
+    { "id": "010_retention_archive", "path": "migrations/010_retention_archive.sql", "transactional": false },
+    { "id": "011_instance_boot_authority", "path": "migrations/011_instance_boot_authority.sql", "transactional": false },
+    { "id": "012_session_control_boot_authority", "path": "migrations/012_session_control_boot_authority.sql", "transactional": false }
   ],
   "dataOwnership": {
     "tables": [
@@ -65,7 +67,9 @@
       "synex_allowlist_entries",
       "synex_character_deletion_plans",
       "synex_instances",
+      "synex_instance_boots",
       "synex_session_control_requests",
+      "synex_session_control_authority",
       "synex_rbac_roles",
       "synex_rbac_role_permissions",
       "synex_rbac_subject_roles",

@@ -11,18 +11,22 @@ const modules = [
   'server/identity_characters.lua',
   'server/identity_connection_replacement.lua',
   'server/identity_connection_claims.lua',
+  'server/identity_connection_authority.lua',
+  'server/identity_connection_terminals.lua',
   'server/identity_connection_join.lua',
   'server/identity_connection_maintenance.lua',
   'server/identity_connections.lua',
   'server/identity.lua',
   'server/runtime_persistence.lua',
   'server/runtime_configuration.lua',
+  'server/runtime_gate.lua',
   'server/retention.lua',
   'server/saga_runtime.lua',
   'server/commands.lua',
   'server/bootstrap_discovery.lua',
   'server/bootstrap_api.lua',
   'server/bootstrap_diagnostics.lua',
+  'server/bootstrap_restart.lua',
   'server/bootstrap_lifecycle.lua',
   'server/bootstrap.lua',
 ] as const;
@@ -115,6 +119,14 @@ test('boot validates UTC and fail-closes named recurring worker registration', a
   const utcValidation = lifecycle.indexOf('persistence.database:validateUtcSession()');
   const migrationBootstrap = lifecycle.indexOf('persistence.migrations:bootstrap()');
   assert.ok(utcValidation >= 0 && utcValidation < migrationBootstrap);
+  const instanceRegistration = lifecycle.indexOf('persistence.instances:register(defaultConfig.instanceName)');
+  const authorityCleanup = lifecycle.indexOf("persistence.instances:terminateLocalSessions('synex_core restarted')");
+  const sourceGenerationFloor = lifecycle.indexOf('persistence.instances:sourceGenerationFloor()');
+  const sourceGenerationSeed = lifecycle.indexOf('registries.players:seedSourceGeneration(sourceGenerationFloor)');
+  const serviceRegistration = lifecycle.indexOf('registerCoreContracts()');
+  assert.ok(instanceRegistration > migrationBootstrap && authorityCleanup > instanceRegistration);
+  assert.ok(sourceGenerationFloor > authorityCleanup && sourceGenerationSeed > sourceGenerationFloor);
+  assert.ok(serviceRegistration > sourceGenerationSeed);
   assert.match(
     lifecycle,
     /local function scheduleEvery[\s\S]*?if not token then error\(scheduleError\.message\) end/u,
@@ -136,6 +148,32 @@ test('boot validates UTC and fail-closes named recurring worker registration', a
   );
   assert.match(connections, /if not lifecycle\.core:canAdmitPlayers\(\) then/u);
   assert.doesNotMatch(connections, /if not lifecycle\.core:isOperational\(\) then/u);
+});
+
+test('the core stop event is synchronous and durable cleanup belongs to explicit restart preparation', async () => {
+  const lifecycle = await source('server/bootstrap_lifecycle.lua');
+  const restart = await source('server/bootstrap_restart.lua');
+  const stopStart = lifecycle.indexOf("platform.addEventHandler('onResourceStop'");
+  const nonCoreStart = lifecycle.indexOf('            reloadSnapshots[resource] = nil', stopStart);
+  assert.ok(stopStart >= 0 && nonCoreStart > stopStart, 'the Core stop boundary must be discoverable');
+  const coreStop = lifecycle.slice(stopStart, nonCoreStart);
+  assert.doesNotMatch(
+    coreStop,
+    /(?:platform\.(?:defer|wait)|drainQuiescedTerminals|persistence\.|releaseQuiescedLeases|lifecycle\.reload[:.]quiesce)/u,
+    'the stopping resource cannot depend on a yielded or database-backed continuation',
+  );
+  assert.match(coreStop, /restartController:handleRawStop/u);
+  const rawStart = restart.indexOf('function controller:handleRawStop()');
+  const rawEnd = restart.indexOf('    return controller', rawStart);
+  assert.ok(rawStart >= 0 && rawEnd > rawStart, 'the raw-stop controller must be discoverable');
+  const rawStop = restart.slice(rawStart, rawEnd);
+  assert.doesNotMatch(
+    rawStop,
+    /(?:platform\.(?:defer|wait)|drainQuiescedTerminals|persistence\.|releaseQuiescedLeases|lifecycle\.reload[:.]quiesce)/u,
+  );
+  assert.match(rawStop, /flushReadyQuiescedTerminals/u);
+  assert.match(restart, /function controller:prepare\(\)[\s\S]*?drainQuiescedTerminals/u);
+  assert.match(restart, /function controller:prepare\(\)[\s\S]*?terminateLocalSessions/u);
 });
 
 test('kernel persistence does not silently discard direct database calls', async () => {

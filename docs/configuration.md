@@ -48,7 +48,7 @@ The accounting concurrency model expects the oxmysql ConVar `mysql_transaction_i
 
 The current runtime does not enforce `database.queryTimeoutMs` through its generic adapter. Batch and interactive transactions use `database.deadlockRetries` only for recognized deadlock signals (`1213`, SQLSTATE `40001`, or a deadlock diagnostic), with the configured bounded retry count and wait.
 
-`connections.duplicatePolicy` is cluster-aware. `deny_new` rejects an existing local session or active remote authority. `kick_old` (and the deprecated `replace_old` alias) completes connection gates, cleans up local authority, requests a bounded persisted kick from the remote owning instance when necessary, waits for the fenced session lease, and rejects fail-closed if ownership cannot be transferred. `allow` uses a session-specific lease and permits isolated concurrent sessions. Remote control requests are consumed by the owning instance heartbeat worker; no client-provided identifier or kick target is trusted.
+`connections.duplicatePolicy` is cluster-aware. `deny_new` rejects an existing local session or active remote authority. `kick_old` (and the deprecated `replace_old` alias) completes connection gates, cleans up local authority, requests a bounded persisted kick from the remote owning instance when necessary, waits for the boot-fenced session lease, and rejects fail-closed if ownership cannot be transferred. `allow` uses a session-specific lease and permits isolated concurrent sessions. Remote control requests carry the requester's current boot claim and are consumed by the owning instance heartbeat worker only while that claim remains current; no client-provided identifier or kick target is trusted.
 
 Setting `features.durableEvents` to `false` prevents outbox enqueue/dispatch and omits the worker schedule. Setting `features.sagas` to `false` rejects saga mutations. Setting `features.stateReplication` to `false` rejects replicated state definitions while leaving non-replicated owned state available. Each path returns `FEATURE_DISABLED` rather than silently running a partial implementation.
 
@@ -97,7 +97,7 @@ Treat configuration changes as deployment changes:
 1. validate the repository with `npm run check`;
 2. inspect the capability delta with `node --experimental-strip-types tools/cli/src/bin.ts permissions .`;
 3. test against a disposable database and an isolated FXServer;
-4. restart through the operator's controlled maintenance process;
+4. while Core is still running, execute `synex prepare-restart`, require `state = "prepared"`, then execute its returned `restart synex_core` command;
 5. confirm `synex_doctor` returns the expected checks.
 
-The current runtime does not hot-reload these JSON files. Restart `synex_core` in a controlled maintenance window after a reviewed change.
+The current runtime does not hot-reload these JSON files. Restart `synex_core` in a controlled maintenance window after a reviewed change. A direct restart remains fail-closed and is recovered by the next boot, but it cannot provide the tick and database guarantees of the explicit preparation workflow.

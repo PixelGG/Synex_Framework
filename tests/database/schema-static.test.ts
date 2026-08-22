@@ -438,6 +438,26 @@ test('core cluster and RBAC migrations are manifest-owned and encode bounded aut
   assert.match(cluster, /UNIQUE KEY `uq_session_control_active` \(`target_session_id`, `action`, `active_marker`\)/u);
   assert.match(cluster, /FOREIGN KEY \(`target_session_id`\) REFERENCES `synex_sessions` \(`id`\)/u);
 
+  const bootAuthority = await readFile(
+    path.join(coreDirectory, 'migrations', '011_instance_boot_authority.sql'),
+    'utf8',
+  );
+  assert.match(bootAuthority, /CREATE TABLE IF NOT EXISTS `synex_instance_boots`/u);
+  assert.match(bootAuthority, /PRIMARY KEY \(`instance_id`\)/u);
+  assert.match(bootAuthority, /UNIQUE KEY `uq_instance_boot_id` \(`boot_id`\)/u);
+  assert.match(bootAuthority, /FOREIGN KEY \(`instance_id`\) REFERENCES `synex_instances` \(`instance_id`\)/u);
+
+  const controlAuthority = await readFile(
+    path.join(coreDirectory, 'migrations', '012_session_control_boot_authority.sql'),
+    'utf8',
+  );
+  assert.match(controlAuthority, /CREATE TABLE IF NOT EXISTS `synex_session_control_authority`/u);
+  assert.match(controlAuthority, /PRIMARY KEY \(`request_id`\)/u);
+  assert.match(
+    controlAuthority,
+    /FOREIGN KEY \(`request_id`\) REFERENCES `synex_session_control_requests` \(`request_id`\)/u,
+  );
+
   const rbac = await readFile(path.join(coreDirectory, 'migrations', '008_core_rbac.sql'), 'utf8');
   for (const table of [
     'synex_rbac_roles',

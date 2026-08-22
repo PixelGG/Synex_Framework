@@ -39,6 +39,7 @@ factories.identity = function(deps)
         invokeOwned = common.invokeOwned,
         transition = common.transition,
         leases = leases,
+        instances = instances,
         instanceId = deps.instanceId
     })
     local connections = factories.identityConnections({

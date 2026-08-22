@@ -32,7 +32,9 @@ factories.identityConnections = function(deps)
     local reconnectGrace = {}
     local reconnectGraceSize = 0
     local queueStats = { admitted = 0, timedOut = 0, rejected = 0, peak = 0 }
-    local connectionPipeline = {}
+    local connectionPipeline, authority = {}, nil
+    local joinClaims = factories.identityConnectionClaims({ foundation = foundation })
+    local function clearQueueEntry(connection) if connection and connection.id then queueEntries[connection.id] = nil end end
     local function identifierFingerprint(identifiers)
         local canonical = {}
         for _, identifier in ipairs(identifiers or {}) do
@@ -130,22 +132,15 @@ factories.identityConnections = function(deps)
         return true, nil
     end
 
+    local function releaseUncapturedConnectionLease(connection)
+        if authority and authority:isLeaseCaptured(connection) then return true, nil end
+        return releaseConnectionLease(connection)
+    end
+
     local function abandonConnection(connection)
         queueEntries[connection.id] = nil
         releaseAdmission(connection)
-        releaseConnectionLease(connection)
-    end
-
-    local function acquireConnectionLease(connection, userId)
-        local policy = duplicatePolicy()
-        local leaseName = policy == 'allow'
-            and ('session:' .. userId .. ':' .. connection.sessionId)
-            or ('session:' .. userId)
-        local leaseOwner = deps.instanceId .. ':' .. connection.sessionId
-        local lease, leaseError = leases:acquire(leaseName, leaseOwner, config.clusterSessionLeaseSeconds or 45)
-        if not lease then return nil, leaseError end
-        connection.clusterLease = lease
-        return true, nil
+        releaseUncapturedConnectionLease(connection)
     end
 
     local function recordReconnectGrace(userId)
@@ -183,7 +178,8 @@ factories.identityConnections = function(deps)
         messaging = messaging,
         characters = characters,
         sessionRepository = sessionRepository,
-        releaseConnectionLease = releaseConnectionLease
+        releaseConnectionLease = releaseUncapturedConnectionLease,
+        isQuiesced = function() return authority and authority:isQuiesced() or false end
     })
     function connectionPipeline:registerGate(owner, epoch, definition)
         if type(definition) ~= 'table' or type(definition.name) ~= 'string' or #definition.name < 3 or #definition.name > 96
@@ -227,7 +223,7 @@ factories.identityConnections = function(deps)
         return nil, #ordered
     end
 
-    local function waitForQueue(connection, deferrals)
+    local function waitForQueue(connection, terminal)
         local maximumActive = math.max(1, tonumber(config.maximumActiveSessions) or 128)
         local reserved = math.max(0, math.min(tonumber(config.queueReservedSlots) or 0, maximumActive - 1))
         local admissionLimit = connection.staff and maximumActive or maximumActive - reserved
@@ -269,33 +265,37 @@ factories.identityConnections = function(deps)
                 return nil, foundation.error('QUEUE_TIMEOUT', 'The connection queue wait timed out.', { retryable = true })
             end
             if position ~= lastPosition then
-                deferrals.update(('Synex: queue position %d of %d'):format(position or total, total))
+                terminal:update(('Synex: queue position %d of %d'):format(position or total, total))
                 lastPosition = position
             end
             platform.wait(math.max(250, math.min(config.queueUpdateMs or 1000, 5000)))
+            terminal:afterTick()
+            if terminal.state ~= 'open' then
+                return nil, foundation.error('QUEUE_CANCELLED',
+                    'The connection queue wait was cancelled.', { retryable = true })
+            end
         end
         return nil, foundation.error('QUEUE_CANCELLED', 'The connection queue entry was cancelled.', { retryable = true })
     end
 
-    local function acquireDuplicateAuthority(connection, userId, deferrals)
-        local policy = duplicatePolicy()
-        if policy == 'allow' or policy == 'deny_new' then return acquireConnectionLease(connection, userId) end
-        local requested, requestError = instances:requestRemoteKicks(userId, config.clusterSessionLeaseSeconds or 45)
-        if not requested then return nil, requestError end
-        local deadline = foundation.monotonicMs() + math.min(config.queueTimeoutMs or 120000,
-            (config.clusterSessionLeaseSeconds or 45) * 1000 + 5000)
-        repeat
-            local acquired, leaseError = acquireConnectionLease(connection, userId)
-            if acquired then return true, nil end
-            if not leaseError or (leaseError.code ~= 'LEASE_BUSY' and leaseError.code ~= 'MIGRATION_LEASE_BUSY') then
-                return nil, leaseError
-            end
-            if foundation.monotonicMs() >= deadline then return nil, leaseError end
-            deferrals.update(requested > 0 and 'Synex: replacing the existing cluster session...' or 'Synex: waiting for session authority...')
-            platform.wait(math.max(250, math.min(config.queueUpdateMs or 1000, 5000)))
-        until foundation.monotonicMs() >= deadline
-        return nil, foundation.error('DUPLICATE_SESSION_TIMEOUT', 'The existing cluster session did not release authority in time.', { retryable = true })
-    end
+    authority = factories.identityConnectionAuthority({
+        platform = platform, foundation = foundation, players = players, lifecycle = lifecycle,
+        leases = leases, instances = instances, instanceId = deps.instanceId, config = config,
+        duplicatePolicy = duplicatePolicy, joinClaims = joinClaims,
+        clearQueueEntry = clearQueueEntry, releaseAdmission = releaseAdmission,
+        releaseConnectionLease = releaseConnectionLease,
+        resetAdmissionState = function()
+            queueEntries, admissionReservations = {}, {}
+            admissionReservationCount = 0
+        end,
+        logConnectionStage = logConnectionStage
+    })
+    local terminals = factories.identityConnectionTerminals({
+        platform = platform, foundation = foundation,
+        acceptanceRejection = function(connection) return authority:acceptanceRejection(connection) end,
+        logConnectionStage = logConnectionStage
+    })
+    local terminalQuiesceReport = { cancelled = 0, failures = 0 }
 
     function connectionPipeline:handleConnecting(tempSource, playerName, deferrals)
         tempSource = tonumber(tempSource) or tempSource
@@ -306,46 +306,41 @@ factories.identityConnections = function(deps)
             state = 'CONNECTING', receivedAt = receivedAt, acceptedAt = nil,
             expiresAt = receivedAt + (config.pendingTtlMs or 120000), staff = false
         }
-        local terminalState = 'open'
-        local terminalAttempted = false
-        local terminalAcceptance = false
-        local function finish(reason, code)
-            if terminalState ~= 'open' then return false end
-            platform.defer()
-            if terminalState ~= 'open' then return false end
-            terminalState = 'invoking'
-            terminalAttempted = true
-            terminalAcceptance = reason == nil
-            local safeCode = nil
-            local invoked = nil
-            if terminalAcceptance then
-                invoked = foundation.safeCall(deferrals.done)
+        local terminal = nil
+        local function finish(...) return terminal and terminal:finish(...) end
+        local function continuationIsCurrent()
+            local reason, code = nil, nil
+            if authority:isQuiesced() then
+                reason, code = 'The Synex runtime is stopping. Please reconnect shortly.', 'CORE_STOPPING'
+            elseif not lifecycle.core:canAdmitPlayers() then
+                reason, code = 'The Synex runtime stopped accepting this connection. Please reconnect shortly.',
+                    'CORE_NOT_READY'
+            elseif not pendingIsCurrent(connection) then
+                reason, code = 'The connection attempt was cancelled. Please reconnect.', 'CONNECTION_CANCELLED'
             else
-                safeCode = type(code) == 'string' and code:match('^[A-Z0-9_]+$') and code:sub(1, 48)
-                    or 'CONNECTION_REJECTED'
-                local safeReason = tostring(reason):gsub('[%z\1-\31\127]', ' '):sub(1, 180)
-                invoked = foundation.safeCall(deferrals.done,
-                    ('Synex [%s]: %s'):format(safeCode, safeReason):sub(1, 256))
+                return true
             end
-            if not invoked then
-                terminalState = 'failed'
-                logConnectionStage(connection, 'deferral_terminal_failed',
-                    terminalAcceptance and 'DEFERRAL_ACCEPT_FAILED' or 'DEFERRAL_REJECT_FAILED', 'error')
-                return nil, foundation.error('DEFERRAL_TERMINATION_FAILED',
-                    'The Cfx connection deferral could not be finalized.')
+            local pending = players:getPending(tempSource)
+            if pending and pending.id == connection.id then
+                pending = players:removePending(tempSource)
+            else
+                pending = nil
             end
-            terminalState = terminalAcceptance and 'accepted' or 'rejected'
-            foundation.safeCall(metrics.increment, metrics, 'synex_connections_total', {
-                result = terminalAcceptance and 'accepted' or 'rejected'
-            })
-            logConnectionStage(connection, terminalAcceptance and 'deferral_accepted' or 'rejected',
-                safeCode, terminalAcceptance and 'info' or 'warn')
-            return true
+            abandonConnection(pending or connection)
+            finish(reason, code)
+            return false
         end
         local ok, runtimeError = foundation.safeCall(function()
             deferrals.defer()
+            terminal = assert(terminals:open(connection, deferrals))
             platform.defer()
+            terminal:arm()
+            if terminal.state ~= 'open' then return end
             logConnectionStage(connection, 'received')
+            if authority:isQuiesced() then
+                finish('The Synex runtime is stopping. Please reconnect shortly.', 'CORE_STOPPING', true)
+                return
+            end
             if not lifecycle.core:canAdmitPlayers() then
                 finish('The Synex runtime is not ready to admit players. Please reconnect shortly.', 'CORE_NOT_READY')
                 return
@@ -365,14 +360,13 @@ factories.identityConnections = function(deps)
                     'PENDING_CONNECTION_EXISTS')
                 return
             end
-            deferrals.update('Synex: authenticating connection...')
+            terminal:update('Synex: authenticating connection...')
             platform.defer()
+            terminal:afterTick()
+            if terminal.state ~= 'open' then return end
+            if not continuationIsCurrent() then return end
             local user, authError = userRepository:authenticate(rawIdentifiers)
-            if not pendingIsCurrent(connection) then
-                abandonConnection(connection)
-                finish('The connection attempt was cancelled. Please reconnect.', 'CONNECTION_CANCELLED')
-                return
-            end
+            if not continuationIsCurrent() then return end
             if not user then
                 players:removePending(tempSource)
                 local authenticationCode = authError and authError.code == 'IDENTIFIER_REQUIRED'
@@ -384,11 +378,7 @@ factories.identityConnections = function(deps)
             end
             logConnectionStage(connection, 'identity_ok')
             local allowed, accessError = accessRepository:check(user.id, identifiers)
-            if not pendingIsCurrent(connection) then
-                abandonConnection(connection)
-                finish('The connection attempt was cancelled. Please reconnect.', 'CONNECTION_CANCELLED')
-                return
-            end
+            if not continuationIsCurrent() then return end
             if not allowed then
                 players:removePending(tempSource)
                 local accessCode = accessError and accessError.code
@@ -419,12 +409,8 @@ factories.identityConnections = function(deps)
                 finish('Synex could not maintain the pending connection state.', 'PENDING_STATE_FAILED')
                 return
             end
-            local admitted, queueError = waitForQueue(connection, deferrals)
-            if not pendingIsCurrent(connection) then
-                abandonConnection(connection)
-                finish('The connection attempt was cancelled. Please reconnect.', 'CONNECTION_CANCELLED')
-                return
-            end
+            local admitted, queueError = waitForQueue(connection, terminal)
+            if not continuationIsCurrent() then return end
             if not admitted then
                 releaseAdmission(connection)
                 players:removePending(tempSource)
@@ -432,12 +418,8 @@ factories.identityConnections = function(deps)
                 return
             end
             if policy == 'deny_new' then
-                local leased, leaseError = acquireDuplicateAuthority(connection, user.id, deferrals)
-                if not pendingIsCurrent(connection) then
-                    abandonConnection(connection)
-                    finish('The connection attempt was cancelled. Please reconnect.', 'CONNECTION_CANCELLED')
-                    return
-                end
+                local leased, leaseError = authority:acquireDuplicate(connection, user.id, terminal)
+                if not continuationIsCurrent() then return end
                 if not leased then
                     releaseAdmission(connection)
                     players:removePending(tempSource)
@@ -471,23 +453,22 @@ factories.identityConnections = function(deps)
                 return
             end
             for _, gate in ipairs(orderedGates()) do
-                deferrals.update(('Synex: %s...'):format(gate.name))
+                terminal:update(('Synex: %s...'):format(gate.name))
                 platform.defer()
+                terminal:afterTick()
+                if terminal.state ~= 'open' then return end
+                if not continuationIsCurrent() then return end
                 local started = foundation.monotonicMs()
                 local invoked, result, gateError = invokeOwned(gate, gate.run, foundation.readonly({
                     connectionId = connection.id, sessionId = connection.sessionId, tempSource = tempSource,
                     user = foundation.copy(user), identifiers = foundation.copy(identifiers)
                 }))
                 local elapsed = foundation.monotonicMs() - started
-                if not pendingIsCurrent(connection) then
-                    abandonConnection(connection)
-                    finish('The connection attempt was cancelled. Please reconnect.', 'CONNECTION_CANCELLED')
-                    return
-                end
+                if not continuationIsCurrent() then return end
                 if not invoked or elapsed > gate.timeoutMs or result ~= true then
                     releaseAdmission(connection)
                     players:removePending(tempSource)
-                    releaseConnectionLease(connection)
+                    releaseUncapturedConnectionLease(connection)
                     logger:warn('connection gate denied or failed', {
                         correlationId = connection.id, gate = gate.name, elapsedMs = elapsed,
                         code = type(gateError) == 'table' and gateError.code or 'CONNECTION_GATE_DENIED'
@@ -498,11 +479,7 @@ factories.identityConnections = function(deps)
             end
             if policy == 'kick_old' then
                 local replaced, replaceError = replacements:replace(user.id)
-                if not pendingIsCurrent(connection) then
-                    abandonConnection(connection)
-                    finish('The connection attempt was cancelled. Please reconnect.', 'CONNECTION_CANCELLED')
-                    return
-                end
+                if not continuationIsCurrent() then return end
                 if not replaced then
                     releaseAdmission(connection)
                     players:removePending(tempSource)
@@ -512,12 +489,8 @@ factories.identityConnections = function(deps)
                     finish('The existing session could not be replaced safely. Please retry.', 'SESSION_REPLACE_FAILED')
                     return
                 end
-                local leased, leaseError = acquireDuplicateAuthority(connection, user.id, deferrals)
-                if not pendingIsCurrent(connection) then
-                    abandonConnection(connection)
-                    finish('The connection attempt was cancelled. Please reconnect.', 'CONNECTION_CANCELLED')
-                    return
-                end
+                local leased, leaseError = authority:acquireDuplicate(connection, user.id, terminal)
+                if not continuationIsCurrent() then return end
                 if not leased then
                     releaseAdmission(connection)
                     players:removePending(tempSource)
@@ -539,12 +512,8 @@ factories.identityConnections = function(deps)
                     return
                 end
             elseif policy == 'allow' then
-                local leased, leaseError = acquireDuplicateAuthority(connection, user.id, deferrals)
-                if not pendingIsCurrent(connection) then
-                    abandonConnection(connection)
-                    finish('The connection attempt was cancelled. Please reconnect.', 'CONNECTION_CANCELLED')
-                    return
-                end
+                local leased, leaseError = authority:acquireDuplicate(connection, user.id, terminal)
+                if not continuationIsCurrent() then return end
                 if not leased then
                     releaseAdmission(connection)
                     players:removePending(tempSource)
@@ -582,7 +551,7 @@ factories.identityConnections = function(deps)
             finish()
         end)
         if not ok then
-            if not (terminalAttempted and terminalAcceptance) then
+            if not (terminal and terminal.attempted and terminal.acceptance) then
                 local pending = players:getPending(tempSource)
                 if pending and pending.id == connection.id then pending = players:removePending(tempSource) else pending = nil end
                 abandonConnection(pending or connection)
@@ -590,7 +559,7 @@ factories.identityConnections = function(deps)
             foundation.safeCall(logger.error, logger, 'connection pipeline failed', {
                 correlationId = connection.id, code = 'CONNECTION_PIPELINE_FAILED'
             })
-            if not terminalAttempted then
+            if terminal and not terminal.attempted then
                 foundation.safeCall(finish,
                     'An internal connection error occurred. Please retry. If it persists, contact the server team.',
                     'CONNECTION_PIPELINE_FAILED')
@@ -599,19 +568,18 @@ factories.identityConnections = function(deps)
                 details = { runtimeType = type(runtimeError) }
             })
         end
-        if terminalState == 'failed' then
+        if terminal and terminal.state == 'failed' then
             return nil, foundation.error('DEFERRAL_TERMINATION_FAILED',
                 'The Cfx connection deferral could not be finalized.')
         end
         return true, nil
     end
 
-    local function clearQueueEntry(connection) if connection and connection.id then queueEntries[connection.id] = nil end end
-    local joinClaims = factories.identityConnectionClaims({ foundation = foundation })
     local handleJoining = factories.identityConnectionJoin({
         platform = platform,
         foundation = foundation,
         players = players,
+        lifecycle = lifecycle,
         rateLimiter = rateLimiter,
         userRepository = userRepository,
         sessionRepository = sessionRepository,
@@ -620,12 +588,36 @@ factories.identityConnections = function(deps)
         transition = transition,
         leases = leases,
         joinClaims = joinClaims,
+        isQuiesced = function() return authority:isQuiesced() end,
         logConnectionStage = logConnectionStage,
         releaseAdmission = releaseAdmission,
-        releaseConnectionLease = releaseConnectionLease,
+        releaseConnectionLease = releaseUncapturedConnectionLease,
         clearQueueEntry = clearQueueEntry
     })
     function connectionPipeline:handleJoining(finalSource, oldSource) return handleJoining(finalSource, oldSource) end
+
+    function connectionPipeline:quiesce()
+        local report, quiesceError = authority:quiesce()
+        if not report then return nil, quiesceError end
+        local cancelled = terminals:quiesce()
+        terminalQuiesceReport.cancelled = terminalQuiesceReport.cancelled + cancelled.cancelled
+        terminalQuiesceReport.failures = terminalQuiesceReport.failures + cancelled.failures
+        report.cancelledDeferrals = terminalQuiesceReport.cancelled
+        report.deferralFailures = terminalQuiesceReport.failures
+        return report, nil
+    end
+    function connectionPipeline:drainQuiescedTerminals()
+        if not authority:isQuiesced() then
+            return nil, foundation.error('CORE_NOT_QUIESCED',
+                'Connection authority must be quiesced before deferrals are drained.')
+        end
+        platform.defer()
+        return terminals:flushQuiesced()
+    end
+    function connectionPipeline:flushReadyQuiescedTerminals()
+        return terminals:flushReadyQuiesced()
+    end
+    function connectionPipeline:releaseQuiescedLeases() return authority:releaseQuiescedLeases() end
 
     local maintenance = factories.identityConnectionMaintenance({
         platform = platform,
@@ -644,9 +636,10 @@ factories.identityConnections = function(deps)
         joinClaims = joinClaims,
         logConnectionStage = logConnectionStage,
         releaseAdmission = releaseAdmission,
-        releaseConnectionLease = releaseConnectionLease,
+        releaseConnectionLease = releaseUncapturedConnectionLease,
         clearQueueEntry = clearQueueEntry,
         recordReconnectGrace = recordReconnectGrace,
+        isQuiesced = function() return authority:isQuiesced() end,
         purgeReconnectGrace = function(now)
             for userId, entry in pairs(reconnectGrace) do
                 if entry.expiresAt <= now then
@@ -659,6 +652,7 @@ factories.identityConnections = function(deps)
     function connectionPipeline:handleDropped(playerSource, reason) return maintenance:handleDropped(playerSource, reason) end
     function connectionPipeline:purgeExpired(maximum) return maintenance:purgeExpired(maximum) end
     function connectionPipeline:heartbeat()
+        if authority:isQuiesced() then return true, nil end
         local invoked, report, reconciliationError = foundation.safeCall(replacements.reconcile, replacements, 8)
         if not invoked or not report then
             foundation.safeCall(metrics.increment, metrics,
@@ -667,6 +661,7 @@ factories.identityConnections = function(deps)
                 code = invoked and reconciliationError and reconciliationError.code or 'RUNTIME_ERROR'
             })
         end
+        if authority:isQuiesced() then return true, nil end
         return maintenance:heartbeat()
     end
     function connectionPipeline:snapshot()
@@ -677,6 +672,8 @@ factories.identityConnections = function(deps)
             oldestWaitMs = math.max(oldestWaitMs, math.max(0, (config.queueTimeoutMs or 120000) - (entry.deadline - now)))
         end
         return {
+            quiesced = authority:isQuiesced(),
+            openDeferrals = terminals:count(),
             enabled = config.queueEnabled == true,
             maintenance = config.maintenanceMode == true,
             queued = queued,

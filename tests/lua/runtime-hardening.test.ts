@@ -167,22 +167,44 @@ test('cluster heartbeat preserves the explicit local lifecycle status', async ()
   try {
     const result = await engine.doString(`
       local heartbeatWrites, explicitStatuses, databaseStatus = 0, {}, 'starting'
+      local registeredBoot = nil
       local platform = {
         nowGame = function() return 1000 end, random = function() return 1 end,
         print = function() end, jsonEncode = function() return '{}' end
       }
       local foundation = SynexCoreFactories.foundation({ platform = platform })
       local database = {}
+      function database:transaction(statements)
+        assert(#statements == 2)
+        assert(statements[1].query:find('synex_instances', 1, true))
+        assert(statements[2].query:find('synex_instance_boots', 1, true))
+        registeredBoot = statements[2].values[2]
+        assert(type(registeredBoot) == 'string' and registeredBoot ~= '')
+        return true, nil
+      end
       function database:update(sql, parameters)
         if sql:find("NOT IN ('stopping', 'stopped')", 1, true)
             and sql:find('CASE WHEN', 1, true) then
           heartbeatWrites = heartbeatWrites + 1
-          assert(#parameters == 2 and parameters[2] == 'instance-a')
-          if databaseStatus == 'stale' then databaseStatus = parameters[1] end
-        elseif #parameters == 2 and parameters[2] == 'instance-a'
-            and (parameters[1] == 'degraded' or parameters[1] == 'ready') then
-          explicitStatuses[#explicitStatuses + 1] = parameters[1]
-          databaseStatus = parameters[1]
+          assert(#parameters == 3 and parameters[1] == registeredBoot
+            and parameters[3] == 'instance-a')
+          if databaseStatus == 'stale' then databaseStatus = parameters[2] end
+        elseif #parameters == 5 and parameters[1] == registeredBoot
+            and parameters[3] == 'instance-a' then
+          assert(parameters[4] == parameters[2] and parameters[5] == parameters[2])
+          local target = parameters[2]
+          if (target == 'ready' or target == 'degraded')
+              and (databaseStatus == 'stopping' or databaseStatus == 'stopped') then
+            return 0, nil
+          end
+          if (target == 'starting' or target == 'stopping' or target == 'stale')
+              and databaseStatus == 'stopped' then
+            return 0, nil
+          end
+          if target == 'degraded' or target == 'ready' then
+            explicitStatuses[#explicitStatuses + 1] = target
+          end
+          databaseStatus = target
         end
         return 1, nil
       end
@@ -195,6 +217,7 @@ test('cluster heartbeat preserves the explicit local lifecycle status', async ()
         instanceId = 'instance-a'
       }).instances
       assert(instances:register('Instance A'))
+      assert(instances:bootId() == registeredBoot)
       assert(instances:setStatus('degraded'))
       local degraded = assert(instances:heartbeat(45))
       assert(degraded.status == 'degraded' and instances:snapshot().status == 'degraded')
@@ -209,9 +232,801 @@ test('cluster heartbeat preserves the explicit local lifecycle status', async ()
       assert(databaseStatus == 'ready')
       assert(heartbeatWrites == 3)
       assert(explicitStatuses[1] == 'degraded' and explicitStatuses[2] == 'ready')
-      return table.concat(explicitStatuses, ':') .. ':' .. heartbeatWrites
+      assert(instances:setStatus('stopping') and instances:setStatus('stopped'))
+      local lateReady, lateReadyError = instances:setStatus('ready')
+      assert(lateReady == nil and lateReadyError.code == 'INSTANCE_NOT_REGISTERED')
+      assert(databaseStatus == 'stopped' and instances:snapshot().status == 'stopped')
+      return table.concat(explicitStatuses, ':') .. ':' .. heartbeatWrites .. ':' .. lateReadyError.code
     `);
-    assert.equal(result, 'degraded:ready:3');
+    assert.equal(result, 'degraded:ready:3:INSTANCE_NOT_REGISTERED');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('runtime boot generations fence delayed status, cleanup, and source-floor work', async () => {
+  const engine = await coreEngine(['foundation', 'runtime_persistence']);
+  try {
+    const result = await engine.doString(`
+      local platform = {
+        nowGame = function() return 1000 end, random = function() return 17 end,
+        print = function() end, jsonEncode = function() return '{}' end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      foundation.configureIds('runtime-boot-fence')
+      local currentBoot, floorValue, guardedWrites = nil, 37, 0
+      local database = {}
+      function database:transaction(statements)
+        assert(#statements == 2)
+        currentBoot = statements[2].values[2]
+        return true, nil
+      end
+      local function hasCurrentBoot(parameters)
+        for _, value in ipairs(parameters or {}) do
+          if value == currentBoot then return true end
+        end
+        return false
+      end
+      function database:update(sql, parameters)
+        assert(sql:find('synex_instance_boots', 1, true))
+        if hasCurrentBoot(parameters) then guardedWrites = guardedWrites + 1 return 1, nil end
+        return 0, nil
+      end
+      function database:query(sql, parameters)
+        assert(sql:find('MAX(', 1, true) and sql:find('source_generation', 1, true))
+        assert(sql:find('synex_instance_boots', 1, true) and not sql:find('closed_at', 1, true))
+        if not hasCurrentBoot(parameters) then return {}, nil end
+        return {{ source_generation_floor = floorValue }}, nil
+      end
+      function database:withTransaction(handler)
+        local committed = handler(function(sql, parameters)
+          if sql:find('FOR UPDATE', 1, true) then
+            return hasCurrentBoot(parameters) and {{ boot_id = currentBoot }} or {}
+          end
+          guardedWrites = guardedWrites + 1
+          return 1
+        end)
+        return committed == true and true or nil,
+          committed == true and nil or foundation.error('TRANSACTION_REJECTED', 'fixture rejected')
+      end
+
+      local bootA = SynexCoreFactories.runtimePersistence({
+        foundation = foundation, database = database, platform = platform, instanceId = 'instance-a'
+      }).instances
+      assert(bootA:register('Instance A'))
+      local bootAId = assert(bootA:bootId())
+      local bootB = SynexCoreFactories.runtimePersistence({
+        foundation = foundation, database = database, platform = platform, instanceId = 'instance-a'
+      }).instances
+      assert(bootB:register('Instance A'))
+      local bootBId = assert(bootB:bootId())
+      assert(bootAId ~= bootBId and currentBoot == bootBId)
+
+      local status, statusError = bootA:setStatus('stopping')
+      assert(status == nil and statusError.code == 'INSTANCE_NOT_REGISTERED')
+      local heartbeat, heartbeatError = bootA:heartbeat(45)
+      assert(heartbeat == nil and heartbeatError.code == 'INSTANCE_HEARTBEAT_REJECTED')
+      local terminated, terminationError = bootA:terminateLocalSessions('stale cleanup')
+      assert(terminated == nil and terminationError.code == 'INSTANCE_BOOT_AUTHORITY_LOST')
+      local staleFloor, staleFloorError = bootA:sourceGenerationFloor()
+      assert(staleFloor == nil and staleFloorError.code == 'INSTANCE_BOOT_AUTHORITY_LOST')
+      assert(guardedWrites == 0)
+
+      assert(bootB:sourceGenerationFloor() == 37)
+      floorValue = -1
+      local negative, negativeError = bootB:sourceGenerationFloor()
+      assert(negative == nil and negativeError.code == 'INVALID_SOURCE_GENERATION')
+      floorValue = 1.5
+      local fractional, fractionalError = bootB:sourceGenerationFloor()
+      assert(fractional == nil and fractionalError.code == 'INVALID_SOURCE_GENERATION')
+      floorValue = 9007199254740991
+      local exhausted, exhaustedError = bootB:sourceGenerationFloor()
+      assert(exhausted == nil and exhaustedError.code == 'INVALID_SOURCE_GENERATION')
+      return table.concat({statusError.code, heartbeatError.code, terminationError.code,
+        staleFloorError.code, negativeError.code, fractionalError.code, exhaustedError.code}, ':')
+    `);
+    assert.equal(result,
+      'INSTANCE_NOT_REGISTERED:INSTANCE_HEARTBEAT_REJECTED:INSTANCE_BOOT_AUTHORITY_LOST:'
+      + 'INSTANCE_BOOT_AUTHORITY_LOST:INVALID_SOURCE_GENERATION:INVALID_SOURCE_GENERATION:'
+      + 'INVALID_SOURCE_GENERATION');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('local session termination atomically revokes orphaned runtime authority', async () => {
+  const engine = await coreEngine(['foundation', 'runtime_persistence']);
+  try {
+    const result = await engine.doString(`
+      local statements, operations, registeredBoot = nil, {}, nil
+      local platform = {
+        nowGame = function() return 1000 end, random = function() return 1 end,
+        print = function() end, jsonEncode = function() return '{}' end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      local database = {}
+      function database:transaction(candidate)
+        statements = candidate
+        registeredBoot = candidate[2].values[2]
+        return true, nil
+      end
+      function database:withTransaction(handler)
+        local committed = handler(function(sql, parameters)
+          operations[#operations + 1] = { sql = sql, parameters = parameters }
+          if sql:find('FOR UPDATE', 1, true) then return {{ boot_id = registeredBoot }} end
+          return 1
+        end)
+        return committed == true and true or nil,
+          committed == true and nil or foundation.error('TRANSACTION_REJECTED', 'fixture rejected')
+      end
+      local instances = SynexCoreFactories.runtimePersistence({
+        foundation = foundation, database = database, platform = platform,
+        instanceId = 'instance-a'
+      }).instances
+      assert(instances:register('Instance A'))
+      assert(instances:terminateLocalSessions('synex_core restarted'))
+      assert(#statements == 2 and #operations == 4)
+      assert(operations[1].sql:find('synex_instance_boots', 1, true)
+        and operations[1].sql:find('FOR UPDATE', 1, true)
+        and operations[1].parameters[1] == 'instance-a'
+        and operations[1].parameters[2] == registeredBoot)
+      assert(operations[2].sql:find('synex_cluster_leases', 1, true)
+        and operations[2].sql:find('LEFT(', 1, true)
+        and operations[2].sql:find('lease_name', 1, true)
+        and operations[2].sql:find("'session:'", 1, true)
+        and operations[2].parameters[1] == #'instance-a:'
+        and operations[2].parameters[2] == 'instance-a:')
+      assert(operations[3].sql:find('synex_session_control_requests', 1, true)
+        and operations[3].sql:find("'pending'", 1, true)
+        and operations[3].sql:find('requested_by_instance_id', 1, true)
+        and operations[3].sql:find('server_instance_id', 1, true)
+        and operations[3].sql:find(' OR ', 1, true)
+        and not operations[3].sql:find('closed_at', 1, true)
+        and operations[3].parameters[1] == 'instance-a'
+        and operations[3].parameters[2] == 'instance-a',
+        'incoming and outgoing pending controls, including closed local targets, must expire')
+      assert(operations[4].sql:find('synex_sessions', 1, true)
+        and operations[4].sql:find("'CLOSED'", 1, true)
+        and operations[4].parameters[1] == 'synex_core restarted'
+        and operations[4].parameters[2] == 'instance-a')
+      return table.concat({#operations, operations[2].parameters[2], operations[4].parameters[1]}, ':')
+    `);
+    assert.equal(result, '4:instance-a::synex_core restarted');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('local session termination propagates transaction failure without partial success', async () => {
+  const engine = await coreEngine(['foundation', 'runtime_persistence']);
+  try {
+    const result = await engine.doString(`
+      local transactions, registered = 0, false
+      local platform = {
+        nowGame = function() return 1000 end, random = function() return 1 end,
+        print = function() end, jsonEncode = function() return '{}' end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      local database = {}
+      function database:transaction()
+        registered = true
+        return true, nil
+      end
+      function database:withTransaction()
+        transactions = transactions + 1
+        return nil, foundation.error('TRANSACTION_REJECTED', 'fixture cleanup failure')
+      end
+      local instances = SynexCoreFactories.runtimePersistence({
+        foundation = foundation, database = database, platform = platform,
+        instanceId = 'instance-a'
+      }).instances
+      assert(instances:register('Instance A') and registered)
+      local terminated, terminationError = instances:terminateLocalSessions('synex_core restarted')
+      assert(terminated == nil and terminationError.code == 'TRANSACTION_REJECTED')
+      assert(transactions == 1)
+      return terminationError.code .. ':' .. transactions
+    `);
+    assert.equal(result, 'TRANSACTION_REJECTED:1');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('remote replacement controls are fenced across quiesce and requester restarts', async () => {
+  const engine = await coreEngine(['foundation', 'runtime_persistence']);
+  try {
+    const result = await engine.doString(`
+      local platform = {
+        nowGame = function() return 1000 end, random = function() return 41 end,
+        print = function() end, jsonEncode = function() return '{}' end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      foundation.configureIds('control-fence-test')
+
+      local queryGuard = true
+      local queryTransactions, queryBoot = 0, nil
+      local queryDatabase = {
+        transaction = function(_, statements)
+          queryBoot = statements[2].values[2]
+          return true, nil
+        end,
+        query = function(_, sql)
+          assert(sql:find('connected_at', 1, true))
+          queryGuard = false
+          return {{ id = 'remote-session-a' }}, nil
+        end,
+        update = function() error('query guard must abort before compensation') end,
+        withTransaction = function() queryTransactions = queryTransactions + 1 return true, nil end
+      }
+      local queryInstances = SynexCoreFactories.runtimePersistence({
+        foundation = foundation, database = queryDatabase, platform = platform,
+        instanceId = 'instance-a'
+      }).instances
+      assert(queryInstances:register('Instance A') and queryInstances:bootId() == queryBoot)
+      local queryRequest, queryError = queryInstances:requestRemoteKicks(
+        'user-a', 45, function() return queryGuard end)
+      assert(queryRequest == nil and queryError.code == 'CORE_STOPPING' and queryTransactions == 0)
+
+      local insertGuard, inserts, claims, expiries, expiredIds = true, 0, 0, 0, nil
+      local insertBoot = nil
+      local insertDatabase = {
+        transaction = function(_, statements)
+          insertBoot = statements[2].values[2]
+          return true, nil
+        end,
+        query = function()
+          return {{ id = 'remote-session-a' }, { id = 'remote-session-b' }}, nil
+        end,
+        update = function(_, sql, parameters)
+          assert(sql:find('request_id', 1, true) and sql:find(' IN (', 1, true))
+          expiries = expiries + 1
+          expiredIds = parameters
+          return 1, nil
+        end,
+        withTransaction = function(_, handler)
+          local committed = handler(function(sql, parameters)
+            if sql:find('synex_instances', 1, true) and sql:find('FOR UPDATE', 1, true) then
+              assert(parameters[1] == insertBoot and parameters[2] == 'instance-a')
+              return {{ instance_id = 'instance-a' }}
+            end
+            if sql:find('synex_sessions', 1, true) and sql:find('FOR UPDATE', 1, true) then
+              return {{ id = parameters[1] }}
+            end
+            if sql:find('SELECT', 1, true) and sql:find('request_id', 1, true) then return {} end
+            if sql:find('INSERT INTO', 1, true)
+              and sql:find('synex_session_control_requests', 1, true) then
+              inserts = inserts + 1
+              insertGuard = false
+              return 1
+            end
+            if sql:find('synex_session_control_authority', 1, true) then
+              claims = claims + 1
+              assert(parameters[2] == insertBoot)
+              return 1
+            end
+            error('unexpected insert transaction SQL')
+          end)
+          return committed == true and true or nil,
+            committed == true and nil or foundation.error('TRANSACTION_REJECTED', 'fixture rejected')
+        end
+      }
+      local insertInstances = SynexCoreFactories.runtimePersistence({
+        foundation = foundation, database = insertDatabase, platform = platform,
+        instanceId = 'instance-a'
+      }).instances
+      assert(insertInstances:register('Instance A'))
+      local insertRequest, insertError = insertInstances:requestRemoteKicks(
+        'user-a', 45, function() return insertGuard end)
+      assert(insertRequest == nil and insertError.code == 'CORE_STOPPING')
+      assert(inserts == 1 and claims == 1 and expiries == 1 and #expiredIds == 3)
+      assert(expiredIds[1] == insertBoot and expiredIds[2] == 'instance-a')
+
+      local transactionSql, pollSql, completionSql = {}, nil, nil
+      local currentBoot, controlWrites = nil, 0
+      local successDatabase = {}
+      function successDatabase:transaction(statements)
+        currentBoot = statements[2].values[2]
+        return true, nil
+      end
+      function successDatabase:query(sql)
+        if sql:find('SELECT', 1, true) and sql:find('synex_sessions', 1, true)
+          and sql:find('connected_at', 1, true) then
+            return {{ id = 'remote-session-c' }}, nil
+        end
+        pollSql = sql
+        return {}, nil
+      end
+      function successDatabase:update(sql)
+        completionSql = sql
+        return 1, nil
+      end
+      function successDatabase:withTransaction(handler)
+        local committed = handler(function(sql, parameters)
+          transactionSql[#transactionSql + 1] = sql
+          if sql:find('synex_instances', 1, true) and sql:find('FOR UPDATE', 1, true) then
+            if parameters[1] ~= currentBoot then return {} end
+            return {{ instance_id = 'instance-a' }}
+          end
+          if sql:find('synex_sessions', 1, true) and sql:find('FOR UPDATE', 1, true) then
+            return {{ id = parameters[1] }}
+          end
+          if sql:find('SELECT', 1, true) and sql:find('request_id', 1, true) then return {} end
+          if sql:find('synex_session_control_requests', 1, true)
+            or sql:find('synex_session_control_authority', 1, true) then
+            controlWrites = controlWrites + 1
+            return 1
+          end
+          error('unexpected success transaction SQL')
+        end)
+        return committed == true and true or nil,
+          committed == true and nil or foundation.error('TRANSACTION_REJECTED', 'fixture rejected')
+      end
+      local staleInstances = SynexCoreFactories.runtimePersistence({
+        foundation = foundation, database = successDatabase, platform = platform,
+        instanceId = 'instance-a'
+      }).instances
+      assert(staleInstances:register('Instance A'))
+      local staleBoot = assert(staleInstances:bootId())
+      local successInstances = SynexCoreFactories.runtimePersistence({
+        foundation = foundation, database = successDatabase, platform = platform,
+        instanceId = 'instance-a'
+      }).instances
+      assert(successInstances:register('Instance A'))
+      local activeBoot = assert(successInstances:bootId())
+      assert(staleBoot ~= activeBoot and currentBoot == activeBoot)
+      local staleRequest, staleError = staleInstances:requestRemoteKicks(
+        'user-a', 45, function() return true end)
+      assert(staleRequest == nil and staleError.code == 'CORE_STOPPING' and controlWrites == 0)
+      transactionSql = {}
+      assert(successInstances:requestRemoteKicks('user-a', 45, function() return true end) == 1)
+      assert(controlWrites == 2 and #transactionSql == 5)
+      assert(successInstances:pendingLocalControls())
+      assert(successInstances:completeControl('control-a'))
+      assert(transactionSql[1]:find('synex_instance_boots', 1, true)
+        and transactionSql[1]:find("'ready'", 1, true)
+        and transactionSql[4]:find('synex_session_control_requests', 1, true)
+        and transactionSql[5]:find('synex_session_control_authority', 1, true))
+      assert(pollSql:find('requester', 1, true)
+        and pollSql:find('request_claim', 1, true)
+        and pollSql:find('requester_boot', 1, true)
+        and pollSql:find("'ready'", 1, true)
+        and pollSql:find('created_at', 1, true)
+        and pollSql:find('started_at', 1, true))
+      assert(completionSql:find('requester', 1, true)
+        and completionSql:find('request_claim', 1, true)
+        and completionSql:find('requester_boot', 1, true)
+        and completionSql:find("'ready'", 1, true)
+        and completionSql:find('created_at', 1, true)
+        and completionSql:find('started_at', 1, true))
+      return table.concat({queryError.code, insertError.code, staleError.code,
+        inserts, claims, expiries, controlWrites}, ':')
+    `);
+    assert.equal(result, 'CORE_STOPPING:CORE_STOPPING:CORE_STOPPING:1:1:1:2');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('failed restart cleanup keeps the persisted instance fenced and admission closed', async () => {
+  const engine = await coreEngine(['foundation', 'registries', 'lifecycle', 'bootstrap_restart', 'bootstrap_lifecycle']);
+  try {
+    const result = await engine.doString(`
+      local calls, persistedStatus = {}, 'ready'
+      local connectionQuiesceCalls, connectionLeaseReleaseCalls = 0, 0
+      local platform = {
+        nowGame = function() return 1000 end, random = function() return 43 end,
+        print = function() end, jsonEncode = function() return '{}' end,
+        resourceState = function() return 'started' end,
+        resourceMetadata = function(name, key)
+          if name == 'oxmysql' and key == 'version' then return '2.14.1' end
+        end,
+        getPlayers = function() return {} end,
+        dropPlayer = function() error('no connected fixture player may be dropped') end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      local registries = SynexCoreFactories.registries({ foundation = foundation })
+      registries.owners:activate('synex_core')
+      local lifecycle = SynexCoreFactories.lifecycle({
+        platform = platform, foundation = foundation, owners = registries.owners
+      })
+      local instances = {}
+      function instances:register()
+        calls[#calls + 1] = 'register:starting'
+        persistedStatus = 'starting'
+        return true, nil
+      end
+      function instances:terminateLocalSessions()
+        calls[#calls + 1] = 'terminate:failed'
+        return nil, foundation.error('TRANSACTION_REJECTED', 'fixture cleanup failure')
+      end
+      function instances:setStatus(status)
+        calls[#calls + 1] = 'status:' .. status
+        persistedStatus = status
+        return true, nil
+      end
+      local releaseCalls = 0
+      local migrations = {
+        bootstrap = function() return true, nil end,
+        acquireLease = function() return true, nil end,
+        apply = function() return true, nil end,
+        releaseLease = function() releaseCalls = releaseCalls + 1 return true, nil end
+      }
+      SynexCoreFactories.commands = function() return { bind = function() return true end } end
+      local noop = function() calls[#calls + 1] = 'unexpected-service' return true, nil end
+      local runtime = {}
+      SynexCoreFactories.bootstrapLifecycle({
+        runtime = runtime, platform = platform, foundation = foundation,
+        runtimeGate = {
+          beginBoot = function() end, open = function() end,
+          fail = function() end, stop = function() end
+        },
+        coreResource = 'synex_core', registries = registries, lifecycle = lifecycle,
+        reloadSnapshots = {}, facadeCache = {}, manifests = {}, reliability = {},
+        sagaRuntime = {}, retention = {}, messaging = { network = {} },
+        identity = {
+          connections = {
+            quiesce = function()
+              connectionQuiesceCalls = connectionQuiesceCalls + 1
+              return { removedPending = 0 }, nil
+            end,
+            releaseQuiescedLeases = function()
+              connectionLeaseReleaseCalls = connectionLeaseReleaseCalls + 1
+              return { leaseReleaseFailures = 0 }, nil
+            end
+          },
+          characters = {}
+        },
+        security = { rbac = { hydrate = noop } },
+        persistence = {
+          database = { validateUtcSession = function() return true, nil end },
+          migrations = migrations, instances = instances
+        },
+        defaultConfig = {
+          instanceName = 'Instance A', database = { minimumOxmysqlVersion = '2.14.1' },
+          features = { durableEvents = false, sagas = false },
+          retention = { audit = { mode = 'retain_forever' }, workerIntervalMs = 60000 },
+          connections = { clusterHeartbeatMs = 10000 }
+        },
+        api = {
+          getAPIForCaller = noop, invokeForCaller = noop, guarded = noop,
+          registerCoreContracts = noop, registerCoreServices = noop
+        },
+        discovery = {
+          discoverResource = noop, discoverAll = function() return true, nil end,
+          validateActive = function() return {} end, ensureOwner = noop,
+          supportsStateHandoff = noop, captureStateHandoff = noop, restoreStateHandoff = noop
+        }
+      })
+      local started, bootError = runtime:start()
+      assert(started == nil and bootError.code == 'BOOT_FAILED')
+      assert(calls[1] == 'register:starting' and calls[2] == 'terminate:failed')
+      assert(calls[3] == 'status:stopping' and calls[4] == 'terminate:failed' and #calls == 4)
+      assert(persistedStatus == 'stopping')
+      assert(lifecycle.core:get() == 'FAILED' and lifecycle.core:canAdmitPlayers() == false)
+      assert(connectionQuiesceCalls == 1 and connectionLeaseReleaseCalls == 1)
+      assert(releaseCalls == 2)
+      return table.concat({bootError.code, persistedStatus, lifecycle.core:get(), releaseCalls,
+        connectionQuiesceCalls, connectionLeaseReleaseCalls}, ':')
+    `);
+    assert.equal(result, 'BOOT_FAILED:stopping:FAILED:2:1:1');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('late boot failure purges scheduled workers and stale timeout callbacks remain inert', async () => {
+  const engine = await coreEngine(['foundation', 'registries', 'lifecycle', 'bootstrap_restart', 'bootstrap_lifecycle']);
+  try {
+    const result = await engine.doString(`
+      local now, callbacks, statusWrites = 1000, {}, {}
+      local connectionQuiesced, releaseCalls, terminateCalls = false, 0, 0
+      local validationCalls = 0
+      local mutations = {
+        outbox = 0, publish = 0, saga = 0, archive = 0,
+        deletion = 0, unload = 0, heartbeat = 0
+      }
+      local platform = {
+        nowGame = function() now = now + 1 return now end,
+        random = function() return 47 end,
+        print = function() end,
+        jsonEncode = function() return '{}' end,
+        resourceState = function() return 'started' end,
+        resourceMetadata = function(name, key)
+          if name == 'oxmysql' and key == 'version' then return '2.14.1' end
+        end,
+        getPlayers = function() return {} end,
+        dropPlayer = function() error('the fixture has no connected players') end,
+        setTimeout = function(_, callback) callbacks[#callbacks + 1] = callback end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      foundation.configureIds('late-boot-failure')
+      local registries = SynexCoreFactories.registries({ foundation = foundation })
+      registries.owners:activate('synex_core')
+      local lifecycle = SynexCoreFactories.lifecycle({
+        platform = platform, foundation = foundation, owners = registries.owners
+      })
+      local instances = {}
+      function instances:register() return true, nil end
+      function instances:sourceGenerationFloor() return 0, nil end
+      function instances:terminateLocalSessions()
+        terminateCalls = terminateCalls + 1
+        return true, nil
+      end
+      function instances:setStatus(status)
+        statusWrites[#statusWrites + 1] = status
+        if status == 'ready' then
+          return nil, foundation.error('FINAL_STATUS_REJECTED', 'fixture final status failure')
+        end
+        return true, nil
+      end
+      local migrations = {
+        bootstrap = function() return true, nil end,
+        acquireLease = function() return true, nil end,
+        apply = function() return true, nil end,
+        releaseLease = function() return true, nil end
+      }
+      local connections = {
+        quiesce = function()
+          connectionQuiesced = true
+          return { removedPending = 0 }, nil
+        end,
+        releaseQuiescedLeases = function()
+          releaseCalls = releaseCalls + 1
+          return { leaseReleaseFailures = 0 }, nil
+        end,
+        heartbeat = function()
+          mutations.heartbeat = mutations.heartbeat + 1
+          return true, nil
+        end
+      }
+      local facadeCache = { ['synex_core:fixture'] = true }
+      SynexCoreFactories.commands = function()
+        return { bind = function() return true end }
+      end
+      local noop = function() return true, nil end
+      local runtime = {}
+      SynexCoreFactories.bootstrapLifecycle({
+        runtime = runtime, platform = platform, foundation = foundation,
+        runtimeGate = { beginBoot = noop, open = noop, fail = noop, stop = noop },
+        coreResource = 'synex_core', registries = registries, lifecycle = lifecycle,
+        reloadSnapshots = {}, facadeCache = facadeCache, manifests = {},
+        reliability = { outbox = { dispatchBatch = function()
+          mutations.outbox = mutations.outbox + 1
+          return {}, nil
+        end } },
+        sagaRuntime = { dispatchBatch = function()
+          mutations.saga = mutations.saga + 1
+          return true, nil
+        end },
+        retention = { audit = { archiveBatch = function()
+          mutations.archive = mutations.archive + 1
+          return true, nil
+        end } },
+        messaging = {
+          network = {},
+          events = { publishOutbox = function()
+            mutations.publish = mutations.publish + 1
+            return true, nil
+          end }
+        },
+        identity = {
+          connections = connections,
+          characters = {
+            reconcileDeletions = function()
+              mutations.deletion = mutations.deletion + 1
+              return true, nil
+            end,
+            reconcileUnloads = function()
+              mutations.unload = mutations.unload + 1
+              return true, nil
+            end
+          }
+        },
+        security = { rbac = { hydrate = noop } },
+        persistence = {
+          database = { validateUtcSession = noop }, migrations = migrations, instances = instances
+        },
+        defaultConfig = {
+          instanceName = 'Instance A', database = { minimumOxmysqlVersion = '2.14.1' },
+          features = { durableEvents = true, sagas = true },
+          retention = {
+            audit = { mode = 'archive' }, workerIntervalMs = 60000
+          },
+          connections = { clusterHeartbeatMs = 10000 }
+        },
+        api = {
+          getAPIForCaller = noop, invokeForCaller = noop, guarded = noop,
+          registerCoreContracts = noop,
+          registerCoreServices = function() return 'service-token', nil end
+        },
+        discovery = {
+          discoverResource = noop, discoverAll = noop, ensureOwner = noop,
+          supportsStateHandoff = noop, captureStateHandoff = noop, restoreStateHandoff = noop,
+          validateActive = function()
+            validationCalls = validationCalls + 1
+            return {}
+          end
+        }
+      })
+
+      local started, bootError = runtime:start()
+      assert(started == nil and bootError.code == 'BOOT_FAILED')
+      assert(connectionQuiesced == true and releaseCalls == 1)
+      assert(terminateCalls == 2)
+      assert(#callbacks == 7, 'all recurring workers must have reached scheduler registration')
+      assert(#statusWrites == 3 and statusWrites[1] == 'ready'
+        and statusWrites[2] == 'stopping' and statusWrites[3] == 'stopped')
+      assert(lifecycle.core:get() == 'FAILED' and lifecycle.core:canAdmitPlayers() == false)
+      assert(lifecycle.scheduler:count() == 0 and #lifecycle.scheduler:snapshot() == 0)
+      assert(#registries.owners:list() == 0 and next(facadeCache) == nil)
+
+      local callbackCount, validationCount, statusCount = #callbacks, validationCalls, #statusWrites
+      for index = 1, callbackCount do callbacks[index]() end
+      assert(#callbacks == callbackCount, 'cancelled callbacks must not schedule successors')
+      assert(validationCalls == validationCount and #statusWrites == statusCount)
+      assert(mutations.outbox == 0 and mutations.publish == 0 and mutations.saga == 0
+        and mutations.archive == 0 and mutations.deletion == 0 and mutations.unload == 0
+        and mutations.heartbeat == 0)
+      assert(lifecycle.scheduler:count() == 0 and #registries.owners:list() == 0)
+      return table.concat({bootError.code, callbackCount, releaseCalls, terminateCalls,
+        mutations.outbox, mutations.saga, mutations.deletion, mutations.heartbeat}, ':')
+    `);
+    assert.equal(result, 'BOOT_FAILED:7:1:2:0:0:0:0');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('core raw stop is synchronous while explicit restart preparation drains durable authority', async () => {
+  const engine = await coreEngine(['foundation', 'bootstrap_restart', 'bootstrap_lifecycle']);
+  try {
+    const result = await engine.doString(`
+      SynexCoreFactories.commands = function()
+        return { bind = function() return true end }
+      end
+      local noop = function() return true, nil end
+
+      local function fixture()
+        local calls, handlers, state, quiesced = {}, {}, 'READY', false
+        local cancelCalls, connectingCalls, lateKickReason = 0, 0, nil
+        local facadeCache = { ['synex_core:fixture'] = true }
+        local platform = {
+          nowGame = function() return 1000 end, random = function() return 1 end,
+          print = function() end, jsonEncode = function() return '{}' end,
+          export = function() end,
+          addEventHandler = function(name, handler) handlers[name] = handler end,
+          cancelEvent = function() cancelCalls = cancelCalls + 1 end,
+          getPlayers = function() return {'41', '42'} end,
+          dropPlayer = function(playerSource) calls[#calls + 1] = 'drop:' .. playerSource end
+        }
+        local foundation = SynexCoreFactories.foundation({ platform = platform })
+        local lifecycle = {
+          core = {
+            setHealthObserver = function() return true, nil end,
+            setCriticalFoundationsValidated = function() end,
+            get = function() return state end,
+            transition = function(_, target)
+              state = target
+              calls[#calls + 1] = 'state:' .. target
+              return 1, nil
+            end
+          },
+          reload = { quiesce = function(_, owner)
+            calls[#calls + 1] = 'owner:' .. owner
+            return { abortErrors = {}, cleanup = { errors = {} } }, nil
+          end }
+        }
+        local registries = {
+          resources = { get = function() return nil end },
+          owners = {
+            list = function() return {{ resource = 'synex_core', epoch = 1 }} end,
+            epoch = function() return 1 end,
+            isEpoch = function() return true end
+          }
+        }
+        local connections = {
+          handleConnecting = function() connectingCalls = connectingCalls + 1 return true, nil end,
+          handleJoining = noop, handleDropped = noop,
+          snapshot = function() return { quiesced = quiesced } end,
+          quiesce = function()
+            quiesced = true
+            calls[#calls + 1] = 'connections:quiesce'
+            return { removedPending = 0 }, nil
+          end,
+          flushReadyQuiescedTerminals = function()
+            calls[#calls + 1] = 'connections:flush-ready'
+            return { completed = 1, failures = 0, remaining = 1 }, nil
+          end,
+          drainQuiescedTerminals = function()
+            calls[#calls + 1] = 'tick'
+            calls[#calls + 1] = 'connections:drain'
+            return { completed = 1, failures = 0, remaining = 0 }, nil
+          end,
+          releaseQuiescedLeases = function()
+            calls[#calls + 1] = 'connections:release-leases'
+            return { leaseReleaseFailures = 0 }, nil
+          end
+        }
+        local instances = {
+          setStatus = function(_, status)
+            calls[#calls + 1] = 'status:' .. status
+            return true, nil
+          end,
+          terminateLocalSessions = function(_, reason)
+            calls[#calls + 1] = 'terminate:' .. reason
+            return true, nil
+          end
+        }
+        local runtime = {}
+        SynexCoreFactories.bootstrapLifecycle({
+          runtime = runtime, platform = platform, foundation = foundation,
+          runtimeGate = {
+            beginBoot = noop, open = noop, fail = noop,
+            stop = function() calls[#calls + 1] = 'gate:stop' end
+          },
+          coreResource = 'synex_core', registries = registries, lifecycle = lifecycle,
+          reloadSnapshots = {}, facadeCache = facadeCache, manifests = {}, reliability = {},
+          sagaRuntime = {}, retention = {}, security = {}, defaultConfig = {},
+          messaging = { network = { bind = function() return true end } },
+          identity = { connections = connections },
+          persistence = { instances = instances },
+          api = {
+            getAPIForCaller = noop, invokeForCaller = noop, guarded = noop,
+            registerCoreContracts = noop, registerCoreServices = noop
+          },
+          discovery = {
+            discoverResource = noop, discoverAll = noop, validateActive = function() return {} end,
+            ensureOwner = noop, supportsStateHandoff = noop,
+            captureStateHandoff = noop, restoreStateHandoff = noop
+          }
+        })
+        assert(runtime:bind())
+        return {
+          runtime = runtime, handlers = handlers, calls = calls, facadeCache = facadeCache,
+          lateConnect = function()
+            source = -2
+            handlers.playerConnecting('Late', function(reason) lateKickReason = reason end, {})
+            return cancelCalls, connectingCalls, lateKickReason
+          end
+        }
+      end
+
+      local raw = fixture()
+      assert(raw.handlers.onResourceStop)
+      raw.handlers.onResourceStop('synex_core')
+      local rawOrder = table.concat(raw.calls, '|')
+      assert(rawOrder == table.concat({
+        'gate:stop', 'state:QUIESCING', 'connections:quiesce', 'drop:41', 'drop:42',
+        'connections:flush-ready', 'state:STOPPING', 'state:STOPPED'
+      }, '|'))
+      assert(not rawOrder:find('tick', 1, true)
+        and not rawOrder:find('status:', 1, true)
+        and not rawOrder:find('terminate:', 1, true)
+        and not rawOrder:find('release-leases', 1, true)
+        and not rawOrder:find('owner:', 1, true))
+      assert(next(raw.facadeCache) == nil)
+      local cancelCalls, connectingCalls, lateKickReason = raw.lateConnect()
+      assert(cancelCalls == 1 and connectingCalls == 0)
+      assert(lateKickReason:find('[CORE_STOPPING]', 1, true))
+
+      local prepared = fixture()
+      local preparation = assert(prepared.runtime:prepareRestart())
+      assert(preparation.state == 'prepared'
+        and preparation.restartCommand == 'restart synex_core'
+        and preparation.durableAuthorityClosed == true)
+      local preparedOrder = table.concat(prepared.calls, '|')
+      assert(preparedOrder == table.concat({
+        'gate:stop', 'state:QUIESCING', 'connections:quiesce', 'drop:41', 'drop:42',
+        'tick', 'connections:drain', 'status:stopping', 'connections:release-leases',
+        'owner:synex_core', 'terminate:synex_core restart prepared', 'status:stopped',
+        'state:STOPPING', 'state:STOPPED'
+      }, '|'))
+      local callCount = #prepared.calls
+      assert(prepared.runtime:prepareRestart())
+      assert(#prepared.calls == callCount, 'completed preparation must be idempotent')
+      return rawOrder .. '||' .. preparedOrder
+    `);
+    assert.match(result, /connections:flush-ready[\s\S]*\|\|[\s\S]*connections:drain/u);
   } finally {
     engine.global.close();
   }
@@ -316,6 +1131,7 @@ test('offline-first character reads use a bounded TTL cache and return defensive
         owners = {}, messaging = {}, coreResource = 'synex_core', characterRepository = repository,
         sessionRepository = {}, invokeOwned = function() end, transition = function() end,
         leases = { acquire = function() return {}, nil end, release = function() return true, nil end },
+        instances = { bootId = function() return 'boot-a', nil end },
         instanceId = 'instance-a',
         cacheMaximum = 64, cacheTtlMs = 1000
       })
@@ -343,6 +1159,7 @@ test('character deletion persists reconciliation and retries domain commit error
     const result = await engine.doString(`
       local foundation, persistedPlan
       local now, participantCalls, leaseCount, published = 1000, 0, 0, 0
+      local leaseOwners = {}
       local planState, planId = nil, nil
       local platform = {
         nowGame = function() now = now + 1 return now end,
@@ -404,6 +1221,8 @@ test('character deletion persists reconciliation and retries domain commit error
         acquire = function(_, name, owner)
           leaseCount = leaseCount + 1
           assert(name:find('character-delete:', 1, true) == 1 and owner:find(':character-delete', 1, true))
+          assert(leaseOwners[owner] == nil, 'each character deletion attempt needs a unique lease owner')
+          leaseOwners[owner] = true
           return { name = name, owner = owner, fencingToken = leaseCount }, nil
         end,
         release = function() return true, nil end
@@ -414,7 +1233,8 @@ test('character deletion persists reconciliation and retries domain commit error
         characterRepository = { getOwned = function()
           return { id = 'character-a', userId = 'user-a', version = 1 }, nil
         end },
-        sessionRepository = {}, leases = leases, instanceId = 'instance-a',
+        sessionRepository = {}, leases = leases,
+        instances = { bootId = function() return 'boot-a', nil end }, instanceId = 'instance-a',
         invokeOwned = function(entry, handler, ...)
           assert(registries.owners:isCurrent(entry.owner, entry.epoch))
           return foundation.safeCall(handler, ...)
@@ -504,6 +1324,7 @@ test('required character participant deadlines fail closed for load and unload',
           return candidate, nil
         end,
         leases = { acquire = function() return {}, nil end, release = function() return true, nil end },
+        instances = { bootId = function() return 'boot-a', nil end },
         instanceId = 'instance-a'
       })
       local invalidEpoch = registries.owners:activate('synex_invalid_commit')
@@ -628,6 +1449,7 @@ test('failed character unload persistence blocks reuse and reconciles bounded pe
         invokeOwned = function(entry, handler, ...) return foundation.safeCall(handler, ...) end,
         transition = transition,
         leases = { acquire = function() return {}, nil end, release = function() return true, nil end },
+        instances = { bootId = function() return 'boot-a', nil end },
         instanceId = 'instance-a', pendingUnloadMaximum = 64
       })
       local unloaded, unloadError = characters:unload('session-a', 'fixture')
@@ -703,6 +1525,104 @@ test('recurring scheduler entries expose bounded worker health and recover after
   }
 });
 
+test('failed runtime gate blocks owner discovery and cached facade mutations', async () => {
+  const engine = await coreEngine([
+    'foundation', 'registries', 'lifecycle', 'runtime_gate', 'bootstrap_discovery', 'bootstrap_api',
+  ]);
+  try {
+    const result = await engine.doString(`
+      local discoveryReads, registrationMutations, timeoutMutations = 0, 0, 0
+      local platform = {
+        nowGame = function() return 1000 end,
+        random = function() return 1 end,
+        print = function() end,
+        jsonEncode = function() return '{}' end,
+        resourceState = function() return 'started' end,
+        resourceMetadata = function()
+          discoveryReads = discoveryReads + 1
+          return 'synex.resource.json'
+        end,
+        loadResourceFile = function()
+          discoveryReads = discoveryReads + 1
+          return '{}'
+        end,
+        jsonDecode = function() return {} end,
+        setTimeout = function()
+          timeoutMutations = timeoutMutations + 1
+        end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      foundation.configureIds('failed-runtime-gate')
+      local registries = SynexCoreFactories.registries({ foundation = foundation })
+      local lifecycle = SynexCoreFactories.lifecycle({
+        platform = platform, foundation = foundation, owners = registries.owners
+      })
+      local runtimeGate = SynexCoreFactories.runtimeGate({ foundation = foundation })
+
+      local manifests = {
+        synex_fixture = {
+          critical = false, capabilities = { request = {} },
+          services = { provide = {}, require = {}, optional = {} }
+        }
+      }
+      local security = {
+        capabilities = {
+          registerManifest = function() return true, nil end,
+          preflight = function() return {} end
+        }
+      }
+      local stateService = {
+        captureOwner = function() return {}, nil end,
+        restoreOwner = function() return true, nil end
+      }
+      local discovery = SynexCoreFactories.bootstrapDiscovery({
+        platform = platform, foundation = foundation,
+        resourceManifest = { validate = function() return true, nil end },
+        security = security, registries = registries, lifecycle = lifecycle,
+        stateService = stateService, manifests = manifests, runtimeGate = runtimeGate
+      })
+      local facadeCache = {}
+      local api = SynexCoreFactories.bootstrapApi({
+        platform = platform, foundation = foundation, registries = registries,
+        security = security, identity = {}, contractSystem = {},
+        messaging = { events = { subscribe = function()
+          registrationMutations = registrationMutations + 1
+          return 'subscription-fixture', nil
+        end } },
+        coreResource = 'synex_core', runtime = {}, stateService = stateService,
+        lifecycle = lifecycle, reliability = {}, sagaRuntime = {},
+        facadeCache = facadeCache, runtimeGate = runtimeGate,
+        ensureOwner = discovery.ensureOwner, defaultConfig = { retention = {} }
+      })
+
+      runtimeGate:open()
+      local facade = assert(api.getAPIForCaller('synex_fixture', '^1.0.0'))
+      local cached = assert(api.getAPIForCaller('synex_fixture', '^1.0.0'))
+      assert(cached == facade and registries.owners:epoch('synex_fixture') == 1)
+      assert(#registries.owners:list() == 1 and discoveryReads == 0)
+
+      runtimeGate:fail()
+      local owner, ownerError = discovery.ensureOwner('synex_missing')
+      assert(owner == nil and ownerError.code == 'CORE_FAILED' and ownerError.retryable == false)
+      assert(discoveryReads == 0 and registries.owners:epoch('synex_missing') == 0)
+      assert(#registries.owners:list() == 1)
+
+      local schedule, scheduleError = facade.Scheduler.after(100, function() end)
+      local registration, registrationError = facade.Events.subscribe(
+        'synex.fixture.event', function() end)
+      assert(schedule == nil and scheduleError.code == 'CORE_FAILED')
+      assert(registration == nil and registrationError.code == 'CORE_FAILED')
+      assert(lifecycle.scheduler:count() == 0 and timeoutMutations == 0)
+      assert(registrationMutations == 0 and registries.owners:pendingCount('synex_fixture', 1) == 0)
+      return table.concat({ownerError.code, scheduleError.code, registrationError.code,
+        discoveryReads, timeoutMutations, registrationMutations}, ':')
+    `);
+    assert.equal(result, 'CORE_FAILED:CORE_FAILED:CORE_FAILED:0:0:0');
+  } finally {
+    engine.global.close();
+  }
+});
+
 test('live dependency validation requires running providers, real registration, and granted capabilities', async () => {
   const engine = await coreEngine([
     'foundation', 'registries', 'lifecycle', 'security', 'bootstrap_discovery',
@@ -761,6 +1681,7 @@ test('live dependency validation requires running providers, real registration, 
       })
       local discovery = SynexCoreFactories.bootstrapDiscovery({
         platform = platform, foundation = foundation,
+        runtimeGate = { requireAvailable = function() return true, nil end },
         resourceManifest = { validate = function(_, name, manifest)
           assert(name == manifest.name or manifest.name == nil)
           return true, nil
@@ -858,6 +1779,7 @@ test('resource dependency versions fail closed at runtime and optional metadata 
       local resourceManifest = SynexCoreFactories.resourceManifest({ foundation = foundation })
       local discovery = SynexCoreFactories.bootstrapDiscovery({
         platform = platform, foundation = foundation, resourceManifest = resourceManifest,
+        runtimeGate = { requireAvailable = function() return true, nil end },
         security = { capabilities = { preflight = function() return {} end } },
         registries = {},
         lifecycle = { dependencies = {
@@ -919,7 +1841,7 @@ test('resource dependency versions fail closed at runtime and optional metadata 
 });
 
 test('dependency health refresh clears recovered registry findings without changing resource state', async () => {
-  const engine = await coreEngine(['foundation', 'registries', 'lifecycle', 'bootstrap_lifecycle']);
+  const engine = await coreEngine(['foundation', 'registries', 'lifecycle', 'bootstrap_restart', 'bootstrap_lifecycle']);
   try {
     const result = await engine.doString(`
       local findings = {
@@ -955,6 +1877,7 @@ test('dependency health refresh clears recovered registry findings without chang
       local runtime = {}
       SynexCoreFactories.bootstrapLifecycle({
         runtime = runtime, platform = platform, foundation = foundation,
+        runtimeGate = { beginBoot = noop, open = noop, fail = noop, stop = noop },
         coreResource = 'synex_core', messaging = {}, identity = {}, reloadSnapshots = {},
         registries = registries, lifecycle = lifecycle, facadeCache = {}, defaultConfig = {},
         persistence = {}, manifests = { synex_provider = {}, synex_consumer = {} }, reliability = {},
@@ -1021,10 +1944,11 @@ test('dependency health refresh clears recovered registry findings without chang
 });
 
 test('instance status synchronization clears a failed write after desired status reverses', async () => {
-  const engine = await coreEngine(['foundation', 'registries', 'lifecycle', 'bootstrap_lifecycle']);
+  const engine = await coreEngine(['foundation', 'registries', 'lifecycle', 'bootstrap_restart', 'bootstrap_lifecycle']);
   try {
     const result = await engine.doString(`
       local criticalFinding, failNextReady = true, false
+      local droppedPlayers, startupCalls = {}, {}
       local persistedStatus, statusWrites = 'starting', {}
       local platform = {
         nowGame = function() return 1000 end, random = function() return 1 end,
@@ -1033,7 +1957,12 @@ test('instance status synchronization clears a failed write after desired status
         resourceMetadata = function(name, key)
           if name == 'oxmysql' and key == 'version' then return '2.14.1' end
         end,
-        setTimeout = function() end
+        setTimeout = function() end,
+        getPlayers = function() return {'41', '42'} end,
+        dropPlayer = function(source, reason)
+          droppedPlayers[#droppedPlayers + 1] = { source = source, reason = reason }
+          startupCalls[#startupCalls + 1] = 'drop:' .. source
+        end
       }
       local foundation = SynexCoreFactories.foundation({ platform = platform })
       local registries = SynexCoreFactories.registries({ foundation = foundation })
@@ -1045,9 +1974,18 @@ test('instance status synchronization clears a failed write after desired status
         platform = platform, foundation = foundation, owners = registries.owners
       })
       local instances = {}
+      function instances:terminateLocalSessions(reason)
+        startupCalls[#startupCalls + 1] = 'terminate:' .. reason
+        return true, nil
+      end
       function instances:register()
+        startupCalls[#startupCalls + 1] = 'register'
         persistedStatus = 'starting'
         return true, nil
+      end
+      function instances:sourceGenerationFloor()
+        startupCalls[#startupCalls + 1] = 'source-generation:37'
+        return 37, nil
       end
       function instances:setStatus(status)
         statusWrites[#statusWrites + 1] = status
@@ -1070,6 +2008,7 @@ test('instance status synchronization clears a failed write after desired status
       local runtime = {}
       SynexCoreFactories.bootstrapLifecycle({
         runtime = runtime, platform = platform, foundation = foundation,
+        runtimeGate = { beginBoot = noop, open = noop, fail = noop, stop = noop },
         coreResource = 'synex_core', registries = registries, lifecycle = lifecycle,
         reloadSnapshots = {}, facadeCache = {}, manifests = {}, reliability = {},
         sagaRuntime = {}, retention = {},
@@ -1104,6 +2043,12 @@ test('instance status synchronization clears a failed write after desired status
         }
       })
       assert(runtime:start())
+      assert(#droppedPlayers == 2)
+      assert(droppedPlayers[1].source == 41 and droppedPlayers[2].source == 42)
+      assert(droppedPlayers[1].reason == 'Synex Core restarted. Please reconnect.')
+      assert(startupCalls[1] == 'drop:41' and startupCalls[2] == 'drop:42')
+      assert(startupCalls[3] == 'register' and startupCalls[4] == 'terminate:synex_core restarted'
+        and startupCalls[5] == 'source-generation:37')
       assert(lifecycle.core:get() == 'DEGRADED' and persistedStatus == 'degraded')
 
       criticalFinding, failNextReady = false, true
@@ -1187,6 +2132,7 @@ test('capability delegation is bridge-granted, target-declared, and limited to a
       })
       local api = SynexCoreFactories.bootstrapApi({
         platform = platform, foundation = foundation, registries = { owners = owners },
+        runtimeGate = { requireAvailable = function() return true, nil end },
         security = security, identity = {}, contractSystem = {}, messaging = {},
         coreResource = 'synex_core', runtime = {}, stateService = {}, lifecycle = {},
         reliability = {}, sagaRuntime = {}, facadeCache = {}, defaultConfig = { retention = {} },
@@ -1273,6 +2219,7 @@ test('control diagnostic search crosses its declared and granted capability gate
       local api = SynexCoreFactories.bootstrapApi({
         platform = platform,
         foundation = foundation,
+        runtimeGate = { requireAvailable = function() return true, nil end },
         registries = { owners = owners },
         security = security,
         identity = {},
@@ -1316,7 +2263,8 @@ test('control diagnostic search crosses its declared and granted capability gate
 test('queue admission preserves reserved slots for ACE staff and maintenance fails closed', async () => {
   const engine = await coreEngine([
     'foundation', 'registries', 'identity_connection_replacement',
-    'identity_connection_claims', 'identity_connection_join',
+    'identity_connection_claims', 'identity_connection_authority', 'identity_connection_terminals',
+    'identity_connection_join',
     'identity_connection_maintenance', 'identity_connections',
   ]);
   try {
@@ -1358,6 +2306,7 @@ test('queue admission preserves reserved slots for ACE staff and maintenance fai
         renew = function() return true, nil end
       }
       local instances = {
+        bootId = function() return 'boot-a', nil end,
         requestRemoteKicks = function() return 0, nil end,
         touchSessions = function() return true, nil end,
         heartbeat = function() return {}, nil end,
@@ -1414,7 +2363,8 @@ test('queue admission preserves reserved slots for ACE staff and maintenance fai
 test('disconnect cleanup attempts every step and always removes runtime authority', async () => {
   const engine = await coreEngine([
     'foundation', 'registries', 'identity_connection_replacement',
-    'identity_connection_claims', 'identity_connection_join',
+    'identity_connection_claims', 'identity_connection_authority', 'identity_connection_terminals',
+    'identity_connection_join',
     'identity_connection_maintenance', 'identity_connections',
   ]);
   try {
@@ -1448,7 +2398,7 @@ test('disconnect cleanup attempts every step and always removes runtime authorit
         rateLimiter = { consume = function() return true, nil end, purge = function() end },
         sha256 = function(value) return value end,
         leases = { release = function() return nil, { code = 'LEASE_RELEASE_FAILED' } end },
-        instances = {},
+        instances = { bootId = function() return 'boot-a', nil end },
         characters = { unload = function() return nil, { code = 'UNLOAD_FAILED' } end },
         userRepository = {}, accessRepository = {},
         sessionRepository = { close = function()
@@ -1643,6 +2593,7 @@ test('operator command registry is console-only, typed, bounded, and service-bac
   try {
     const result = await engine.doString(`
       local registered, emitted, printed, serviceCalls, auditCalls = {}, {}, {}, 0, 0
+      local restartPreparations = 0
       local resourceStates = { synex_accounts = 'started', synex_entities = 'started' }
       local platform = {
         nowGame = function() return 1000 end, random = function() return 1 end,
@@ -1669,13 +2620,19 @@ test('operator command registry is console-only, typed, bounded, and service-bac
       }
       local commands = SynexCoreFactories.commands({
         platform = platform, foundation = foundation, coreResource = 'synex_core',
-        runtime = { doctor = function() return {
-          status = 'PASS', checks = {
-            { name = 'database', status = 'PASS' },
-            { name = 'database-utc', status = 'PASS' },
-            { name = 'database-transaction-isolation', status = 'PASS' }
-          }
-        }, nil end },
+        runtime = {
+          doctor = function() return {
+            status = 'PASS', checks = {
+              { name = 'database', status = 'PASS' },
+              { name = 'database-utc', status = 'PASS' },
+              { name = 'database-transaction-isolation', status = 'PASS' }
+            }
+          }, nil end,
+          prepareRestart = function()
+            restartPreparations = restartPreparations + 1
+            return { state = 'prepared', restartCommand = 'restart synex_core' }, nil
+          end
+        },
         lifecycle = {
           core = { snapshot = function() return { state = 'READY', operational = true } end },
           scheduler = { snapshot = function() return {{ health = 'HEALTHY' }} end }
@@ -1744,13 +2701,16 @@ test('operator command registry is console-only, typed, bounded, and service-bac
       assert(overview.status == 'PASS' and #overview.lines == 8 and #printed == 8)
       assert(printed[1]:find('lifecycle READY', 1, true))
       assert(printed[4]:find('oldest pending 600000ms+', 1, true))
+      local prepared = assert(commands:dispatch(0, {'prepare-restart'}))
+      assert(prepared.state == 'prepared' and prepared.restartCommand == 'restart synex_core')
+      assert(restartPreparations == 1)
       assert(emitted[#emitted].ok == true)
       return table.concat({
         deniedError.code, invalidError.code, trace.limit, serviceCalls,
-        notInstalled.status, unknownState.status, #printed
+        notInstalled.status, unknownState.status, #printed, restartPreparations
       }, ':')
     `);
-    assert.equal(result, 'CONSOLE_ONLY:INVALID_ARGUMENT:8:2:NOT_INSTALLED:DEGRADED:8');
+    assert.equal(result, 'CONSOLE_ONLY:INVALID_ARGUMENT:8:2:NOT_INSTALLED:DEGRADED:8:1');
   } finally {
     engine.global.close();
   }
@@ -1762,6 +2722,7 @@ test('durable saga runtime resumes with leases, retries, deadlines, and reverse 
     const result = await engine.doString(`
       local now, saga, sequence = 1000, nil, 0
       local runs, compensations, leasesAcquired, leasesReleased, audits = 0, {}, 0, 0, 0
+      local leaseOwners = {}
       local platform = {
         nowGame = function() return now end, random = function() return 1 end,
         print = function() end, jsonEncode = function() return '{}' end
@@ -1811,16 +2772,23 @@ test('durable saga runtime resumes with leases, retries, deadlines, and reverse 
         return { eventId = ('audit-%d'):format(audits) }, nil
       end }
       local leases = {
-        acquire = function(_, name, owner, ttl)
+        acquire = function(_, name, owner, ttl, requesterInstanceId, requesterBootId)
           leasesAcquired = leasesAcquired + 1
-          assert(name == 'saga:' .. saga.publicId and owner == 'instance-a:saga' and ttl == 45)
-          return { name = name, owner = owner, fencingToken = leasesAcquired, ttlSeconds = ttl }, nil
+          assert(name == 'saga:' .. saga.publicId
+            and owner:find('instance-a:saga:', 1, true) == 1 and #owner <= 96 and ttl == 45
+            and requesterInstanceId == 'instance-a' and requesterBootId == 'boot-a')
+          assert(leaseOwners[owner] == nil, 'each saga attempt needs a unique lease owner')
+          leaseOwners[owner] = true
+          return { name = name, owner = owner, fencingToken = leasesAcquired, ttlSeconds = ttl,
+            requesterInstanceId = requesterInstanceId, requesterBootId = requesterBootId }, nil
         end,
         release = function() leasesReleased = leasesReleased + 1 return true, nil end
       }
       local runtime = SynexCoreFactories.sagaRuntime({
         foundation = foundation, platform = platform, sagas = store, audit = audit,
-        leases = leases, owners = registries.owners, instanceId = 'instance-a', enabled = true
+        leases = leases, owners = registries.owners,
+        instances = { bootId = function() return 'boot-a', nil end },
+        instanceId = 'instance-a', enabled = true
       })
       local invalid, invalidError = runtime:register('synex_fixture', epoch, {
         name = 'fixture.invalid', steps = {{ name = 'step', run = function() return {} end }}

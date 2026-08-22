@@ -30,6 +30,7 @@ factories.platform = function(overrides)
         getPlayers = overrides.getPlayers or GetPlayers,
         isPlayerAceAllowed = overrides.isPlayerAceAllowed or IsPlayerAceAllowed,
         dropPlayer = overrides.dropPlayer or DropPlayer,
+        cancelEvent = overrides.cancelEvent or CancelEvent or fallback('CancelEvent'),
         wait = overrides.wait or Wait,
         setTimeout = overrides.setTimeout or SetTimeout,
         nowGame = overrides.nowGame or GetGameTimer,

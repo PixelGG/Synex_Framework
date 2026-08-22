@@ -4,6 +4,7 @@ factories.identityConnectionJoin = function(deps)
     local platform = assert(deps.platform, 'connection join requires platform')
     local foundation = assert(deps.foundation, 'connection join requires foundation')
     local players = assert(deps.players, 'connection join requires player registry')
+    local lifecycle = assert(deps.lifecycle, 'connection join requires lifecycle')
     local rateLimiter = assert(deps.rateLimiter, 'connection join requires rate limiter')
     local userRepository = assert(deps.userRepository, 'connection join requires user repository')
     local sessionRepository = assert(deps.sessionRepository, 'connection join requires session repository')
@@ -12,6 +13,7 @@ factories.identityConnectionJoin = function(deps)
     local transition = assert(deps.transition, 'connection join requires session transition')
     local leases = assert(deps.leases, 'connection join requires cluster leases')
     local joinClaims = assert(deps.joinClaims, 'connection join requires join claims')
+    local isQuiesced = assert(deps.isQuiesced, 'connection join requires quiesce state')
     local logConnectionStage = assert(deps.logConnectionStage, 'connection join requires stage telemetry')
     local releaseAdmission = assert(deps.releaseAdmission, 'connection join requires admission release')
     local releaseConnectionLease = assert(deps.releaseConnectionLease, 'connection join requires lease release')
@@ -50,6 +52,27 @@ factories.identityConnectionJoin = function(deps)
         if type(finalSource) ~= 'number' or math.type(finalSource) ~= 'integer' or finalSource <= 0
             or type(oldSource) ~= 'number' or math.type(oldSource) ~= 'integer' then
             return nil, rejectJoin(orphan, 'INVALID_JOIN_SOURCE', 'The join source is invalid. Please reconnect.')
+        end
+        local admissionCode, admissionMessage = nil, nil
+        if isQuiesced() then
+            admissionCode = 'CORE_STOPPING'
+            admissionMessage = 'The Synex runtime is stopping. Please reconnect shortly.'
+        elseif not lifecycle.core:canAdmitPlayers() then
+            admissionCode = 'CORE_NOT_READY'
+            admissionMessage = 'The Synex runtime is not ready to open a session. Please reconnect shortly.'
+        end
+        if admissionCode then
+            local pending = players:getPending(oldSource)
+            local rejection = rejectJoin(pending or orphan, admissionCode, admissionMessage)
+            if pending then
+                local current = players:getPending(oldSource)
+                local removed = nil
+                if current and current.id == pending.id then removed = players:removePending(oldSource) end
+                if removed then clearQueueEntry(removed) end
+                releaseAdmission(removed or pending)
+                releaseConnectionLease(removed or pending)
+            end
+            return nil, rejection
         end
 
         local rateInvoked, rateAllowed = foundation.safeCall(rateLimiter.consume, rateLimiter,
@@ -106,9 +129,15 @@ factories.identityConnectionJoin = function(deps)
             local fingerprint = readCurrentIdentity()
             return fingerprint ~= nil and fingerprint == pending.identityFingerprint
         end
-        local function continuationIsCurrent()
+        local function admissionIsCurrent()
+            return not isQuiesced() and lifecycle.core:canAdmitPlayers()
+        end
+        local function sourceAuthorityIsCurrent()
             return joinClaims:isCurrent(finalSource, claimToken, pending.id)
                 and sourceMatchesPendingIdentity()
+        end
+        local function continuationIsCurrent()
+            return admissionIsCurrent() and sourceAuthorityIsCurrent()
         end
         local function releaseOwnedLease(candidate)
             if leaseReleased then return end
@@ -156,6 +185,23 @@ factories.identityConnectionJoin = function(deps)
             releaseAdmission(pending)
             releaseOwnedLease(authority or pending)
         end
+        local function rejectClosedAdmission(closePersistence)
+            if admissionIsCurrent() then return nil end
+            local stopping = isQuiesced()
+            local rejection = rejectJoin(
+                pending,
+                stopping and 'CORE_STOPPING' or 'CORE_NOT_READY',
+                stopping
+                    and 'The Synex runtime is stopping. Please reconnect shortly.'
+                    or 'The Synex runtime stopped admitting players. Please reconnect shortly.')
+            if boundSession then
+                cleanupOwnedSession(closePersistence)
+            else
+                local removed = removeOwnedPending()
+                if not stopping then releaseOwnedLease(removed or pending) end
+            end
+            return rejection
+        end
 
         local invoked, joined, joinError = foundation.safeCall(function()
             local fingerprint, identifiers = readCurrentIdentity()
@@ -168,7 +214,7 @@ factories.identityConnectionJoin = function(deps)
                     'The joining player does not match the accepted connection.')
             end
             dropGuard = function()
-                if not continuationIsCurrent() then return false end
+                if not sourceAuthorityIsCurrent() then return false end
                 local session = players:getSession(pending.sessionId)
                 if session then
                     return session.userId == pending.userId and session.source == finalSource
@@ -180,6 +226,8 @@ factories.identityConnectionJoin = function(deps)
             end
             local resolvedUser = userRepository:findByIdentifiers(identifiers)
             if not continuationIsCurrent() then
+                local admissionError = rejectClosedAdmission(false)
+                if admissionError then return nil, admissionError end
                 return nil, rejectJoin(pending, 'JOIN_SOURCE_CHANGED',
                     'The player source changed while the session was opening.', false)
             end
@@ -219,6 +267,8 @@ factories.identityConnectionJoin = function(deps)
             end
             session.persistedVersion = session.version
             if not continuationIsCurrent() then
+                local admissionError = rejectClosedAdmission(false)
+                if admissionError then return nil, admissionError end
                 return nil, rejectJoin(pending, 'JOIN_SOURCE_CHANGED',
                     'The player source changed while the session was opening.', false)
             end
@@ -230,11 +280,15 @@ factories.identityConnectionJoin = function(deps)
                 return nil, rejection
             end
             if not continuationIsCurrent() then
+                local admissionError = rejectClosedAdmission(false)
+                if admissionError then return nil, admissionError end
                 return nil, rejectJoin(pending, 'JOIN_SOURCE_CHANGED',
                     'The player source changed while the session was opening.', false)
             end
             logConnectionStage(pending, 'join_lease_verified')
             if not continuationIsCurrent() then
+                local admissionError = rejectClosedAdmission(false)
+                if admissionError then return nil, admissionError end
                 return nil, rejectJoin(pending, 'JOIN_SOURCE_CHANGED',
                     'The player source changed while the session was opening.', false)
             end
@@ -251,6 +305,8 @@ factories.identityConnectionJoin = function(deps)
             local persisted, persistenceError = sessionRepository:create(bound)
             if not players:isCurrent(bound.id, finalSource, bound.sourceGeneration)
                 or not continuationIsCurrent() then
+                local admissionError = rejectClosedAdmission(true)
+                if admissionError then return nil, admissionError end
                 clearOwnedClaim()
                 cleanupOwnedSession(true)
                 logConnectionStage(pending, 'rejected', 'CONNECTION_CANCELLED', 'warn')
@@ -276,6 +332,8 @@ factories.identityConnectionJoin = function(deps)
             end
             if not players:isCurrent(bound.id, finalSource, bound.sourceGeneration)
                 or not continuationIsCurrent() then
+                local admissionError = rejectClosedAdmission(true)
+                if admissionError then return nil, admissionError end
                 clearOwnedClaim()
                 cleanupOwnedSession(true)
                 logConnectionStage(pending, 'rejected', 'CONNECTION_CANCELLED', 'warn')
@@ -292,6 +350,8 @@ factories.identityConnectionJoin = function(deps)
             end)
             if not opened or not players:isCurrent(bound.id, finalSource, bound.sourceGeneration)
                 or not continuationIsCurrent() then
+                local admissionError = rejectClosedAdmission(true)
+                if admissionError then return nil, admissionError end
                 local rejection = rejectJoin(pending, 'SESSION_FINALIZATION_FAILED',
                     'The session could not be finalized. Please reconnect.')
                 cleanupOwnedSession(true)

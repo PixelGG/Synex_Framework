@@ -21,6 +21,7 @@ factories.identityConnectionMaintenance = function(deps)
     local clearQueueEntry = assert(deps.clearQueueEntry, 'connection maintenance requires queue cleanup')
     local recordReconnectGrace = assert(deps.recordReconnectGrace, 'connection maintenance requires reconnect grace')
     local purgeReconnectGrace = assert(deps.purgeReconnectGrace, 'connection maintenance requires grace cleanup')
+    local isQuiesced = assert(deps.isQuiesced, 'connection maintenance requires quiesce authority')
     local logger = foundation.logger
     local metrics = foundation.metrics
     local pendingCleanupOffset = 0
@@ -179,10 +180,12 @@ factories.identityConnectionMaintenance = function(deps)
         local limit = math.min(#candidates, math.max(1, math.ceil(#candidates / renewalRounds)))
         local failures = 0
         for offset = 0, limit - 1 do
+            if isQuiesced() then return true, nil end
             local index = ((pendingLeaseRenewalOffset + offset) % #candidates) + 1
             local entry = candidates[index]
             local renewed, value, renewError = foundation.safeCall(
                 leases.renew, leases, entry.connection.clusterLease)
+            if isQuiesced() then return true, nil end
             if not renewed or not value then
                 local current = players:getPending(entry.source)
                 local joined = players:getSession(entry.connection.sessionId)
@@ -216,8 +219,11 @@ factories.identityConnectionMaintenance = function(deps)
     end
 
     function maintenance:heartbeat()
+        if isQuiesced() then return true, nil end
         self:purgeExpired()
+        if isQuiesced() then return true, nil end
         local pendingLeasesHealthy, pendingLeaseError = renewPendingLeases()
+        if isQuiesced() then return true, nil end
         local sessions = players:snapshot().sessions
         local sessionIds = {}
         local sessionLeasesHealthy = true
@@ -227,6 +233,7 @@ factories.identityConnectionMaintenance = function(deps)
             if session.clusterLease then
                 local invoked, renewed, renewError = foundation.safeCall(
                     leases.renew, leases, session.clusterLease)
+                if isQuiesced() then return true, nil end
                 if not invoked or not renewed then
                     sessionLeasesHealthy = false
                     sessionLeaseError = sessionLeaseError or foundation.error(
@@ -249,23 +256,35 @@ factories.identityConnectionMaintenance = function(deps)
                 end
             end
         end
-        local touched, touchError = instances:touchSessions(sessionIds)
+        local touched, touchError = instances:touchSessions(sessionIds,
+            function() return not isQuiesced() end)
+        if isQuiesced() then return true, nil end
         if not touched then logger:error('session heartbeat persistence failed', { code = touchError.code }) end
-        local cluster, heartbeatError = instances:heartbeat(config.clusterSessionLeaseSeconds or 45)
+        local cluster, heartbeatError = instances:heartbeat(config.clusterSessionLeaseSeconds or 45,
+            function() return not isQuiesced() end)
+        if isQuiesced() then return true, nil end
         if not cluster then logger:error('instance heartbeat failed', { code = heartbeatError.code }) end
         local controls, controlError = instances:pendingLocalControls()
+        if isQuiesced() then return true, nil end
         if not controls then
             logger:error('cluster control polling failed', { code = controlError.code })
         else
             for _, control in ipairs(controls) do
-                local target = players:getSession(control.target_session_id)
-                if target and target.source ~= nil and control.action == 'kick'
-                    and players:isCurrent(target.id, target.source, target.sourceGeneration) then
-                    platform.dropPlayer(target.source,
-                        tostring(control.reason or 'Session replaced.'):sub(1, 128))
-                end
                 local completed, completionError = instances:completeControl(control.request_id)
-                if not completed and completionError then
+                if isQuiesced() then return true, nil end
+                if completed then
+                    local target = players:getSession(control.target_session_id)
+                    if target and target.source ~= nil and control.action == 'kick'
+                        and players:isCurrent(target.id, target.source, target.sourceGeneration) then
+                        local dropped = foundation.safeCall(platform.dropPlayer, target.source,
+                            tostring(control.reason or 'Session replaced.'):sub(1, 128))
+                        if not dropped then
+                            logger:error('cluster control player drop failed', {
+                                requestId = control.request_id, code = 'PLAYER_DROP_FAILED'
+                            })
+                        end
+                    end
+                elseif completionError then
                     logger:error('cluster control completion failed', { code = completionError.code })
                 end
             end

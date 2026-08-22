@@ -636,6 +636,145 @@ test('live database serializes opposite transfers, deduplicates writes, and fenc
   }
 });
 
+test('live restart waits for an in-flight prior-boot insert, then closes it and preserves its generation floor', {
+  skip: gate.enabled ? false : gate.reason,
+}, async () => {
+  const setup = await openLiveDatabase();
+  const writer = await openLiveDatabase();
+  const restarter = await openLiveDatabase();
+  try {
+    await applyMigrations(setup.connection, await loadMigrations());
+    const instanceId = randomUUID();
+    const userId = randomUUID();
+    const bootA = randomUUID();
+    const bootB = randomUUID();
+    const sessionId = randomUUID();
+    const leaseName = `session:${userId}`;
+    const leaseOwner = `${instanceId}:live`;
+    await setup.connection.query(
+      `INSERT INTO synex_users (id, status, locale, metadata_json, version)
+       VALUES (?, 'active', 'en', '{}', 1)`,
+      [userId],
+    );
+    await setup.connection.query(
+      `INSERT INTO synex_instances
+       (instance_id, name, started_at, heartbeat_at, status, version)
+       VALUES (?, 'Live boot fence', CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), 'ready', 1)`,
+      [instanceId],
+    );
+    await setup.connection.query(
+      `INSERT INTO synex_instance_boots (instance_id, boot_id, registered_at)
+       VALUES (?, ?, CURRENT_TIMESTAMP(6))`,
+      [instanceId, bootA],
+    );
+    await setup.connection.query(
+      `INSERT INTO synex_cluster_leases (lease_name, owner_id, fencing_token, expires_at)
+       VALUES (?, ?, 1, TIMESTAMPADD(SECOND, 30, CURRENT_TIMESTAMP(6)))`,
+      [leaseName, leaseOwner],
+    );
+
+    await writer.connection.beginTransaction();
+    const [requester] = await writer.connection.query<RowDataPacket[]>(
+      `SELECT status FROM synex_instances
+       WHERE instance_id = ? AND status = 'ready' FOR UPDATE`,
+      [instanceId],
+    );
+    assert.equal(requester.length, 1);
+    const [bootClaim] = await writer.connection.query<RowDataPacket[]>(
+      `SELECT boot_id FROM synex_instance_boots
+       WHERE instance_id = ? AND boot_id = ? FOR UPDATE`,
+      [instanceId, bootA],
+    );
+    assert.equal(bootClaim.length, 1);
+    const [leaseClaim] = await writer.connection.query<RowDataPacket[]>(
+      `SELECT owner_id, fencing_token FROM synex_cluster_leases
+       WHERE lease_name = ? AND owner_id = ? AND fencing_token = 1
+         AND expires_at > CURRENT_TIMESTAMP(6) FOR UPDATE`,
+      [leaseName, leaseOwner],
+    );
+    assert.equal(leaseClaim.length, 1);
+    await writer.connection.query(
+      `INSERT INTO synex_sessions
+       (id, user_id, server_instance_id, source_value, source_generation, state,
+        character_id, connected_at, last_seen_at, version)
+       VALUES (?, ?, ?, 42, 38, 'SELECTING_CHARACTER', NULL,
+               CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), 1)`,
+      [sessionId, userId, instanceId],
+    );
+
+    let restartRegistered = false;
+    let signalRestartQuery!: () => void;
+    const restartQueryStarted = new Promise<void>((resolve) => { signalRestartQuery = resolve; });
+    const restart = (async () => {
+      await restarter.connection.beginTransaction();
+      signalRestartQuery();
+      await restarter.connection.query(
+        `INSERT INTO synex_instances
+         (instance_id, name, started_at, heartbeat_at, status, version)
+         VALUES (?, 'Live boot fence B', CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), 'starting', 1)
+         ON DUPLICATE KEY UPDATE name = VALUES(name), started_at = CURRENT_TIMESTAMP(6),
+           heartbeat_at = CURRENT_TIMESTAMP(6), status = 'starting', version = version + 1`,
+        [instanceId],
+      );
+      await restarter.connection.query(
+        `INSERT INTO synex_instance_boots (instance_id, boot_id, registered_at)
+         VALUES (?, ?, CURRENT_TIMESTAMP(6))
+         ON DUPLICATE KEY UPDATE boot_id = VALUES(boot_id), registered_at = CURRENT_TIMESTAMP(6)`,
+        [instanceId, bootB],
+      );
+      await restarter.connection.commit();
+      restartRegistered = true;
+
+      await restarter.connection.beginTransaction();
+      const [authority] = await restarter.connection.query<RowDataPacket[]>(
+        `SELECT boot_id FROM synex_instance_boots
+         WHERE instance_id = ? AND boot_id = ? FOR UPDATE`,
+        [instanceId, bootB],
+      );
+      assert.equal(authority.length, 1);
+      await restarter.connection.query(
+        `UPDATE synex_cluster_leases SET expires_at = CURRENT_TIMESTAMP(6)
+         WHERE lease_name LIKE 'session:%' AND owner_id LIKE ?`,
+        [`${instanceId}:%`],
+      );
+      await restarter.connection.query(
+        `UPDATE synex_sessions
+         SET state = 'CLOSED', closed_at = CURRENT_TIMESTAMP(6),
+             close_reason = 'synex_core restarted', version = version + 1
+         WHERE server_instance_id = ? AND closed_at IS NULL`,
+        [instanceId],
+      );
+      await restarter.connection.commit();
+    })();
+
+    await restartQueryStarted;
+    await new Promise<void>((resolve) => { setTimeout(resolve, 50); });
+    assert.equal(restartRegistered, false, 'restart registration must wait on the prior boot authority lock');
+    await writer.connection.commit();
+    await restart;
+
+    const [sessions] = await setup.connection.query<RowDataPacket[]>(
+      `SELECT state, closed_at FROM synex_sessions WHERE id = ?`,
+      [sessionId],
+    );
+    assert.equal(sessions.length, 1);
+    assert.equal(sessions[0]?.state, 'CLOSED');
+    assert.ok(sessions[0]?.closed_at);
+    const [floor] = await setup.connection.query<RowDataPacket[]>(
+      `SELECT MAX(source_generation) AS source_generation_floor
+       FROM synex_sessions WHERE server_instance_id = ?`,
+      [instanceId],
+    );
+    assert.equal(asNumber(floor[0]?.source_generation_floor as string | number), 38);
+  } finally {
+    await Promise.all([
+      setup.connection.end(),
+      writer.connection.end(),
+      restarter.connection.end(),
+    ]);
+  }
+});
+
 test('live legacy import writes a reconciled native model and replays without writes', {
   skip: gate.enabled ? false : gate.reason,
 }, async () => {

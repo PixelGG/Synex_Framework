@@ -13,6 +13,9 @@ factories.registries = function(deps)
     local byUser = {}
     local byCharacter = {}
     local byIdentifier = {}
+    local maximumSourceGeneration = 9007199254740991
+    local sourceGenerationFloor = 0
+    local sourceGenerationSeeded = false
     local maximumPendingDiagnosticAgeMs = 600000
 
     local ownerIndex = {}
@@ -207,6 +210,21 @@ factories.registries = function(deps)
     end
 
     local playerRegistry = {}
+    function playerRegistry:seedSourceGeneration(generation)
+        if sourceGenerationSeeded or next(sessions) ~= nil or next(pending) ~= nil then
+            return nil, foundation.error('SOURCE_GENERATION_ALREADY_ACTIVE',
+                'Source generation can only be seeded once before player admission.')
+        end
+        generation = tonumber(generation)
+        if not generation or math.type(generation) ~= 'integer'
+            or generation < 0 or generation > 9007199254740990 then
+            return nil, foundation.error('INVALID_SOURCE_GENERATION',
+                'Source generation seed must be a safe non-negative integer.')
+        end
+        sourceGenerationFloor = generation
+        sourceGenerationSeeded = true
+        return true, nil
+    end
     function playerRegistry:createPending(tempSource, connection)
         if pending[tempSource] then return nil, foundation.error('DUPLICATE_PENDING', 'A pending connection already uses this source.') end
         pending[tempSource] = foundation.copy(connection)
@@ -250,7 +268,12 @@ factories.registries = function(deps)
         if bySource[finalSource] then
             return nil, foundation.error('SOURCE_ALREADY_BOUND', 'The final source is already bound.')
         end
-        local generation = (sourceEpoch[finalSource] or 0) + 1
+        local previousGeneration = math.max(sourceEpoch[finalSource] or 0, sourceGenerationFloor)
+        if previousGeneration >= maximumSourceGeneration then
+            return nil, foundation.error('SOURCE_GENERATION_EXHAUSTED',
+                'The persisted source generation cannot be advanced safely.')
+        end
+        local generation = previousGeneration + 1
         local stored = foundation.copy(session)
         stored.source = finalSource
         stored.sourceGeneration = generation
@@ -284,7 +307,9 @@ factories.registries = function(deps)
         end
         local detached = foundation.copy(session)
         bySource[source] = nil
-        sourceEpoch[source] = math.max(sourceEpoch[source] or 0, generation) + 1
+        local previousGeneration = math.max(sourceEpoch[source] or 0, generation)
+        sourceEpoch[source] = previousGeneration >= maximumSourceGeneration
+            and maximumSourceGeneration or previousGeneration + 1
         session.source = nil
         session.sourceGeneration = sourceEpoch[source]
         return detached, nil
@@ -343,7 +368,9 @@ factories.registries = function(deps)
             local index = bySource[session.source]
             if index and index.sessionId == sessionId then
                 bySource[session.source] = nil
-                sourceEpoch[session.source] = (sourceEpoch[session.source] or index.generation) + 1
+                local previousGeneration = math.max(sourceEpoch[session.source] or 0, index.generation)
+                sourceEpoch[session.source] = previousGeneration >= maximumSourceGeneration
+                    and maximumSourceGeneration or previousGeneration + 1
             end
         end
         if session.userId and byUser[session.userId] then

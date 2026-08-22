@@ -103,24 +103,51 @@ factories.identityRepository = function(deps)
         local lease = session.clusterLease
         local leaseName = type(lease) == 'table' and (lease.name or lease.leaseName) or nil
         if type(leaseName) ~= 'string' or type(lease.owner) ~= 'string'
-            or type(lease.fencingToken) ~= 'number' then
+            or type(lease.fencingToken) ~= 'number'
+            or type(lease.requesterInstanceId) ~= 'string'
+            or lease.requesterInstanceId ~= deps.instanceId
+            or type(lease.requesterBootId) ~= 'string'
+            or #lease.requesterBootId < 1 or #lease.requesterBootId > 36 then
             return nil, foundation.error('LEASE_LOST', 'Session authority is missing or invalid.')
         end
-        local affected, err = database:update([[INSERT INTO `synex_sessions`
-            (`id`, `user_id`, `server_instance_id`, `source_value`, `source_generation`, `state`, `character_id`, `connected_at`, `last_seen_at`, `version`)
-            SELECT ?, ?, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), ?
-            FROM `synex_cluster_leases` AS `lease`
-            WHERE `lease`.`lease_name` = ? AND `lease`.`owner_id` = ?
-                AND `lease`.`fencing_token` = ? AND `lease`.`expires_at` > CURRENT_TIMESTAMP(6)]], {
-            session.id, session.userId, deps.instanceId, session.source, session.sourceGeneration or 0,
-            session.state, session.version or 1, leaseName, lease.owner, lease.fencingToken
-        })
-        if err then return nil, err end
-        if tonumber(affected) ~= 1 then
-            return nil, foundation.error('LEASE_LOST', 'Session authority changed before persistence.', {
-                retryable = true
+        local authorityError = nil
+        local committed, transactionError = database:withTransaction(function(query)
+            local requester = query([[SELECT `status` FROM `synex_instances`
+                WHERE `instance_id` = ? AND `status` = 'ready' FOR UPDATE]],
+                { lease.requesterInstanceId }) or {}
+            if not requester[1] then
+                authorityError = foundation.error('LEASE_LOST',
+                    'Session requester authority changed before persistence.', { retryable = true })
+                return false
+            end
+            local boot = query([[SELECT `boot_id` FROM `synex_instance_boots`
+                WHERE `instance_id` = ? AND `boot_id` = ? FOR UPDATE]],
+                { lease.requesterInstanceId, lease.requesterBootId }) or {}
+            if not boot[1] then
+                authorityError = foundation.error('LEASE_LOST',
+                    'Session boot authority changed before persistence.', { retryable = true })
+                return false
+            end
+            local leaseRows = query([[SELECT `owner_id`, `fencing_token`,
+                    (`expires_at` > CURRENT_TIMESTAMP(6)) AS `valid`
+                FROM `synex_cluster_leases` WHERE `lease_name` = ? FOR UPDATE]], { leaseName }) or {}
+            local current = leaseRows[1]
+            if not current or current.owner_id ~= lease.owner
+                or tonumber(current.fencing_token) ~= lease.fencingToken or tonumber(current.valid) ~= 1 then
+                authorityError = foundation.error('LEASE_LOST',
+                    'Session authority changed before persistence.', { retryable = true })
+                return false
+            end
+            query([[INSERT INTO `synex_sessions`
+                (`id`, `user_id`, `server_instance_id`, `source_value`, `source_generation`, `state`,
+                    `character_id`, `connected_at`, `last_seen_at`, `version`)
+                VALUES (?, ?, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), ?)]], {
+                session.id, session.userId, deps.instanceId, session.source, session.sourceGeneration or 0,
+                session.state, session.version or 1
             })
-        end
+            return true
+        end)
+        if not committed then return nil, authorityError or transactionError end
         return true, nil
     end
     function sessionRepository:update(session)

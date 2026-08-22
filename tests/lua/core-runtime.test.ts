@@ -127,6 +127,40 @@ test('player registry invalidates reused sources with a new generation', async (
   engine.global.close();
 });
 
+test('player registry seeds persisted source generations once and fails closed at exhaustion', async () => {
+  const engine = await createKernelEngine(['foundation', 'registries']);
+  const result = await engine.doString(`
+    local foundation = SynexCoreFactories.foundation({ platform = FakePlatform })
+    local registry = SynexCoreFactories.registries({ foundation = foundation }).players
+    assert(registry:seedSourceGeneration(37))
+    assert(registry:createPending(10, { sessionId = 'one' }))
+    local first = assert(registry:bindJoined(10, 42, { id = 'one', userId = 'u1' }))
+    assert(registry:createPending(11, { sessionId = 'two' }))
+    local second = assert(registry:bindJoined(11, 43, { id = 'two', userId = 'u2' }))
+    assert(first.sourceGeneration == 38 and second.sourceGeneration == 38)
+    registry:removeSession('one')
+    assert(registry:createPending(12, { sessionId = 'three' }))
+    local third = assert(registry:bindJoined(12, 42, { id = 'three', userId = 'u3' }))
+    assert(third.sourceGeneration == 40)
+    local reseeded, reseedError = registry:seedSourceGeneration(1)
+    assert(reseeded == nil and reseedError.code == 'SOURCE_GENERATION_ALREADY_ACTIVE')
+
+    local exhausted = SynexCoreFactories.registries({ foundation = foundation }).players
+    assert(exhausted:seedSourceGeneration(9007199254740990))
+    assert(exhausted:createPending(20, { sessionId = 'maximum' }))
+    local maximum = assert(exhausted:bindJoined(20, 99, { id = 'maximum', userId = 'u4' }))
+    assert(maximum.sourceGeneration == 9007199254740991)
+    exhausted:removeSession('maximum')
+    assert(exhausted:createPending(21, { sessionId = 'overflow' }))
+    local overflow, overflowError = exhausted:bindJoined(21, 99, { id = 'overflow', userId = 'u5' })
+    assert(overflow == nil and overflowError.code == 'SOURCE_GENERATION_EXHAUSTED')
+    return table.concat({first.sourceGeneration, second.sourceGeneration, third.sourceGeneration,
+      reseedError.code, overflowError.code}, ':')
+  `);
+  assert.equal(result, '38:38:40:SOURCE_GENERATION_ALREADY_ACTIVE:SOURCE_GENERATION_EXHAUSTED');
+  engine.global.close();
+});
+
 test('owner purge revokes all tracked artifacts once', async () => {
   const engine = await createKernelEngine(['foundation', 'registries']);
   const cleaned = await engine.doString(`
@@ -723,6 +757,125 @@ test('core database adapter rejects malformed port results without turning failu
   engine.global.close();
 });
 
+test('session lease acquisition is fenced by the current ready runtime instance', async () => {
+  const engine = await createKernelEngine(['foundation', 'persistence']);
+  const result = await engine.doString(`
+    local foundation = SynexCoreFactories.foundation({ platform = FakePlatform })
+    local calls, expectedOwner, currentBoot = {}, 'instance-a:session-a', 'boot-a'
+    local contended, contendedReads = false, 0
+    local function hasParameter(parameters, expected)
+      for _, value in ipairs(parameters or {}) do if value == expected then return true end end
+      return false
+    end
+    local adapter = {
+      query = function(sql, parameters)
+        calls[#calls + 1] = { kind = 'query', sql = sql, parameters = parameters }
+        return {{ owner_id = expectedOwner, fencing_token = 7, valid = 1 }}
+      end,
+      scalar = function() return nil end,
+      insert = function() return 0 end,
+      update = function(sql, parameters)
+        calls[#calls + 1] = { kind = 'update', sql = sql, parameters = parameters }
+        return 1
+      end,
+      transaction = function() return true end,
+      startTransaction = function(handler)
+        return handler(function(sql, parameters)
+          calls[#calls + 1] = { kind = 'transaction', sql = sql, parameters = parameters }
+          if sql:find('synex_instances', 1, true) then return {{ status = 'ready' }} end
+          if sql:find('synex_instance_boots', 1, true) then
+            return hasParameter(parameters, currentBoot) and {{ boot_id = currentBoot }} or {}
+          end
+          if sql:find('SELECT', 1, true) and sql:find('owner_id', 1, true) then
+            if contended then
+              contendedReads = contendedReads + 1
+              return {{ owner_id = 'instance-b:session-b', fencing_token = 1, valid = 1 }}
+            end
+            return {{ owner_id = expectedOwner, fencing_token = 7, valid = 1 }}
+          end
+          return 1
+        end)
+      end
+    }
+    local leases = SynexCoreFactories.persistence({
+      platform = FakePlatform,
+      foundation = foundation,
+      db = adapter,
+      instanceId = 'instance-a'
+    }).leases
+
+    local lease = assert(leases:acquire(
+      'session:user-a', 'instance-a:session-a', 45, 'instance-a', 'boot-a'))
+    assert(lease.fencingToken == 7 and lease.requesterInstanceId == 'instance-a'
+      and lease.requesterBootId == 'boot-a' and #calls == 4)
+    assert(calls[1].sql:find('synex_instances', 1, true)
+      and calls[1].sql:find("ready", 1, true) and calls[1].sql:find('FOR UPDATE', 1, true))
+    assert(calls[2].sql:find('synex_instance_boots', 1, true)
+      and calls[2].sql:find('FOR UPDATE', 1, true))
+    assert(calls[3].sql:find('INSERT INTO', 1, true)
+      and calls[3].sql:find('ON DUPLICATE KEY UPDATE', 1, true)
+      and calls[3].sql:find('fencing_token', 1, true)
+      and not calls[3].sql:find('INSERT IGNORE', 1, true))
+    assert(calls[4].sql:find('SELECT', 1, true)
+      and calls[4].sql:find('synex_cluster_leases', 1, true)
+      and calls[4].sql:find('FOR UPDATE', 1, true))
+
+    local beforeInvalid = #calls
+    local invalid, invalidError = leases:acquire(
+      'session:user-a', 'instance-a:session-a', 45, 'instance-b', 'boot-a')
+    assert(invalid == nil and invalidError.code == 'INVALID_LEASE_AUTHORITY')
+    assert(#calls == beforeInvalid)
+
+    local missingBoot, missingBootError = leases:acquire(
+      'session:user-a', 'instance-a:session-a', 45, 'instance-a')
+    assert(missingBoot == nil and missingBootError.code == 'INVALID_LEASE_AUTHORITY')
+    assert(#calls == beforeInvalid)
+
+    local unfenced, unfencedError = leases:acquire(
+      'session:user-a', 'instance-a:session-a', 45)
+    assert(unfenced == nil and unfencedError.code == 'INVALID_LEASE_AUTHORITY')
+    local unfencedRenewed, unfencedRenewError = leases:renew({
+      name = 'session:user-a', owner = 'instance-a:session-a', fencingToken = 7, ttlSeconds = 45
+    })
+    assert(unfencedRenewed == nil and unfencedRenewError.code == 'INVALID_LEASE_AUTHORITY')
+    assert(#calls == beforeInvalid)
+
+    currentBoot = 'boot-b'
+    local renewed, renewError = leases:renew(lease)
+    assert(renewed == nil and renewError.code == 'LEASE_LOST' and #calls == 6)
+    assert(calls[6].sql:find('synex_instance_boots', 1, true)
+      and calls[6].parameters[1] == 'instance-a' and calls[6].parameters[2] == 'boot-a')
+    local stale, staleError = leases:acquire(
+      'session:user-a', 'instance-a:session-a', 45, 'instance-a', 'boot-a')
+    assert(stale == nil and staleError.code == 'LEASE_BUSY' and #calls == 8)
+
+    currentBoot = 'boot-a'
+    contended = true
+    local beforeContention = #calls
+    local collided, collisionError = leases:acquire(
+      'session:user-b', 'instance-a:session-b', 45, 'instance-a', 'boot-a')
+    assert(collided == nil and collisionError.code == 'LEASE_BUSY'
+      and collisionError.retryable == true and #calls == beforeContention + 4)
+    assert(calls[beforeContention + 3].sql:find('ON DUPLICATE KEY UPDATE', 1, true)
+      and calls[beforeContention + 4].sql:find('FOR UPDATE', 1, true))
+    contended = false
+
+    expectedOwner = 'instance-a:saga-a'
+    local beforeGeneric = #calls
+    local generic = assert(leases:acquire('saga:test', expectedOwner, 45))
+    assert(generic.owner == expectedOwner and #calls == beforeGeneric + 3)
+    for index = beforeGeneric + 1, beforeGeneric + 3 do
+      assert(not calls[index].sql:find('synex_instances', 1, true))
+    end
+    return table.concat({lease.fencingToken, invalidError.code, missingBootError.code,
+      unfencedError.code, unfencedRenewError.code, renewError.code, staleError.code, generic.owner}, ':')
+  `);
+  assert.equal(result,
+    '7:INVALID_LEASE_AUTHORITY:INVALID_LEASE_AUTHORITY:INVALID_LEASE_AUTHORITY:'
+    + 'INVALID_LEASE_AUTHORITY:LEASE_LOST:LEASE_BUSY:instance-a:saga-a');
+  engine.global.close();
+});
+
 test('database UTC session validation fails closed on offset, malformed, and adapter errors', async () => {
   const engine = await createKernelEngine(['foundation', 'persistence']);
   const result = await engine.doString(`
@@ -757,6 +910,70 @@ test('database UTC session validation fails closed on offset, malformed, and ada
     return timezoneError.code
   `);
   assert.equal(result, 'DATABASE_ERROR');
+  engine.global.close();
+});
+
+test('migration worker leases use restart-unique owners and reject delayed reacquisition', async () => {
+  const engine = await createKernelEngine(['foundation', 'persistence']);
+  const result = await engine.doString(`
+    local foundation = SynexCoreFactories.foundation({ platform = FakePlatform })
+    foundation.configureIds('migration-owner-fence')
+    local lease = { owner = nil, token = 0, valid = false }
+    local adapter = {
+      query = function()
+        return lease.owner and {{ owner_id = lease.owner, fencing_token = lease.token,
+          valid = lease.valid and 1 or 0 }} or {}
+      end,
+      scalar = function() return nil end,
+      insert = function() return 0 end,
+      update = function(sql, parameters)
+        if sql:find('fencing_token', 1, true) and sql:find(' + 1', 1, true) then
+          if not lease.valid or lease.owner == parameters[4] then
+            lease.owner, lease.token, lease.valid = parameters[1], lease.token + 1, true
+            return 1
+          end
+          return 0
+        end
+        if sql:find('INSERT IGNORE', 1, true) then
+          if not lease.owner then
+            lease.owner, lease.token, lease.valid = parameters[2], 1, true
+            return 1
+          end
+          return 0
+        end
+        if sql:find('SET ', 1, true) and sql:find('expires_at', 1, true)
+          and sql:find('CURRENT_TIMESTAMP', 1, true) then
+          if lease.owner == parameters[2] and lease.token == parameters[3] then
+            lease.valid = false
+            return 1
+          end
+          return 0
+        end
+        return 1
+      end,
+      transaction = function() return true end
+    }
+    local bootA = SynexCoreFactories.persistence({
+      platform = FakePlatform, foundation = foundation, db = adapter, instanceId = 'instance-a'
+    }).migrations
+    assert(bootA:acquireLease() == 1)
+    local ownerA = lease.owner
+    lease.valid = false
+    local bootB = SynexCoreFactories.persistence({
+      platform = FakePlatform, foundation = foundation, db = adapter, instanceId = 'instance-a'
+    }).migrations
+    assert(bootB:acquireLease() == 2)
+    local ownerB = lease.owner
+    assert(ownerA ~= ownerB)
+    assert(ownerA:find('instance-a:migration:', 1, true) == 1
+      and ownerB:find('instance-a:migration:', 1, true) == 1)
+    local stale, staleError = bootA:acquireLease()
+    assert(stale == nil and staleError.code == 'MIGRATION_LEASE_BUSY')
+    assert(bootA:releaseLease())
+    assert(lease.owner == ownerB and lease.token == 2 and lease.valid == true)
+    return staleError.code
+  `);
+  assert.equal(result, 'MIGRATION_LEASE_BUSY');
   engine.global.close();
 });
 
@@ -801,15 +1018,19 @@ test('migration lease release reports adapter failure and remains retryable', as
   const result = await engine.doString(`
     local foundation = SynexCoreFactories.foundation({ platform = FakePlatform })
     foundation.configureIds('migration-release-test')
-    local failRelease = false
+    local failRelease, leaseOwner = false, nil
     local adapter = {
       query = function()
-        return {{ owner_id = 'instance-a', fencing_token = 4, valid = 1 }}
+        return {{ owner_id = leaseOwner, fencing_token = 4, valid = 1 }}
       end,
       scalar = function() return nil end,
       insert = function() return 0 end,
-      update = function()
+      update = function(sql, parameters)
         if failRelease then return nil, { code = 'PORT_FAILED' } end
+        if sql:find('fencing_token', 1, true) and sql:find(' + 1', 1, true) then
+          leaseOwner = parameters[1]
+          assert(leaseOwner:find('instance-a:migration:', 1, true) == 1 and #leaseOwner <= 96)
+        end
         return 1
       end,
       transaction = function() return true end

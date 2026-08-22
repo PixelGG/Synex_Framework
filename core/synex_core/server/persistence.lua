@@ -6,6 +6,7 @@ factories.persistence = function(deps)
     local logger = foundation.logger
     local metrics = foundation.metrics
     local config = deps.config or {}
+    local runtimeInstanceId = deps.instanceId
 
     local function rotateRight(value, amount)
         return ((value >> amount) | (value << (32 - amount))) & 0xffffffff
@@ -232,7 +233,9 @@ factories.persistence = function(deps)
 
     local migrationManager = {}
     local leaseName = 'schema_migrations'
-    local leaseOwner = deps.instanceId or foundation.nextId('instance')
+    local leaseOwner = tostring(deps.instanceId or foundation.nextId('instance'))
+        .. ':migration:' .. foundation.nextId('migration')
+    if #leaseOwner > 96 then error('migration lease owner exceeds the persisted bound') end
     local leaseSeconds = math.max(10, math.min(config.migrationLeaseSeconds or 30, 300))
     local fence = nil
 
@@ -495,11 +498,75 @@ factories.persistence = function(deps)
     end
 
     local leases = {}
-    function leases:acquire(name, owner, ttlSeconds)
+    function leases:acquire(name, owner, ttlSeconds, requesterInstanceId, requesterBootId)
         if type(name) ~= 'string' or #name < 1 or #name > 96 or type(owner) ~= 'string' or #owner < 1 or #owner > 96 then
             return nil, foundation.error('INVALID_LEASE', 'Lease name or owner is invalid.')
         end
+        local requesterFenced = requesterInstanceId ~= nil or requesterBootId ~= nil
+        local sessionLease = name:sub(1, 8) == 'session:'
+        if sessionLease and not requesterFenced then
+            return nil, foundation.error('INVALID_LEASE_AUTHORITY',
+                'Session leases require the current runtime boot authority.')
+        end
+        if requesterFenced and (type(requesterInstanceId) ~= 'string' or #requesterInstanceId < 1
+            or #requesterInstanceId > 36
+            or owner:sub(1, #requesterInstanceId + 1) ~= requesterInstanceId .. ':'
+            or type(requesterBootId) ~= 'string' or #requesterBootId < 1 or #requesterBootId > 36
+            or (type(runtimeInstanceId) == 'string' and requesterInstanceId ~= runtimeInstanceId)) then
+            return nil, foundation.error('INVALID_LEASE_AUTHORITY',
+                'Session lease requester authority is invalid.')
+        end
         ttlSeconds = math.max(5, math.min(tonumber(ttlSeconds) or 30, 300))
+        if requesterFenced then
+            local acquiredFence = nil
+            local authorityError = nil
+            local committed, transactionError = database:withTransaction(function(query)
+                local requester = query([[SELECT `status` FROM `synex_instances`
+                    WHERE `instance_id` = ? AND `status` = 'ready' FOR UPDATE]],
+                    { requesterInstanceId }) or {}
+                if not requester[1] then
+                    authorityError = foundation.error('LEASE_BUSY',
+                        'The requester no longer owns ready runtime authority.', { retryable = true })
+                    return false
+                end
+                local boot = query([[SELECT `boot_id` FROM `synex_instance_boots`
+                    WHERE `instance_id` = ? AND `boot_id` = ? FOR UPDATE]],
+                    { requesterInstanceId, requesterBootId }) or {}
+                if not boot[1] then
+                    authorityError = foundation.error('LEASE_BUSY',
+                        'The requester boot generation is no longer current.', { retryable = true })
+                    return false
+                end
+                query([[INSERT INTO `synex_cluster_leases`
+                    (`lease_name`, `owner_id`, `fencing_token`, `expires_at`)
+                    VALUES (?, ?, 1, TIMESTAMPADD(SECOND, ?, CURRENT_TIMESTAMP(6)))
+                    ON DUPLICATE KEY UPDATE
+                        `owner_id` = IF(`expires_at` <= CURRENT_TIMESTAMP(6) OR `owner_id` = ?,
+                            ?, `owner_id`),
+                        `fencing_token` = IF(`expires_at` <= CURRENT_TIMESTAMP(6) OR `owner_id` = ?,
+                            `fencing_token` + 1, `fencing_token`),
+                        `expires_at` = IF(`expires_at` <= CURRENT_TIMESTAMP(6) OR `owner_id` = ?,
+                            TIMESTAMPADD(SECOND, ?, CURRENT_TIMESTAMP(6)), `expires_at`)]],
+                    { name, owner, ttlSeconds, owner, owner, owner, owner, ttlSeconds })
+                local rows = query([[SELECT `owner_id`, `fencing_token`,
+                        (`expires_at` > CURRENT_TIMESTAMP(6)) AS `valid`
+                    FROM `synex_cluster_leases` WHERE `lease_name` = ? FOR UPDATE]], { name }) or {}
+                local row = rows[1]
+                if not row or row.owner_id ~= owner or tonumber(row.valid) ~= 1
+                    or not tonumber(row.fencing_token) then
+                    authorityError = foundation.error('LEASE_BUSY',
+                        'The lease is held by another server instance.', { retryable = true })
+                    return false
+                end
+                acquiredFence = tonumber(row.fencing_token)
+                return true
+            end)
+            if not committed then return nil, authorityError or transactionError end
+            return {
+                name = name, owner = owner, fencingToken = acquiredFence, ttlSeconds = ttlSeconds,
+                requesterInstanceId = requesterInstanceId, requesterBootId = requesterBootId
+            }, nil
+        end
         local _, updateError = database:update([[UPDATE `synex_cluster_leases`
             SET `owner_id` = ?, `fencing_token` = `fencing_token` + 1,
                 `expires_at` = TIMESTAMPADD(SECOND, ?, CURRENT_TIMESTAMP(6))
@@ -508,20 +575,63 @@ factories.persistence = function(deps)
         if updateError then return nil, updateError end
         local _, insertError = database:update([[INSERT IGNORE INTO `synex_cluster_leases`
             (`lease_name`, `owner_id`, `fencing_token`, `expires_at`)
-            VALUES (?, ?, 1, TIMESTAMPADD(SECOND, ?, CURRENT_TIMESTAMP(6)))]], { name, owner, ttlSeconds })
+            VALUES (?, ?, 1, TIMESTAMPADD(SECOND, ?, CURRENT_TIMESTAMP(6)))]],
+            { name, owner, ttlSeconds })
         if insertError then return nil, insertError end
         local rows, readError = database:query([[SELECT `owner_id`, `fencing_token`,
-            (`expires_at` > CURRENT_TIMESTAMP(6)) AS `valid`
+                (`expires_at` > CURRENT_TIMESTAMP(6)) AS `valid`
             FROM `synex_cluster_leases` WHERE `lease_name` = ? LIMIT 1]], { name })
         if readError then return nil, readError end
         local row = rows and rows[1]
         if not row or row.owner_id ~= owner or tonumber(row.valid) ~= 1 then
             return nil, foundation.error('LEASE_BUSY', 'The lease is held by another server instance.', { retryable = true })
         end
-        return { name = name, owner = owner, fencingToken = tonumber(row.fencing_token), ttlSeconds = ttlSeconds }, nil
+        return { name = name, owner = owner, fencingToken = tonumber(row.fencing_token),
+            ttlSeconds = ttlSeconds }, nil
     end
     function leases:renew(lease)
         if type(lease) ~= 'table' then return nil, foundation.error('INVALID_LEASE', 'Lease snapshot is invalid.') end
+        local requesterFenced = lease.requesterInstanceId ~= nil or lease.requesterBootId ~= nil
+        local leaseName = lease.name or lease.leaseName
+        if type(leaseName) == 'string' and leaseName:sub(1, 8) == 'session:' and not requesterFenced then
+            return nil, foundation.error('INVALID_LEASE_AUTHORITY',
+                'Session lease renewal requires the current runtime boot authority.')
+        end
+        if requesterFenced and (type(lease.requesterInstanceId) ~= 'string'
+            or #lease.requesterInstanceId < 1 or #lease.requesterInstanceId > 36
+            or type(lease.requesterBootId) ~= 'string'
+            or #lease.requesterBootId < 1 or #lease.requesterBootId > 36) then
+            return nil, foundation.error('INVALID_LEASE_AUTHORITY',
+                'Session lease renewal authority is invalid.')
+        end
+        if requesterFenced then
+            local authorityError = nil
+            local committed, transactionError = database:withTransaction(function(query)
+                local requester = query([[SELECT `status` FROM `synex_instances`
+                    WHERE `instance_id` = ? AND `status` IN ('ready', 'degraded') FOR UPDATE]],
+                    { lease.requesterInstanceId }) or {}
+                local boot = requester[1] and (query([[SELECT `boot_id` FROM `synex_instance_boots`
+                    WHERE `instance_id` = ? AND `boot_id` = ? FOR UPDATE]],
+                    { lease.requesterInstanceId, lease.requesterBootId }) or {}) or {}
+                local rows = boot[1] and (query([[SELECT `owner_id`, `fencing_token`,
+                        (`expires_at` > CURRENT_TIMESTAMP(6)) AS `valid`
+                    FROM `synex_cluster_leases` WHERE `lease_name` = ? FOR UPDATE]],
+                    { leaseName }) or {}) or {}
+                local row = rows[1]
+                if not requester[1] or not boot[1] or not row or row.owner_id ~= lease.owner
+                    or tonumber(row.fencing_token) ~= lease.fencingToken or tonumber(row.valid) ~= 1 then
+                    authorityError = foundation.error('LEASE_LOST',
+                        'The cluster lease or requester boot fence is stale.', { retryable = true })
+                    return false
+                end
+                query([[UPDATE `synex_cluster_leases`
+                    SET `expires_at` = TIMESTAMPADD(SECOND, ?, CURRENT_TIMESTAMP(6))
+                    WHERE `lease_name` = ?]], { lease.ttlSeconds, leaseName })
+                return true
+            end)
+            if not committed then return nil, authorityError or transactionError end
+            return true, nil
+        end
         local affected, err = database:update([[UPDATE `synex_cluster_leases`
             SET `expires_at` = TIMESTAMPADD(SECOND, ?, CURRENT_TIMESTAMP(6))
             WHERE `lease_name` = ? AND `owner_id` = ? AND `fencing_token` = ?

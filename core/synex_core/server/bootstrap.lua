@@ -140,6 +140,7 @@ factories.bootstrap = function(deps)
     local sagaRuntime = factories.sagaRuntime({
         platform = platform, foundation = foundation, sagas = reliability.sagas,
         audit = reliability.audit, leases = persistence.leases, owners = registries.owners,
+        instances = runtimePersistence.instances,
         instanceId = defaultConfig.instanceId, enabled = defaultConfig.features.sagas
     })
     local auditConfigured, auditConfigurationError = security.capabilities:setAuditSink(function(entry)
@@ -151,6 +152,7 @@ factories.bootstrap = function(deps)
     local manifests = {}
     local facadeCache = {}
     local reloadSnapshots = {}
+    local runtimeGate = factories.runtimeGate({ foundation = foundation })
     local ownerDrainTimeoutMs = 250
     local ownerDrainPollMs = 10
     local ownerSnapshotMaximumBytes = 65536
@@ -164,6 +166,7 @@ factories.bootstrap = function(deps)
         lifecycle = lifecycle,
         stateService = stateService,
         manifests = manifests,
+        runtimeGate = runtimeGate,
         ownerSnapshotMaximumBytes = ownerSnapshotMaximumBytes
     })
     local api = factories.bootstrapApi({
@@ -182,6 +185,7 @@ factories.bootstrap = function(deps)
         sagaRuntime = sagaRuntime,
         defaultConfig = defaultConfig,
         facadeCache = facadeCache,
+        runtimeGate = runtimeGate,
         ensureOwner = discovery.ensureOwner
     })
     factories.bootstrapDiagnostics({
@@ -221,7 +225,8 @@ factories.bootstrap = function(deps)
         reliability = reliability,
         sagaRuntime = sagaRuntime,
         retention = retention,
-        security = security
+        security = security,
+        runtimeGate = runtimeGate
     })
 
     runtime.foundation = foundation

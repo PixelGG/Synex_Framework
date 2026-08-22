@@ -8,6 +8,7 @@ factories.bootstrapDiscovery = function(deps)
     local registries = assert(deps.registries, 'bootstrap discovery requires registries')
     local lifecycle = assert(deps.lifecycle, 'bootstrap discovery requires lifecycle')
     local stateService = assert(deps.stateService, 'bootstrap discovery requires state service')
+    local runtimeGate = assert(deps.runtimeGate, 'bootstrap discovery requires runtime gate')
     local manifests = deps.manifests or {}
     local ownerSnapshotMaximumBytes = deps.ownerSnapshotMaximumBytes or 65536
 
@@ -60,6 +61,8 @@ factories.bootstrapDiscovery = function(deps)
     end
 
     local function ensureOwner(name)
+        local available, availabilityError = runtimeGate:requireAvailable()
+        if not available then return nil, availabilityError end
         local manifest = manifests[name]
         if not manifest then
             local _, err = discoverResource(name)

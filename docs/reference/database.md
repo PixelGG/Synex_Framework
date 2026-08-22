@@ -18,16 +18,18 @@ The runner does not enable multi-statement queries. Every current migration cont
 
 Apply resources in dependency order:
 
-1. `synex_core`: `001_migration_control.sql`, `002_identity.sql`, `003_reliability.sql`, `004_access_control.sql`, `005_sagas.sql`, `006_character_deletion.sql`, `007_cluster_runtime.sql`, `008_core_rbac.sql`, `009_legacy_import.sql`, `010_retention_archive.sql`
+1. `synex_core`: `001_migration_control.sql`, `002_identity.sql`, `003_reliability.sql`, `004_access_control.sql`, `005_sagas.sql`, `006_character_deletion.sql`, `007_cluster_runtime.sql`, `008_core_rbac.sql`, `009_legacy_import.sql`, `010_retention_archive.sql`, `011_instance_boot_authority.sql`, `012_session_control_boot_authority.sql`
 2. `synex_groups`: `001_groups.sql`, `002_grades_primary_read_models.sql`, `003_character_lifecycle.sql`
 3. `synex_accounts`: `001_accounts.sql`, `002_ledger.sql`, `003_holds.sql`, `004_access_integrity.sql`, `005_character_lifecycle.sql`, `006_financial_archive.sql`
 4. `synex_entities`: `001_entities.sql`
 
 The migration IDs in each `synex.resource.json` are the public installation order. Never rename, reorder, or edit a released file.
 
+The initial upgrade to Core boot authority (`011` and `012`) requires a coordinated maintenance window: all pre-upgrade Core instances must stop and their oxmysql queues and transactions must drain before an upgraded instance starts. Mixed old/new Core versions are unsupported because a statement already submitted by pre-fence code cannot acquire a boot claim retroactively.
+
 ## Ownership boundaries
 
-Core owns users, raw identifiers, sessions, characters, access decisions, migration state, kernel idempotency, the kernel outbox, sagas, deletion plans, append-only audit and its non-destructive archive mirror, cluster-instance/session-control records, persistent RBAC, and the reviewed legacy-import journal plus hashed legacy-ID mappings. Raw identifier values are sensitive: they are used only for server-side lookup and DB uniqueness, and must never enter logs, state bags, client payloads, traces, or outbox events.
+Core owns users, raw identifiers, sessions, characters, access decisions, migration state, kernel idempotency, the kernel outbox, sagas, deletion plans, append-only audit and its non-destructive archive mirror, cluster-instance boot authority, session-control requests and their requester-boot claims, persistent RBAC, and the reviewed legacy-import journal plus hashed legacy-ID mappings. Raw identifier values are sensitive: they are used only for server-side lookup and DB uniqueness, and must never enter logs, state bags, client payloads, traces, or outbox events.
 
 `synex_groups` owns groups, memberships, grades, grade capability rules, grade assignments, primary-membership pointers/events, read-model versions, immutable membership events, local idempotency records, its local outbox, and an idempotent character-deletion journal. A membership stores an opaque `(subject_kind, subject_ref)`; it does not query Core identity tables.
 
@@ -110,6 +112,8 @@ Snapshots, ledger rows, membership events, audit entries, and saga steps are app
 Access bans and allowlist entries are relational durable records. The schema can target exactly one user or identifier, supports expiry and revocation, and is queried by the server-side connection pipeline. The current public `api.Access` mutation/list surface and console commands are user-ID scoped; they do not expose identifier-target creation. Resource mutations require `synex.access.manage` plus a bounded idempotency key and commit the access change with before/after audit evidence. Listing requires `synex.access.read` and returns at most 64 bans and 64 allowlist rows for one user, each with an explicit truncation flag. Neither capability is granted by default. JSON configuration is not a replacement for these records.
 
 `synex_character_deletion_plans` coordinates owner-specific character cleanup. `plan_json` may contain only bounded resource owner and action metadata; it must never contain SQL. The coordinator uses optimistic `version` transitions and retains the plan and append-only audit after completion or failure.
+
+Boot-fenced lease acquisition locks the ready instance and exact boot row, then uses a conditional `INSERT ... ON DUPLICATE KEY UPDATE` and locked reread. A valid foreign owner is never replaced; every successful same-owner reacquisition advances the fencing token. Saga and character-deletion workers use a new owner for each acquisition so a parallel attempt receives `LEASE_BUSY` instead of sharing a logical worker identity. Session creation locks the same instance, boot, and lease authority in the transaction that inserts the session, serializing it against restart registration and cleanup.
 
 The current lifecycle participants are explicit. `synex_accounts` blocks deletion while a character-owned account has a nonterminal hold; during idempotent `deleteCommit` reconciliation it closes and anonymizes the character's owned accounts, revokes affected active grants, and retains ledger history in one domain transaction. `synex_groups` replaces character subject references with a generated anonymous reference and invalidates affected read models while retaining event history. `synex_entities` deletes runtime-temporary entities and retains persistent records under a generated retained owner reference. Each participant consumes only the bounded plan action prepared for its own resource.
 

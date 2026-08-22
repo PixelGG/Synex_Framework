@@ -23,6 +23,7 @@ factories.bootstrapLifecycle = function(deps)
     local sagaRuntime = assert(deps.sagaRuntime, 'bootstrap lifecycle requires saga runtime')
     local retention = assert(deps.retention, 'bootstrap lifecycle requires retention')
     local security = assert(deps.security, 'bootstrap lifecycle requires security')
+    local runtimeGate = assert(deps.runtimeGate, 'bootstrap lifecycle requires runtime gate')
     local getAPIForCaller = assert(api.getAPIForCaller, 'bootstrap lifecycle requires API lookup')
     local invokeForCaller = assert(api.invokeForCaller, 'bootstrap lifecycle requires contract invocation')
     local guarded = assert(api.guarded, 'bootstrap lifecycle requires capability guard')
@@ -44,7 +45,53 @@ factories.bootstrapLifecycle = function(deps)
     local dependencyAffectedResources = {}
     local enforceCriticalResources = false
     local instanceStatusInitialized = false
+    local instanceRegisteredDuringBoot = false
     local lastInstanceStatus = nil
+
+    local function evictConnectedPlayers(reason)
+        local listed, connectedPlayers = foundation.safeCall(platform.getPlayers)
+        if not listed or type(connectedPlayers) ~= 'table' then
+            return nil, foundation.error('PLAYER_ENUMERATION_FAILED',
+                'Connected players could not be enumerated during the core lifecycle.')
+        end
+        local dropped, failures = 0, 0
+        for _, playerSource in ipairs(connectedPlayers) do
+            local numericSource = tonumber(playerSource)
+            if not numericSource or numericSource < 1 or numericSource % 1 ~= 0 then
+                failures = failures + 1
+            else
+                local disconnected = foundation.safeCall(platform.dropPlayer, numericSource, reason)
+                if disconnected then dropped = dropped + 1 else failures = failures + 1 end
+            end
+        end
+        if dropped > 0 then
+            logger:warn('disconnected players without current runtime authority', { count = dropped })
+        end
+        if failures > 0 then
+            return nil, foundation.error('PLAYER_DISCONNECT_FAILED',
+                'One or more connected players could not be disconnected.', {
+                    details = { failures = failures }
+                })
+        end
+        return dropped, nil
+    end
+
+    local function drainQuiescedTerminals(context)
+        if type(identity.connections.drainQuiescedTerminals) ~= 'function' then return true, nil end
+        local invoked, report, drainError = foundation.safeCall(
+            identity.connections.drainQuiescedTerminals, identity.connections)
+        if not invoked or not report then
+            return nil, drainError or foundation.error('DEFERRAL_DRAIN_FAILED',
+                ('Connection deferrals could not be drained during %s.'):format(context))
+        end
+        if (report.failures or 0) > 0 or (report.remaining or 0) > 0 then
+            return nil, foundation.error('DEFERRAL_DRAIN_INCOMPLETE',
+                ('Connection deferrals remained open during %s.'):format(context), {
+                    details = { failures = report.failures or 0, remaining = report.remaining or 0 }
+                })
+        end
+        return report, nil
+    end
 
     local function synchronizeCoreResourceHealth()
         local registered = registries.resources:get(coreResource)
@@ -191,6 +238,25 @@ factories.bootstrapLifecycle = function(deps)
         return refreshDependencyHealth(inactiveResource)
     end
 
+    local restartController = assert(factories.bootstrapRestart({
+        foundation = foundation,
+        runtimeGate = runtimeGate,
+        lifecycle = lifecycle,
+        identity = identity,
+        persistence = persistence,
+        registries = registries,
+        facadeCache = facadeCache,
+        coreResource = coreResource,
+        evictConnectedPlayers = evictConnectedPlayers,
+        drainQuiescedTerminals = drainQuiescedTerminals,
+        ownerDrainTimeoutMs = ownerDrainTimeoutMs,
+        ownerDrainPollMs = ownerDrainPollMs
+    }))
+
+    function runtime:prepareRestart()
+        return restartController:prepare()
+    end
+
     function runtime:bind()
         if bound then return true end
         bound = true
@@ -212,9 +278,15 @@ factories.bootstrapLifecycle = function(deps)
             return guarded(caller, epoch, 'synex.runtime.read', 'GetRuntimeStatus', function() return lifecycle.core:snapshot(), nil end)
         end)
         messaging.network:bind()
-        platform.registerNetEvent('playerJoining')
-        platform.addEventHandler('playerConnecting', function(name, _, deferrals)
+        platform.addEventHandler('playerConnecting', function(name, setKickReason, deferrals)
             local tempSource = source
+            local connectionSnapshot = identity.connections:snapshot()
+            if connectionSnapshot.quiesced then
+                foundation.safeCall(setKickReason,
+                    'Synex [CORE_STOPPING]: The Synex runtime is stopping. Please reconnect shortly.')
+                foundation.safeCall(platform.cancelEvent)
+                return
+            end
             local invoked, connected, connectionError = foundation.safeCall(
                 identity.connections.handleConnecting, identity.connections, tempSource, name, deferrals)
             if not invoked or connected == nil then
@@ -242,6 +314,8 @@ factories.bootstrapLifecycle = function(deps)
         end)
         platform.addEventHandler('onResourceStart', function(resource)
             if resource == coreResource then return end
+            local available = runtimeGate:requireAvailable()
+            if not available then return end
             local manifest, err = discoverResource(resource)
             if err then logger:error('resource discovery failed on start', { resource = resource, code = err.code, message = err.message }) return end
             if manifest then
@@ -285,35 +359,7 @@ factories.bootstrapLifecycle = function(deps)
         end)
         platform.addEventHandler('onResourceStop', function(resource)
             if resource == coreResource then
-                local _, stoppingError = persistence.instances:setStatus('stopping')
-                if stoppingError then logger:error('instance stopping status failed', { code = stoppingError.code }) end
-                local current = lifecycle.core:get()
-                if current == 'READY' or current == 'DEGRADED' or current == 'UNHEALTHY' then
-                    lifecycle.core:transition('QUIESCING', 'resource stop')
-                    current = lifecycle.core:get()
-                end
-                for _, owner in ipairs(registries.owners:list()) do
-                    if owner.resource ~= coreResource then
-                        lifecycle.reload:quiesce(owner.resource, owner.epoch, {
-                            timeoutMs = 0,
-                            pollMs = ownerDrainPollMs,
-                            reason = 'synex_core stopping'
-                        })
-                    end
-                end
-                local coreEpoch = registries.owners:epoch(coreResource)
-                if registries.owners:isEpoch(coreResource, coreEpoch) then
-                    lifecycle.reload:quiesce(coreResource, coreEpoch, {
-                        timeoutMs = 0,
-                        pollMs = ownerDrainPollMs,
-                        reason = 'synex_core stopping'
-                    })
-                end
-                current = lifecycle.core:get()
-                if current ~= 'STOPPING' and current ~= 'STOPPED' then lifecycle.core:transition('STOPPING', 'resource stop') end
-                if lifecycle.core:get() == 'STOPPING' then lifecycle.core:transition('STOPPED', 'resource stopped') end
-                local _, stoppedError = persistence.instances:setStatus('stopped')
-                if stoppedError then logger:error('instance stopped status failed', { code = stoppedError.code }) end
+                restartController:handleRawStop()
                 return
             end
             reloadSnapshots[resource] = nil
@@ -380,9 +426,49 @@ factories.bootstrapLifecycle = function(deps)
         if transitionError then error(transitionError.message) end
     end
 
+    local function failClosedBootRuntime()
+        runtimeGate:fail()
+        enforceCriticalResources = false
+        lifecycle.core:setCriticalFoundationsValidated(false)
+        local quiesced, quiesceResult, quiesceError = foundation.safeCall(
+            identity.connections.quiesce, identity.connections)
+        if not quiesced or not quiesceResult then
+            foundation.safeCall(logger.error, logger, 'boot failure connection quiesce failed', {
+                code = quiesced and quiesceError and quiesceError.code or 'RUNTIME_ERROR'
+            })
+        end
+        local _, evictionError = evictConnectedPlayers(
+            'Synex Core failed to start. Please reconnect after the server is repaired.')
+        if evictionError then
+            foundation.safeCall(logger.error, logger, 'boot failure player eviction failed', {
+                code = evictionError.code
+            })
+        end
+        local _, drainError = drainQuiescedTerminals('boot failure')
+        if drainError then
+            foundation.safeCall(logger.error, logger, 'boot failure connection deferral drain failed', {
+                code = drainError.code
+            })
+        end
+        for _, owner in ipairs(registries.owners:list()) do
+            local report = registries.owners:purge(
+                owner.resource, owner.epoch, 'synex_core boot failed')
+            if #report.errors > 0 then
+                foundation.safeCall(logger.error, logger, 'boot failure owner purge completed with errors', {
+                    resource = owner.resource, errors = #report.errors
+                })
+            end
+        end
+        for key in pairs(facadeCache) do facadeCache[key] = nil end
+    end
+
     function runtime:start()
+        runtimeGate:beginBoot()
+        instanceRegisteredDuringBoot = false
         local ok, err = xpcall(function()
             advance('CONFIGURING', 'configuration loaded')
+            local _, evictionError = evictConnectedPlayers('Synex Core restarted. Please reconnect.')
+            if evictionError then error(evictionError.message) end
             advance('DATABASE_CONNECTING', 'connecting database')
             local oxmysqlVersion = platform.resourceMetadata('oxmysql', 'version', 0)
             local minimumOxmysqlVersion = defaultConfig.database.minimumOxmysqlVersion or '2.14.1'
@@ -409,6 +495,14 @@ factories.bootstrapLifecycle = function(deps)
             if not released then error(releaseError.message) end
             local instanceRegistered, instanceRegistrationError = persistence.instances:register(defaultConfig.instanceName)
             if not instanceRegistered then error(instanceRegistrationError.message) end
+            instanceRegisteredDuringBoot = true
+            local terminated, terminationError = persistence.instances:terminateLocalSessions('synex_core restarted')
+            if not terminated then error(terminationError.message) end
+            local sourceGenerationFloor, sourceGenerationError = persistence.instances:sourceGenerationFloor()
+            if sourceGenerationFloor == nil then error(sourceGenerationError.message) end
+            local sourceGenerationSeeded, sourceGenerationSeedError =
+                registries.players:seedSourceGeneration(sourceGenerationFloor)
+            if not sourceGenerationSeeded then error(sourceGenerationSeedError.message) end
             local rbacHydrated, rbacHydrationError = security.rbac:hydrate()
             if not rbacHydrated then error(rbacHydrationError.message) end
             advance('DISCOVERING_RESOURCES', 'migrations applied')
@@ -491,14 +585,29 @@ factories.bootstrapLifecycle = function(deps)
                 instanceId = defaultConfig.instanceId,
                 state = lifecycle.core:get()
             })
+            runtimeGate:open()
         end, debug.traceback)
         if not ok then
-            persistence.migrations:releaseLease()
-            persistence.instances:setStatus('degraded')
+            failClosedBootRuntime()
             local current = lifecycle.core:get()
-            if current ~= 'FAILED' and current ~= 'STOPPING' and current ~= 'STOPPED' then lifecycle.core:transition('FAILED', 'boot failure') end
-            synchronizeCoreResourceHealth()
-            logger:fatal('Synex core failed to start', { error = tostring(err) })
+            if current ~= 'FAILED' and current ~= 'STOPPING' and current ~= 'STOPPED' then
+                lifecycle.core:transition('FAILED', 'boot failure')
+            end
+            foundation.safeCall(persistence.migrations.releaseLease, persistence.migrations)
+            if instanceRegisteredDuringBoot then
+                foundation.safeCall(persistence.instances.setStatus, persistence.instances, 'stopping')
+                if type(identity.connections.releaseQuiescedLeases) == 'function' then
+                    foundation.safeCall(identity.connections.releaseQuiescedLeases, identity.connections)
+                end
+                local terminationCalled, terminated = foundation.safeCall(
+                    persistence.instances.terminateLocalSessions,
+                    persistence.instances, 'synex_core boot failed')
+                if terminationCalled and terminated then
+                    foundation.safeCall(persistence.instances.setStatus, persistence.instances, 'stopped')
+                end
+            end
+            foundation.safeCall(synchronizeCoreResourceHealth)
+            foundation.safeCall(logger.fatal, logger, 'Synex core failed to start', { error = tostring(err) })
             return nil, foundation.error('BOOT_FAILED', 'Synex core failed to start.')
         end
         return true, nil

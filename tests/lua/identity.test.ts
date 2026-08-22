@@ -16,6 +16,8 @@ const identityModules = [
   'core/synex_core/server/identity_characters.lua',
   'core/synex_core/server/identity_connection_replacement.lua',
   'core/synex_core/server/identity_connection_claims.lua',
+  'core/synex_core/server/identity_connection_authority.lua',
+  'core/synex_core/server/identity_connection_terminals.lua',
   'core/synex_core/server/identity_connection_join.lua',
   'core/synex_core/server/identity_connection_maintenance.lua',
   'core/synex_core/server/identity_connections.lua',
@@ -30,11 +32,11 @@ async function createIdentityEngine() {
   return engine;
 }
 
-test('session persistence is atomically fenced by the current cluster lease', async () => {
+test('session persistence is atomically fenced by the current boot and cluster lease', async () => {
   const engine = await createIdentityEngine();
   try {
     const result = await engine.doString(`
-      local affected, capturedSql, capturedParameters = 0, nil, nil
+      local currentBoot, calls, writes = 'boot-b', {}, 0
       local platform = {
         nowGame = function() return 1000 end, random = function() return 11 end,
         print = function() end, jsonEncode = function() return '{}' end
@@ -42,9 +44,21 @@ test('session persistence is atomically fenced by the current cluster lease', as
       local foundation = SynexCoreFactories.foundation({ platform = platform })
       local registries = SynexCoreFactories.registries({ foundation = foundation })
       local database = {
-        update = function(_, sql, parameters)
-          capturedSql, capturedParameters = sql, parameters
-          return affected, nil
+        withTransaction = function(_, handler)
+          local committed = handler(function(sql, parameters)
+            calls[#calls + 1] = { sql = sql, parameters = parameters }
+            if sql:find('synex_instances', 1, true) then return {{ status = 'ready' }} end
+            if sql:find('synex_instance_boots', 1, true) then
+              return parameters[2] == currentBoot and {{ boot_id = currentBoot }} or {}
+            end
+            if sql:find('synex_cluster_leases', 1, true) then
+              return {{ owner_id = 'instance-a:session-a', fencing_token = 9, valid = 1 }}
+            end
+            assert(sql:find('INSERT INTO', 1, true) and sql:find('synex_sessions', 1, true))
+            writes = writes + 1
+            return 1
+          end)
+          return committed, committed and nil or { code = 'TRANSACTION_REJECTED' }
         end
       }
       local repositories = SynexCoreFactories.identityRepository({
@@ -55,21 +69,189 @@ test('session persistence is atomically fenced by the current cluster lease', as
       local session = {
         id = 'session-a', userId = 'user-a', source = 42, sourceGeneration = 7,
         state = 'SELECTING_CHARACTER', version = 2,
-        clusterLease = { name = 'session:user-a', owner = 'instance-a:session-a', fencingToken = 9 }
+        clusterLease = {
+          name = 'session:user-a', owner = 'instance-a:session-a', fencingToken = 9,
+          requesterInstanceId = 'instance-a', requesterBootId = 'boot-a'
+        }
       }
       local created, createError = repositories.sessions:create(session)
       assert(created == nil and createError.code == 'LEASE_LOST')
-      assert(capturedSql:find('synex_cluster_leases', 1, true)
-        and capturedSql:find('fencing_token', 1, true)
-        and capturedSql:find('expires_at', 1, true))
-      assert(capturedParameters[8] == session.clusterLease.name
-        and capturedParameters[9] == session.clusterLease.owner
-        and capturedParameters[10] == session.clusterLease.fencingToken)
-      affected = 1
+      assert(#calls == 2 and calls[1].sql:find("'ready'", 1, true)
+        and calls[1].sql:find('FOR UPDATE', 1, true))
+      assert(calls[2].sql:find('synex_instance_boots', 1, true)
+        and calls[2].sql:find('FOR UPDATE', 1, true))
+      session.clusterLease.requesterBootId = 'boot-b'
       assert(repositories.sessions:create(session))
-      return table.concat({capturedParameters[8], capturedParameters[9], capturedParameters[10]}, ':')
+      assert(#calls == 6 and calls[3].sql:find('synex_instances', 1, true)
+        and calls[4].sql:find('synex_instance_boots', 1, true)
+        and calls[5].sql:find('synex_cluster_leases', 1, true)
+        and calls[5].sql:find('FOR UPDATE', 1, true)
+        and calls[6].sql:find('INSERT INTO', 1, true)
+        and calls[6].sql:find('synex_sessions', 1, true))
+      assert(calls[5].parameters[1] == session.clusterLease.name
+        and calls[6].parameters[1] == session.id and calls[6].parameters[3] == 'instance-a')
+      local missing = foundation.copy(session)
+      missing.clusterLease.requesterBootId = nil
+      local rejected, missingError = repositories.sessions:create(missing)
+      assert(rejected == nil and missingError.code == 'LEASE_LOST' and writes == 1 and #calls == 6)
+      return table.concat({calls[4].parameters[2], calls[5].parameters[1],
+        calls[6].parameters[1], writes}, ':')
     `);
-    assert.equal(result, 'session:user-a:instance-a:session-a:9');
+    assert.equal(result, 'boot-b:session:user-a:session-a:1');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('connection terminal ownership is exactly once across an acceptance cleanup interleave', async () => {
+  const engine = await createIdentityEngine();
+  try {
+    const result = await engine.doString(`
+      local events, cancellation = {}, nil
+      local platform = {
+        nowGame = function() return 1000 end, random = function() return 13 end,
+        print = function() end,
+        defer = function() events[#events + 1] = 'tick' end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      local terminals = nil
+      terminals = SynexCoreFactories.identityConnectionTerminals({
+        platform = platform,
+        foundation = foundation,
+        acceptanceRejection = function()
+          events[#events + 1] = 'acceptance-check'
+          cancellation = terminals:cancelAll()
+          return nil, nil
+        end,
+        logConnectionStage = function(_, stage, code)
+          events[#events + 1] = stage .. ':' .. tostring(code)
+        end
+      })
+      local terminal = assert(terminals:open({ id = 'connection-a', receivedAt = 1000 }, {
+        done = function(...)
+          events[#events + 1] = 'done:' .. tostring(select(1, ...))
+        end
+      }))
+      assert(terminal:arm())
+      local completed = terminal:finish()
+      assert(completed == true and cancellation.cancelled == 1
+        and cancellation.pending == 1 and cancellation.failures == 0)
+      assert(terminal.state == 'rejected' and terminal.attempted == true and terminal.acceptance == false)
+      assert(terminals:count() == 0 and terminal:finish() == false)
+      local doneCalls = 0
+      for _, event in ipairs(events) do if event:find('done:', 1, true) == 1 then doneCalls = doneCalls + 1 end end
+      assert(doneCalls == 1 and events[1] == 'tick' and events[2] == 'acceptance-check')
+      assert(events[3]:find('[CORE_STOPPING]', 1, true))
+      return table.concat(events, '|')
+    `);
+    assert.match(result, /^tick\|acceptance-check\|done:Synex \[CORE_STOPPING\]/u);
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('connection terminals reject queued updates and recover when a finish tick cannot be scheduled', async () => {
+  const engine = await createIdentityEngine();
+  try {
+    const result = await engine.doString(`
+      local doneCalls, updateCalls = 0, 0
+      local platform = {
+        nowGame = function() return 1000 end, random = function() return 13 end,
+        print = function() end,
+        defer = function() error('fixture-private-defer-error') end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      local terminals = SynexCoreFactories.identityConnectionTerminals({
+        platform = platform, foundation = foundation,
+        acceptanceRejection = function() return nil, nil end,
+        logConnectionStage = function() end
+      })
+      local terminal = assert(terminals:open({ id = 'connection-a' }, {
+        update = function() updateCalls = updateCalls + 1 end,
+        done = function(reason)
+          doneCalls = doneCalls + 1
+          assert(type(reason) == 'string' and reason:find('[FIXTURE_REJECTED]', 1, true))
+        end
+      }))
+      assert(terminal:arm())
+      local finished, finishError = terminal:finish('Please reconnect.', 'FIXTURE_REJECTED')
+      assert(finished == true and finishError == nil)
+      assert(doneCalls == 1 and terminals:count() == 0 and terminal.state == 'rejected')
+
+      platform.defer = function() end
+      local queued = assert(terminals:open({ id = 'connection-b' }, {
+        update = function() updateCalls = updateCalls + 1 end,
+        done = function() doneCalls = doneCalls + 1 end
+      }))
+      assert(queued:arm())
+      assert(terminals:quiesce())
+      assert(queued:update('must not be emitted') == false and updateCalls == 0)
+      platform.defer()
+      local drained = assert(terminals:flushQuiesced())
+      assert(drained.completed == 1 and drained.remaining == 0 and doneCalls == 2)
+
+      local failingTerminals = SynexCoreFactories.identityConnectionTerminals({
+        platform = platform, foundation = foundation,
+        acceptanceRejection = function() return nil, nil end,
+        logConnectionStage = function() end
+      })
+      local failing = assert(failingTerminals:open({ id = 'connection-c' }, {
+        done = function() error('fixture-private-terminal-error') end
+      }))
+      assert(failing:arm() and failingTerminals:quiesce())
+      local failedFlush = assert(failingTerminals:flushReadyQuiesced())
+      assert(failedFlush.completed == 0 and failedFlush.failures == 1
+        and failedFlush.remaining == 0 and failing.state == 'failed')
+      return table.concat({doneCalls, updateCalls, terminal.state, queued.state,
+        failedFlush.failures}, ':')
+    `);
+    assert.equal(result, '2:0:rejected:rejected:1');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('quiesced deferral terminals flush only after their required tick barrier', async () => {
+  const engine = await createIdentityEngine();
+  try {
+    const result = await engine.doString(`
+      local doneCalls, inTick, doneDuringTick = 0, false, false
+      local platform = {
+        nowGame = function() return 1000 end, random = function() return 17 end,
+        print = function() end,
+        defer = function() inTick = true; inTick = false end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      local terminals = SynexCoreFactories.identityConnectionTerminals({
+        platform = platform, foundation = foundation,
+        acceptanceRejection = function() return nil, nil end,
+        logConnectionStage = function() end
+      })
+      local terminal = assert(terminals:open({ id = 'connection-a' }, {
+        done = function()
+          doneCalls = doneCalls + 1
+          doneDuringTick = doneDuringTick or inTick
+        end
+      }))
+      local requested = terminals:quiesce()
+      assert(requested.requested == 1 and requested.pending == 1)
+      assert(doneCalls == 0 and terminals:count() == 1)
+      platform.defer()
+      local flushed = assert(terminals:flushQuiesced())
+      assert(flushed.completed == 1 and flushed.failures == 0 and flushed.remaining == 0)
+      assert(doneCalls == 1 and doneDuringTick == false and terminal.state == 'rejected')
+
+      local late = assert(terminals:open({ id = 'connection-b' }, {
+        done = function() doneCalls = doneCalls + 1 end
+      }))
+      local emptyFlush = assert(terminals:flushQuiesced())
+      assert(emptyFlush.completed == 0 and emptyFlush.remaining == 1 and doneCalls == 1)
+      platform.defer()
+      assert(late:afterTick())
+      assert(doneCalls == 2 and late.state == 'rejected' and terminals:count() == 0)
+      return table.concat({requested.requested, flushed.completed, emptyFlush.remaining, doneCalls}, ':')
+    `);
+    assert.equal(result, '1:1:1:2');
   } finally {
     engine.global.close();
   }
@@ -114,7 +296,7 @@ test('replace_old fences a reused player source before dropping the previous aut
         clusterLease = { leaseName = 'session:user-fixture', owner = 'old-owner', fencingToken = 1 }
       }))
 
-      local identity = nil
+      local identity, currentLease = nil, nil
       local database = {}
       function database:query(sql)
         if sql:find('SELECT DISTINCT', 1, true) then
@@ -143,11 +325,24 @@ test('replace_old fences a reused player source before dropping the previous aut
       function database:insert()
         return 1, nil
       end
+      function database:withTransaction(handler)
+        local committed = handler(function(sql, parameters)
+          if sql:find('synex_instances', 1, true) then return {{ status = 'ready' }} end
+          if sql:find('synex_instance_boots', 1, true) then return {{ boot_id = 'boot-a' }} end
+          if sql:find('synex_cluster_leases', 1, true) then
+            return {{ owner_id = currentLease.owner, fencing_token = currentLease.fencingToken, valid = 1 }}
+          end
+          return assert(database:update(sql, parameters))
+        end)
+        return committed, committed and nil or { code = 'TRANSACTION_REJECTED' }
+      end
 
       local leases = {}
-      function leases:acquire(name, owner, ttl)
+      function leases:acquire(name, owner, ttl, requesterInstanceId, requesterBootId)
         acquired = acquired + 1
-        return { leaseName = name, owner = owner, fencingToken = 2, ttl = ttl }, nil
+        currentLease = { leaseName = name, owner = owner, fencingToken = 2, ttl = ttl,
+          requesterInstanceId = requesterInstanceId, requesterBootId = requesterBootId }
+        return currentLease
       end
       function leases:release()
         released = released + 1
@@ -156,6 +351,7 @@ test('replace_old fences a reused player source before dropping the previous aut
       function leases:renew(lease) return lease, nil end
 
       local instances = {}
+      function instances:bootId() return 'boot-a', nil end
       function instances:requestRemoteKicks() return 0, nil end
       function instances:touchSessions() return true, nil end
       function instances:heartbeat() return {}, nil end
@@ -258,7 +454,8 @@ test('replace_old retains failed durable closes for bounded heartbeat reconcilia
     const result = await engine.doString(`
       local function runCase(kind)
         local now, released, acquired, unloads, closes, renewals = 1000, 0, 0, 0, 0, 0
-        local closeFails = kind == 'close'
+        local workerCalls, dropCalls = 0, 0
+        local closeFails = kind == 'close' or kind == 'quiesce'
         local connection, releaseHook = nil, nil
         local completion = nil
         local platform = {
@@ -267,7 +464,7 @@ test('replace_old retains failed durable closes for bounded heartbeat reconcilia
           print = function() end, jsonEncode = function() return '{}' end,
           getPlayerIdentifiers = function() return {'license:fixture'} end,
           wait = function(delay) now = now + delay end, defer = function() end,
-          dropPlayer = function() end
+          dropPlayer = function() dropCalls = dropCalls + 1 end
         }
         local foundation = SynexCoreFactories.foundation({ platform = platform })
         foundation.configureIds('replace-failure-' .. kind)
@@ -319,11 +516,12 @@ test('replace_old retains failed durable closes for bounded heartbeat reconcilia
             end
           },
           instances = {
-            requestRemoteKicks = function() return 0, nil end,
-            touchSessions = function() return true, nil end,
-            heartbeat = function() return {}, nil end,
-            pendingLocalControls = function() return {}, nil end,
-            completeControl = function() return true, nil end
+            bootId = function() workerCalls = workerCalls + 1 return 'boot-a', nil end,
+            requestRemoteKicks = function() workerCalls = workerCalls + 1 return 0, nil end,
+            touchSessions = function() workerCalls = workerCalls + 1 return true, nil end,
+            heartbeat = function() workerCalls = workerCalls + 1 return {}, nil end,
+            pendingLocalControls = function() workerCalls = workerCalls + 1 return {}, nil end,
+            completeControl = function() workerCalls = workerCalls + 1 return true, nil end
           },
           characters = characters,
           userRepository = {
@@ -334,6 +532,11 @@ test('replace_old retains failed durable closes for bounded heartbeat reconcilia
             create = function() return true, nil end,
             close = function()
               closes = closes + 1
+              if kind == 'quiesce' and closes == 2 then
+                closeFails = false
+                assert(connection:quiesce())
+                return true, nil
+              end
               if closeFails then
                 return nil, foundation.error('CLOSE_FAILED', 'fixture close failure')
               end
@@ -364,9 +567,20 @@ test('replace_old retains failed durable closes for bounded heartbeat reconcilia
           return kind .. ':' .. released .. ':' .. players:getBySource(41).userId
         end
 
-        local tombstone = assert(players:getSession('old-close'))
+        local tombstone = assert(players:getSession('old-' .. kind))
         assert(tombstone.source == nil and tombstone.replacementClosePending == true)
         assert(tombstone.clusterLease.owner == 'old-owner' and released == 0)
+        if kind == 'quiesce' then
+          local dropsBeforeHeartbeat = dropCalls
+          assert(connection:heartbeat())
+          assert(connection:snapshot().quiesced == true and closes == 2)
+          assert(players:getSession('old-quiesce').replacementClosePending == true)
+          assert(released == 0 and renewals == 0 and workerCalls == 0
+            and dropCalls == dropsBeforeHeartbeat)
+          assert(connection:heartbeat())
+          assert(closes == 2 and released == 0 and renewals == 0 and workerCalls == 0)
+          return kind .. ':' .. closes .. ':' .. renewals .. ':' .. workerCalls
+        end
         assert(connection:heartbeat())
         tombstone = assert(players:getSession('old-close'))
         assert(tombstone.source == nil and tombstone.replacementClosePending == true)
@@ -384,9 +598,10 @@ test('replace_old retains failed durable closes for bounded heartbeat reconcilia
         return kind .. ':' .. released .. ':' .. closes .. ':' .. renewals .. ':'
           .. players:getBySource(41).userId
       end
-      return runCase('unload') .. '|' .. runCase('close')
+      return runCase('unload') .. '|' .. runCase('close') .. '|' .. runCase('quiesce')
     `);
-    assert.equal(result, 'unload:1:replacement-user|close:1:3:1:replacement-user');
+    assert.equal(result,
+      'unload:1:replacement-user|close:1:3:1:replacement-user|quiesce:2:0:0');
   } finally {
     engine.global.close();
   }
@@ -452,6 +667,79 @@ test('replacement cleanup treats an absent durable session row as already closed
   }
 });
 
+test('replacement cleanup stops every local side effect when quiesce wins a yielded boundary', async () => {
+  const engine = await createIdentityEngine();
+  try {
+    const result = await engine.doString(`
+      local function runCase(kind)
+        local quiesced = false
+        local purges, drops, unloads, closes, releases = 0, 0, 0, 0, 0
+        local platform = {
+          nowGame = function() return 1000 end, random = function() return 31 end,
+          print = function() end,
+          dropPlayer = function() drops = drops + 1 end
+        }
+        local foundation = SynexCoreFactories.foundation({ platform = platform })
+        local players = SynexCoreFactories.registries({ foundation = foundation }).players
+        local function bind(tempSource, source, id)
+          assert(players:createPending(tempSource, { sessionId = id }))
+          assert(players:bindJoined(tempSource, source, {
+            id = id, userId = 'user-old', state = 'ACTIVE', version = 1, persistedVersion = 1,
+            clusterLease = { name = 'session:user-old:' .. id, owner = id,
+              fencingToken = 1, ttlSeconds = 45 }
+          }))
+        end
+        bind(-1, 41, 'a-old')
+        bind(-2, 42, 'b-old')
+        local replacement = SynexCoreFactories.identityConnectionReplacement({
+          platform = platform, foundation = foundation, players = players,
+          messaging = { network = { purgeSource = function()
+            purges = purges + 1
+            if kind == 'purge' then
+              assert(players:createPending(-3, { sessionId = 'new-source-owner' }))
+              assert(players:bindJoined(-3, 41, {
+                id = 'new-source-owner', userId = 'user-new', state = 'ACTIVE',
+                version = 1, persistedVersion = 1
+              }))
+              quiesced = true
+            end
+          end } },
+          characters = { unload = function()
+            unloads = unloads + 1
+            if kind == 'unload' then quiesced = true end
+            return true, nil
+          end },
+          sessionRepository = { close = function()
+            closes = closes + 1
+            if kind == 'close' then quiesced = true end
+            return true, nil
+          end },
+          releaseConnectionLease = function() releases = releases + 1 return true, nil end,
+          isQuiesced = function() return quiesced end
+        })
+        local replaced, replaceError = replacement:replace('user-old')
+        assert(replaced == nil and replaceError.code == 'CORE_STOPPING')
+        assert(players:getBySource(42).id == 'b-old')
+        if kind == 'purge' then
+          assert(players:getBySource(41).id == 'new-source-owner')
+          assert(purges == 1 and drops == 0 and unloads == 0 and closes == 0 and releases == 0)
+        elseif kind == 'unload' then
+          assert(players:getBySource(41) == nil)
+          assert(purges == 1 and drops == 1 and unloads == 1 and closes == 0 and releases == 0)
+        else
+          assert(players:getBySource(41) == nil)
+          assert(purges == 1 and drops == 1 and unloads == 1 and closes == 1 and releases == 0)
+        end
+        return table.concat({kind, purges, drops, unloads, closes, releases}, ':')
+      end
+      return runCase('purge') .. '|' .. runCase('unload') .. '|' .. runCase('close')
+    `);
+    assert.equal(result, 'purge:1:0:0:0:0|unload:1:1:1:0:0|close:1:1:1:1:0');
+  } finally {
+    engine.global.close();
+  }
+});
+
 test('replacement close tombstones reject every character mutation while reconciliation is pending', async () => {
   const engine = await createIdentityEngine();
   try {
@@ -477,7 +765,8 @@ test('replacement close tombstones reject every character mutation while reconci
         characterRepository = {}, sessionRepository = {},
         invokeOwned = function() error('fixture mutation escaped tombstone guard') end,
         transition = function() error('fixture mutation escaped tombstone guard') end,
-        leases = {}, instanceId = 'instance-a'
+        leases = {}, instances = { bootId = function() return 'boot-a', nil end },
+        instanceId = 'instance-a'
       })
       local _, createError = characters:create('replacement-tombstone', {})
       local _, deleteError = characters:delete('replacement-tombstone', 'character-a')
@@ -509,12 +798,14 @@ test('connection exceptions reject once with a stable code and release pending a
   try {
     const result = await engine.doString(`
       local now, completionCalls, completionArity, completionReason, released = 1000, 0, nil, nil, 0
+      local deferCalls = 0
       local platform = {
         nowGame = function() now = now + 1 return now end,
         random = function(_, maximum) return math.min(maximum or 1, 19) end,
         print = function() end, jsonEncode = function() return '{}' end,
         getPlayerIdentifiers = function() return {'license:fixture'} end,
-        wait = function(delay) now = now + delay end, defer = function() end,
+        wait = function(delay) now = now + delay end,
+        defer = function() deferCalls = deferCalls + 1 end,
         dropPlayer = function() end
       }
       local foundation = SynexCoreFactories.foundation({ platform = platform })
@@ -530,8 +821,9 @@ test('connection exceptions reject once with a stable code and release pending a
       local players, owners = registries.players, registries.owners
       local epoch = owners:activate('synex_core')
       local leases = {
-        acquire = function(_, name, owner, ttl)
-          return { leaseName = name, owner = owner, fencingToken = 1, ttl = ttl }, nil
+        acquire = function(_, name, owner, ttl, requesterInstanceId, requesterBootId)
+          return { leaseName = name, owner = owner, fencingToken = 1, ttl = ttl,
+            requesterInstanceId = requesterInstanceId, requesterBootId = requesterBootId }, nil
         end,
         release = function() released = released + 1 return true, nil end
       }
@@ -544,7 +836,10 @@ test('connection exceptions reject once with a stable code and release pending a
         leases = leases, instanceId = 'instance-a', characters = {},
         rateLimiter = { consume = function() return true, nil end, purge = function() end },
         sha256 = function(value) return value end,
-        instances = { requestRemoteKicks = function() return 0, nil end },
+        instances = {
+          bootId = function() return 'boot-a', nil end,
+          requestRemoteKicks = function() return 0, nil end
+        },
         userRepository = { authenticate = function() return { id = 'user-fixture' }, nil end },
         sessionRepository = {}, accessRepository = { check = function() return true, nil end },
         invokeOwned = function() error('fixture-private-database-error') end,
@@ -568,6 +863,27 @@ test('connection exceptions reject once with a stable code and release pending a
       assert(not completionReason:find('fixture-private', 1, true))
       assert(players:getPending(-2) == nil and released == 1)
       assert(connection:snapshot().admissionReservations == 0)
+
+      local beforeUpdateFailure = deferCalls
+      completionCalls, completionArity, completionReason = 0, nil, nil
+      local updateConnected, updateError = connection:handleConnecting(-3, 'Fixture', {
+        defer = function() end,
+        update = function() error('fixture-private-update-error') end,
+        done = function(...)
+          completionCalls = completionCalls + 1
+          completionArity = select('#', ...)
+          completionReason = ...
+        end
+      })
+      assert(updateConnected == nil and updateError.code == 'CONNECTION_PIPELINE_FAILED')
+      assert(completionCalls == 1 and completionArity == 1)
+      assert(completionReason:find('[CONNECTION_PIPELINE_FAILED]', 1, true))
+      assert(not completionReason:find('fixture-private', 1, true))
+      assert(deferCalls - beforeUpdateFailure == 2)
+      assert(players:getPending(-3) == nil and released == 1)
+      assert(connection:snapshot().openDeferrals == 0
+        and connection:snapshot().admissionReservations == 0)
+
       return completionReason
     `);
     assert.match(result, /\[CONNECTION_PIPELINE_FAILED\]/);
@@ -603,14 +919,18 @@ test('a failed accepted deferral terminal is attempted once and retained only un
         config = { duplicatePolicy = 'deny_new', queueEnabled = false, pendingTtlMs = 120000,
           clusterSessionLeaseSeconds = 45, clusterHeartbeatMs = 10000 },
         leases = {
-          acquire = function(_, name, owner, ttl)
-            return { name = name, owner = owner, fencingToken = 1, ttlSeconds = ttl }, nil
+          acquire = function(_, name, owner, ttl, requesterInstanceId, requesterBootId)
+            return { name = name, owner = owner, fencingToken = 1, ttlSeconds = ttl,
+              requesterInstanceId = requesterInstanceId, requesterBootId = requesterBootId }, nil
           end,
           release = function() released = released + 1 return true, nil end
         },
         rateLimiter = { consume = function() return true, nil end, purge = function() end },
         sha256 = function(value) return value end,
-        instances = { requestRemoteKicks = function() return 0, nil end }, characters = {},
+        instances = {
+          bootId = function() return 'boot-a', nil end,
+          requestRemoteKicks = function() return 0, nil end
+        }, characters = {},
         userRepository = { authenticate = function() return { id = 'user-fixture', status = 'active' }, nil end },
         sessionRepository = {}, accessRepository = { check = function() return true, nil end },
         invokeOwned = function() return true, true, nil end,
@@ -712,8 +1032,9 @@ test('playerJoining rejects cross-pending hijack, replay, and source-local flood
         messaging = { network = { purgeSource = function() end } },
         config = config,
         leases = {
-          acquire = function(_, name, owner, ttl)
-            return { name = name, owner = owner, fencingToken = 7, ttlSeconds = ttl }, nil
+          acquire = function(_, name, owner, ttl, requesterInstanceId, requesterBootId)
+            return { name = name, owner = owner, fencingToken = 7, ttlSeconds = ttl,
+              requesterInstanceId = requesterInstanceId, requesterBootId = requesterBootId }, nil
           end,
           release = function()
             released = released + 1
@@ -727,7 +1048,10 @@ test('playerJoining rejects cross-pending hijack, replay, and source-local flood
         },
         rateLimiter = rateLimiter,
         sha256 = function(value) return value end,
-        instances = { requestRemoteKicks = function() return 0, nil end }, characters = {},
+        instances = {
+          bootId = function() return 'boot-a', nil end,
+          requestRemoteKicks = function() return 0, nil end
+        }, characters = {},
         userRepository = userRepository,
         sessionRepository = {
           create = function() persisted = persisted + 1 return true, nil end,
@@ -865,6 +1189,7 @@ test('playerJoining compensates transition, bind, persistence, and disconnect ra
         end
         local connection = SynexCoreFactories.identityConnections({
           platform = platform, foundation = foundation, players = players, owners = registries.owners,
+          instanceId = 'instance-a',
           lifecycle = { core = { canAdmitPlayers = function() return true end } },
           messaging = { network = { purgeSource = function() end } },
           config = { duplicatePolicy = 'deny_new', pendingTtlMs = 120000,
@@ -881,7 +1206,7 @@ test('playerJoining compensates transition, bind, persistence, and disconnect ra
           },
           rateLimiter = { consume = function() return true, nil end, purge = function() end },
           sha256 = function() return 'fixture-hash' end,
-          instances = {}, characters = {},
+          instances = { bootId = function() return 'boot-a', nil end }, characters = {},
           userRepository = {
             findByIdentifiers = function() return { id = 'user-victim', status = 'active' }, nil end
           },
@@ -1011,6 +1336,7 @@ test('playerDropped detaches and purges before yielded cleanup can observe a reu
         rateLimiter = { consume = function() return true, nil end, purge = function() end },
         sha256 = function(value) return value end,
         instances = {
+          bootId = function() return 'boot-a', nil end,
           touchSessions = function() return true, nil end,
           heartbeat = function() return {}, nil end,
           pendingLocalControls = function() return {{
@@ -1064,14 +1390,15 @@ test('pending lease heartbeat preserves delayed join authority and fails closed 
         local registries = SynexCoreFactories.registries({ foundation = foundation })
         registries.owners:activate('synex_core')
         local leases = {}
-        function leases:acquire(name, owner, ttl)
+        function leases:acquire(name, owner, ttl, requesterInstanceId, requesterBootId)
           if authority and authority.expiresAt > now and authority.owner ~= owner then
             return nil, { code = 'LEASE_BUSY' }
           end
           local token = authority and authority.fencingToken + 1 or 1
           authority = { name = name, owner = owner, fencingToken = token,
             ttlSeconds = ttl, expiresAt = now + ttl * 1000 }
-          return { name = name, owner = owner, fencingToken = token, ttlSeconds = ttl }, nil
+          return { name = name, owner = owner, fencingToken = token, ttlSeconds = ttl,
+            requesterInstanceId = requesterInstanceId, requesterBootId = requesterBootId }, nil
         end
         function leases:renew(lease)
           renewCalls = renewCalls + 1
@@ -1117,6 +1444,7 @@ test('pending lease heartbeat preserves delayed join authority and fails closed 
           rateLimiter = { consume = function() return true, nil end, purge = function() end },
           sha256 = function(value) return value end,
           instances = {
+            bootId = function() return 'boot-a', nil end,
             requestRemoteKicks = function() return 0, nil end,
             touchSessions = function() return true, nil end,
             heartbeat = function() return {}, nil end,
@@ -1243,13 +1571,280 @@ test('pending lease heartbeat preserves delayed join authority and fails closed 
   }
 });
 
-test('bootstrap registers the built-in playerJoining event before subscribing to it', async () => {
+test('connection quiesce rejects pending acceptance and invalidates an in-flight join', async () => {
+  const engine = await createIdentityEngine();
+  try {
+    const result = await engine.doString(`
+      local function fixture(quiesceDuringJoin, closeDuringJoin, closeDuringAcceptance,
+          quiesceBeforeAuthentication, closeBeforeAuthentication, quiesceBeforeFirstTick)
+        local now, connection, admitting = 1000, nil, true
+        local deferCalls, leaseReleases, workerCalls = 0, 0, 0
+        local authenticateCalls, gateCalls = 0, 0
+        local completions, drops, leaseRequester, leaseBootId = {}, {}, nil, nil
+        local order, inTick, doneDuringTick = {}, false, false
+        local platform = {
+          nowGame = function() now = now + 1 return now end,
+          random = function() return 37 end,
+          print = function() end,
+          jsonEncode = function() return '{}' end,
+          getPlayerIdentifiers = function() return {'license:victim'} end,
+          wait = function(delay) now = now + delay end,
+          defer = function()
+            deferCalls = deferCalls + 1
+            order[#order + 1] = 'tick'
+            inTick = true
+            if deferCalls == 1 and quiesceBeforeFirstTick then
+              assert(connection:quiesce())
+            elseif deferCalls == 2 then
+              if quiesceBeforeAuthentication then
+                assert(connection:quiesce())
+              elseif closeBeforeAuthentication then
+                admitting = false
+              end
+            elseif deferCalls == 3 then
+              if closeDuringAcceptance then
+                admitting = false
+              elseif not quiesceDuringJoin and not closeBeforeAuthentication then
+                assert(connection:quiesce())
+              end
+            end
+            inTick = false
+          end,
+          dropPlayer = function(source, reason) drops[source] = reason end
+        }
+        local foundation = SynexCoreFactories.foundation({ platform = platform })
+        foundation.configureIds(quiesceDuringJoin and 'join-quiesce' or 'accept-quiesce')
+        local registries = SynexCoreFactories.registries({ foundation = foundation })
+        registries.owners:activate('synex_core')
+        local instances = {
+          bootId = function() return 'boot-a', nil end,
+          requestRemoteKicks = function() workerCalls = workerCalls + 1 return 0, nil end,
+          touchSessions = function() workerCalls = workerCalls + 1 return true, nil end,
+          heartbeat = function() workerCalls = workerCalls + 1 return {}, nil end,
+          pendingLocalControls = function() workerCalls = workerCalls + 1 return {}, nil end,
+          completeControl = function() workerCalls = workerCalls + 1 return true, nil end
+        }
+        local leases = {
+          acquire = function(_, name, owner, ttl, requester, requesterBootId)
+            leaseRequester = requester
+            leaseBootId = requesterBootId
+            return { name = name, owner = owner, fencingToken = 1, ttlSeconds = ttl,
+              requesterInstanceId = requester, requesterBootId = requesterBootId }, nil
+          end,
+          release = function()
+            leaseReleases = leaseReleases + 1
+            return true, nil
+          end,
+          renew = function(_, lease) return lease, nil end
+        }
+        local userRepository = {
+          authenticate = function()
+            authenticateCalls = authenticateCalls + 1
+            return { id = 'user-victim', status = 'active' }, nil
+          end,
+          findByIdentifiers = function()
+            if quiesceDuringJoin then
+              assert(connection:quiesce())
+            elseif closeDuringJoin then
+              admitting = false
+            end
+            return { id = 'user-victim', status = 'active' }, nil
+          end
+        }
+        connection = SynexCoreFactories.identityConnections({
+          platform = platform, foundation = foundation, instanceId = 'instance-a',
+          players = registries.players, owners = registries.owners,
+          lifecycle = { core = {
+            canAdmitPlayers = function() return admitting end,
+            setHealth = function() end
+          } },
+          messaging = { network = { purgeSource = function() end } },
+          config = { duplicatePolicy = 'deny_new', queueEnabled = false,
+            pendingTtlMs = 120000, clusterSessionLeaseSeconds = 45 },
+          leases = leases, instances = instances, characters = {},
+          userRepository = userRepository,
+          sessionRepository = {
+            create = function() return true, nil end,
+            close = function() return true, nil end
+          },
+          accessRepository = { check = function() return true, nil end },
+          rateLimiter = { consume = function() return true, nil end, purge = function() end },
+          invokeOwned = function() return true, true, nil end,
+          normalizeIdentifiers = function()
+            return {{ type = 'license', value = 'victim', normalized = 'license:victim' }}
+          end,
+          sha256 = function() return 'fingerprint' end,
+          sessionTransitions = {},
+          transition = function(session, target)
+            session.state = target
+            session.version = session.version + 1
+            return session, nil
+          end
+        })
+        return {
+          connection = connection,
+          players = registries.players,
+          connect = function()
+            return connection:handleConnecting(-2, 'Victim', {
+              defer = function() order[#order + 1] = 'defer' end,
+              update = function() end,
+              done = function(...)
+                doneDuringTick = doneDuringTick or inTick
+                order[#order + 1] = 'done'
+                completions[#completions + 1] = {
+                  arity = select('#', ...), reason = select(1, ...)
+                }
+              end
+            })
+          end,
+          seedPending = function()
+            return registries.players:createPending(-2, {
+              id = 'pending-a', sessionId = 'session-a', userId = 'user-victim',
+              tempSource = -2, state = 'AUTHENTICATED', receivedAt = now,
+              expiresAt = now + 120000, identityFingerprint = 'fingerprint',
+              clusterLease = { name = 'session:user-victim', owner = 'instance-a:session-a',
+                fencingToken = 1, ttlSeconds = 45 }
+            })
+          end,
+          closeAdmission = function() admitting = false end,
+          registerGate = function()
+            return connection:registerGate('synex_core', 1, {
+              name = 'quiesce fixture', priority = 0, timeoutMs = 100,
+              run = function() gateCalls = gateCalls + 1 return true end
+            })
+          end,
+          state = function()
+            return completions, drops, leaseReleases, workerCalls, leaseRequester, leaseBootId,
+              authenticateCalls, gateCalls, table.concat(order, ','), doneDuringTick
+          end
+        }
+      end
+
+      local acceptance = fixture(false)
+      assert(acceptance.connect())
+      assert(acceptance.connection:releaseQuiescedLeases())
+      local completions, drops, releases, workers = acceptance.state()
+      assert(#completions == 1 and completions[1].arity == 1)
+      assert(completions[1].reason:find('[CORE_STOPPING]', 1, true))
+      assert(acceptance.players:getPending(-2) == nil)
+      assert(acceptance.connection:snapshot().quiesced == true)
+      assert(acceptance.connection:snapshot().admissionReservations == 0)
+      assert(releases == 1)
+      assert(select(10, acceptance.state()) == false)
+      assert(select(5, acceptance.state()) == 'instance-a')
+      assert(select(6, acceptance.state()) == 'boot-a')
+      local repeated = assert(acceptance.connection:quiesce())
+      assert(repeated.removedPending == 1 and repeated.releasedLeases == 1)
+      assert(acceptance.connection:heartbeat())
+      workers = select(4, acceptance.state())
+      assert(workers == 0)
+      local joinedAfterStop, stoppedError = acceptance.connection:handleJoining(42, -2)
+      assert(joinedAfterStop == nil and stoppedError.code == 'CORE_STOPPING')
+      drops = select(2, acceptance.state())
+      assert(drops[42]:find('[CORE_STOPPING]', 1, true))
+
+      local preStopped = fixture(true)
+      assert(preStopped.connection:quiesce())
+      assert(preStopped.connect())
+      local preCompletions = select(1, preStopped.state())
+      assert(#preCompletions == 1 and preCompletions[1].reason:find('[CORE_STOPPING]', 1, true))
+      assert(select(7, preStopped.state()) == 0 and select(9, preStopped.state()) == 'defer,tick,done')
+      assert(select(10, preStopped.state()) == false
+        and preStopped.connection:snapshot().openDeferrals == 0)
+
+      local firstTickStopped = fixture(false, false, false, false, false, true)
+      assert(firstTickStopped.connect())
+      local firstTickCompletions = select(1, firstTickStopped.state())
+      assert(#firstTickCompletions == 1
+        and firstTickCompletions[1].reason:find('[CORE_STOPPING]', 1, true))
+      assert(select(9, firstTickStopped.state()) == 'defer,tick,done'
+        and select(10, firstTickStopped.state()) == false)
+      assert(firstTickStopped.connection:snapshot().openDeferrals == 0)
+
+      local authBlocked = fixture(false, false, false, true)
+      assert(authBlocked.connect())
+      local authCompletions = select(1, authBlocked.state())
+      assert(#authCompletions == 1 and authCompletions[1].reason:find('[CORE_STOPPING]', 1, true))
+      assert(select(7, authBlocked.state()) == 0 and select(8, authBlocked.state()) == 0)
+      assert(authBlocked.players:getPending(-2) == nil)
+
+      local authDegraded = fixture(false, false, false, false, true)
+      assert(authDegraded.connect())
+      local authDegradedCompletions = select(1, authDegraded.state())
+      assert(#authDegradedCompletions == 1
+        and authDegradedCompletions[1].reason:find('[CORE_NOT_READY]', 1, true))
+      assert(select(3, authDegraded.state()) == 0
+        and select(7, authDegraded.state()) == 0 and select(8, authDegraded.state()) == 0)
+      assert(authDegraded.players:getPending(-2) == nil
+        and authDegraded.connection:snapshot().admissionReservations == 0)
+
+      local joining = fixture(true)
+      assert(joining.seedPending())
+      local joined, joinError = joining.connection:handleJoining(43, -2)
+      assert(joined == nil and joinError.code == 'CORE_STOPPING')
+      assert(joining.connection:releaseQuiescedLeases())
+      local _, joinDrops, joinReleases = joining.state()
+      assert(joinDrops[43] == nil)
+      assert(joinReleases == 1 and joining.players:getPending(-2) == nil)
+      assert(joining.players:getBySource(43) == nil)
+
+      local captured = fixture(false)
+      assert(captured.registerGate())
+      assert(captured.connect())
+      local capturedCompletions, _, capturedReleases = captured.state()
+      assert(#capturedCompletions == 1)
+      assert(capturedCompletions[1].reason:find('[CORE_STOPPING]', 1, true))
+      assert(select(8, captured.state()) == 0)
+      assert(capturedReleases == 0)
+      local capturedReport = assert(captured.connection:releaseQuiescedLeases())
+      capturedReleases = select(3, captured.state())
+      assert(capturedReport.removedPending == 1 and capturedReport.releasedLeases == 1)
+      assert(capturedReleases == 1)
+
+      local unavailable = fixture(false)
+      assert(unavailable.seedPending())
+      unavailable.closeAdmission()
+      local unavailableJoin, unavailableError = unavailable.connection:handleJoining(44, -2)
+      assert(unavailableJoin == nil and unavailableError.code == 'CORE_NOT_READY')
+      local _, unavailableDrops, unavailableReleases = unavailable.state()
+      assert(unavailableDrops[44]:find('[CORE_NOT_READY]', 1, true))
+      assert(unavailableReleases == 1 and unavailable.players:getPending(-2) == nil)
+      assert(unavailable.connection:snapshot().admissionReservations == 0)
+
+      local degraded = fixture(false, true)
+      assert(degraded.seedPending())
+      local degradedJoin, degradedError = degraded.connection:handleJoining(45, -2)
+      assert(degradedJoin == nil and degradedError.code == 'CORE_NOT_READY')
+      local _, degradedDrops, degradedReleases = degraded.state()
+      assert(degradedDrops[45]:find('[CORE_NOT_READY]', 1, true))
+      assert(degradedReleases == 1 and degraded.players:getPending(-2) == nil)
+      assert(degraded.players:getBySource(45) == nil)
+
+      local lateDegraded = fixture(false, false, true)
+      assert(lateDegraded.connect())
+      local lateCompletions, _, lateReleases = lateDegraded.state()
+      assert(#lateCompletions == 1 and lateCompletions[1].arity == 1)
+      assert(lateCompletions[1].reason:find('[CORE_NOT_READY]', 1, true))
+      assert(lateReleases == 1 and lateDegraded.players:getPending(-2) == nil)
+      assert(lateDegraded.connection:snapshot().quiesced == false)
+      assert(lateDegraded.connection:snapshot().admissionReservations == 0)
+      return table.concat({stoppedError.code, joinError.code, unavailableError.code,
+        degradedError.code, releases, joinReleases, capturedReleases,
+        unavailableReleases, degradedReleases, lateReleases}, ':')
+    `);
+    assert.equal(result, 'CORE_STOPPING:CORE_STOPPING:CORE_NOT_READY:CORE_NOT_READY:1:1:1:1:1:1');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('bootstrap subscribes to the built-in playerJoining event without exposing it to clients', async () => {
   const source = await readFile(path.join(root, 'core/synex_core/server/bootstrap_lifecycle.lua'), 'utf8');
-  const registration = source.indexOf("platform.registerNetEvent('playerJoining')");
   const subscription = source.indexOf("platform.addEventHandler('playerJoining'");
-  assert.ok(registration >= 0, 'playerJoining must be registered in the resource');
-  assert.ok(subscription > registration, 'playerJoining must be registered before its handler is added');
-  assert.equal(source.match(/platform\.registerNetEvent\('playerJoining'\)/gu)?.length, 1);
+  assert.doesNotMatch(source, /(?:platform\.(?:registerNetEvent|onNet)|\bRegisterNetEvent)\s*\(\s*['"]playerJoining['"]/u,
+    'the built-in server event must not be network registered');
+  assert.ok(subscription >= 0, 'playerJoining must have a local server handler');
+  assert.equal(source.match(/platform\.addEventHandler\('playerJoining'/gu)?.length, 1);
   const handler = source.slice(subscription, source.indexOf("platform.addEventHandler('playerDropped'", subscription));
   assert.doesNotMatch(handler, /platform\.dropPlayer/u,
     'the outer join boundary cannot prove final-source ownership after an unexpected yield');

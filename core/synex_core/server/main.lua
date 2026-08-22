@@ -26,7 +26,9 @@ end
 
 local runtime = factories.bootstrap({ platform = platform, replicateState = replicateState })
 
-runtime:bind()
-runtime:start()
+local bound, bindError = runtime:bind()
+if not bound then error(bindError and bindError.message or 'Synex Core could not bind runtime handlers.') end
+local started, startError = runtime:start()
+if not started then error(startError and startError.message or 'Synex Core failed to start.') end
 
 SynexCoreFactories = nil
