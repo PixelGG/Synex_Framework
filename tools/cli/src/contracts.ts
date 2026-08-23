@@ -39,6 +39,327 @@ const MANAGED_ARTIFACTS = Object.freeze({
   typescript: "packages/sdk-ts/src/generated/contracts.ts",
 });
 
+// Mirrored by contracts.lua so unsupported or expensive expressions fail during generation.
+const CONTRACT_PATTERN_LIMITS = Object.freeze({
+  bytes: 256,
+  tokens: 64,
+  states: 64,
+  repeatMaximum: 64,
+  unboundedTokens: 8,
+  unanchoredStates: 16,
+});
+
+const CONTRACT_UNIQUE_ITEMS_MAXIMUM = 32;
+const CONTRACT_SCHEMA_LIMITS = Object.freeze({
+  depth: 24,
+  entries: 2048,
+  stringBytes: 32768,
+});
+
+const ESCAPED_PATTERN_LITERALS = new Set([
+  "\\", "^", "$", ".", "*", "+", "?", "{", "}", "[", "]", "(", ")", "|", "/", "-",
+]);
+
+const CORE_RUNTIME_SCHEMA_KEYWORDS = new Set([
+  "$schema", "$id", "$comment", "title", "description", "default", "examples",
+  "deprecated", "readOnly", "writeOnly", "type", "const", "enum", "oneOf", "anyOf",
+  "properties", "required", "additionalProperties", "items", "minItems", "maxItems",
+  "uniqueItems", "minLength", "maxLength", "pattern", "minimum", "maximum",
+  "exclusiveMinimum", "exclusiveMaximum",
+]);
+
+interface ParsedPatternValue {
+  code: number;
+  next: number;
+  error?: string;
+}
+
+interface ParsedPatternQuantifier {
+  minimum: number;
+  maximum: number | null;
+  next: number;
+  error?: string;
+}
+
+function escapedPatternLiteral(pattern: string, index: number, inClass: boolean): ParsedPatternValue {
+  const candidate = pattern[index + 1] ?? "";
+  if (!ESCAPED_PATTERN_LITERALS.has(candidate) || (candidate === "-" && !inClass)) {
+    return { code: 0, next: index, error: "only escaped regular-expression literals are supported" };
+  }
+  return { code: candidate.charCodeAt(0), next: index + 2 };
+}
+
+function patternClass(pattern: string, index: number): { next: number; error?: string } {
+  let cursor = index + 1;
+  if (pattern[cursor] === "^") cursor += 1;
+  let members = 0;
+  while (cursor < pattern.length && pattern[cursor] !== "]") {
+    const character = pattern[cursor] ?? "";
+    let first: number;
+    let next: number;
+    if (character === "\\") {
+      const parsed = escapedPatternLiteral(pattern, cursor, true);
+      if (parsed.error) return { next: cursor, error: parsed.error };
+      first = parsed.code;
+      next = parsed.next;
+    } else {
+      first = character.charCodeAt(0);
+      if (first < 0x20 || first > 0x7e || character === "[") {
+        return { next: cursor, error: "character classes support printable ASCII literals only" };
+      }
+      next = cursor + 1;
+    }
+
+    if (pattern[next] === "-" && pattern[next + 1] !== "]" && pattern[next + 1] !== undefined) {
+      const rangeCharacter = pattern[next + 1] ?? "";
+      let last: number;
+      let rangeNext: number;
+      if (rangeCharacter === "\\") {
+        const parsed = escapedPatternLiteral(pattern, next + 1, true);
+        if (parsed.error) return { next: next + 1, error: parsed.error };
+        last = parsed.code;
+        rangeNext = parsed.next;
+      } else {
+        last = rangeCharacter.charCodeAt(0);
+        if (last < 0x20 || last > 0x7e || rangeCharacter === "[" || rangeCharacter === "-") {
+          return { next: next + 1, error: "character class range endpoint is invalid" };
+        }
+        rangeNext = next + 2;
+      }
+      if (first > last) return { next: cursor, error: "character class ranges must be ascending" };
+      cursor = rangeNext;
+    } else {
+      cursor = next;
+    }
+    members += 1;
+  }
+  if (pattern[cursor] !== "]") return { next: cursor, error: "character class is not closed" };
+  if (members === 0) return { next: cursor, error: "empty character classes are not supported" };
+  return { next: cursor + 1 };
+}
+
+function patternQuantifier(pattern: string, index: number): ParsedPatternQuantifier {
+  const character = pattern[index];
+  if (character === "*") return { minimum: 0, maximum: null, next: index + 1 };
+  if (character === "+") return { minimum: 1, maximum: null, next: index + 1 };
+  if (character === "?") return { minimum: 0, maximum: 1, next: index + 1 };
+  if (character !== "{") return { minimum: 1, maximum: 1, next: index };
+
+  let cursor = index + 1;
+  const minimumStart = cursor;
+  while (/^[0-9]$/u.test(pattern[cursor] ?? "")) cursor += 1;
+  if (cursor === minimumStart) {
+    return { minimum: 0, maximum: 0, next: cursor, error: "quantifier minimum is required" };
+  }
+  const minimum = Number(pattern.slice(minimumStart, cursor));
+  let maximum = minimum;
+  if (pattern[cursor] === ",") {
+    cursor += 1;
+    const maximumStart = cursor;
+    while (/^[0-9]$/u.test(pattern[cursor] ?? "")) cursor += 1;
+    if (cursor === maximumStart) {
+      return {
+        minimum,
+        maximum,
+        next: cursor,
+        error: "open-ended brace quantifiers are not supported",
+      };
+    }
+    maximum = Number(pattern.slice(maximumStart, cursor));
+  }
+  if (pattern[cursor] !== "}") {
+    return { minimum, maximum, next: cursor, error: "quantifier is not closed" };
+  }
+  if (!Number.isSafeInteger(minimum) || !Number.isSafeInteger(maximum)
+    || minimum > maximum || maximum > CONTRACT_PATTERN_LIMITS.repeatMaximum) {
+    return {
+      minimum,
+      maximum,
+      next: cursor,
+      error: "quantifier bounds are invalid or exceed the supported maximum",
+    };
+  }
+  return { minimum, maximum, next: cursor + 1 };
+}
+
+function unsupportedContractPatternReason(pattern: unknown): string | null {
+  if (typeof pattern !== "string" || pattern.length > CONTRACT_PATTERN_LIMITS.bytes) {
+    return "pattern must be a bounded string";
+  }
+  for (const character of pattern) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code < 0x20 || code > 0x7e) return "patterns support printable ASCII syntax only";
+  }
+
+  let cursor = pattern.startsWith("^") ? 1 : 0;
+  const anchoredStart = cursor === 1;
+  let tokens = 0;
+  let states = 0;
+  let unboundedTokens = 0;
+  while (cursor < pattern.length) {
+    const character = pattern[cursor] ?? "";
+    if (character === "$") {
+      if (cursor !== pattern.length - 1) return "the end anchor is only supported at the end";
+      cursor += 1;
+      break;
+    }
+    if (character === "^") return "the start anchor is only supported at the beginning";
+
+    let next: number;
+    if (character === "\\") {
+      const parsed = escapedPatternLiteral(pattern, cursor, false);
+      if (parsed.error) return parsed.error;
+      next = parsed.next;
+    } else if (character === "[") {
+      const parsed = patternClass(pattern, cursor);
+      if (parsed.error) return parsed.error;
+      next = parsed.next;
+    } else if (character === ".") {
+      next = cursor + 1;
+    } else if (["*", "+", "?", "{", "}", "]", "(", ")", "|"].includes(character)) {
+      return "unsupported regular-expression syntax";
+    } else {
+      next = cursor + 1;
+    }
+
+    const quantifier = patternQuantifier(pattern, next);
+    if (quantifier.error) return quantifier.error;
+    tokens += 1;
+    states += quantifier.minimum;
+    if (quantifier.maximum === null) {
+      states += 1;
+      unboundedTokens += 1;
+    } else {
+      states += quantifier.maximum - quantifier.minimum;
+    }
+    if (tokens > CONTRACT_PATTERN_LIMITS.tokens) return "pattern contains too many tokens";
+    if (states > CONTRACT_PATTERN_LIMITS.states) return "compiled pattern contains too many states";
+    if (unboundedTokens > CONTRACT_PATTERN_LIMITS.unboundedTokens) {
+      return "pattern contains too many unbounded quantifiers";
+    }
+    cursor = quantifier.next;
+  }
+  if (!anchoredStart && states > CONTRACT_PATTERN_LIMITS.unanchoredStates) {
+    return "unanchored pattern contains too many states";
+  }
+  return null;
+}
+
+function schemaPatternFindings(
+  schema: JsonSchema,
+  path = "$",
+  depth = 0,
+): Array<{ path: string; reason: string }> {
+  if (depth > 24) return [{ path, reason: "schema nesting exceeds the supported limit" }];
+  const findings: Array<{ path: string; reason: string }> = [];
+  if (Object.hasOwn(schema, "pattern")) {
+    const reason = unsupportedContractPatternReason(schema.pattern);
+    if (reason) findings.push({ path: `${path}.pattern`, reason });
+  }
+  if (isRecord(schema.properties)) {
+    for (const [name, child] of Object.entries(schema.properties)) {
+      if (isRecord(child)) findings.push(...schemaPatternFindings(child, `${path}.properties.${name}`, depth + 1));
+    }
+  }
+  if (isRecord(schema.items)) findings.push(...schemaPatternFindings(schema.items, `${path}.items`, depth + 1));
+  for (const keyword of ["oneOf", "anyOf"] as const) {
+    const children = schema[keyword];
+    if (!Array.isArray(children)) continue;
+    children.forEach((child, index) => {
+      if (isRecord(child)) findings.push(...schemaPatternFindings(child, `${path}.${keyword}[${index}]`, depth + 1));
+    });
+  }
+  return findings;
+}
+
+function schemaRuntimeSubsetFindings(
+  schema: unknown,
+  path = "$",
+  depth = 0,
+): Array<{ path: string; reason: string }> {
+  if (!isRecord(schema)) return [{ path, reason: "schema nodes must be objects" }];
+  if (depth > 24) return [{ path, reason: "schema nesting exceeds the supported limit" }];
+  const findings: Array<{ path: string; reason: string }> = [];
+  for (const keyword of Object.keys(schema)) {
+    if (!CORE_RUNTIME_SCHEMA_KEYWORDS.has(keyword)) {
+      findings.push({ path: `${path}.${keyword}`, reason: "keyword is not implemented by the Core runtime" });
+    }
+  }
+  if (Object.hasOwn(schema, "additionalProperties") && typeof schema.additionalProperties !== "boolean") {
+    findings.push({
+      path: `${path}.additionalProperties`,
+      reason: "schema-valued additionalProperties is not implemented by the Core runtime",
+    });
+  }
+  if (schema.uniqueItems === true
+    && (!Number.isInteger(schema.maxItems) || (schema.maxItems as number) > CONTRACT_UNIQUE_ITEMS_MAXIMUM)) {
+    findings.push({
+      path: `${path}.uniqueItems`,
+      reason: `uniqueItems requires maxItems at or below ${CONTRACT_UNIQUE_ITEMS_MAXIMUM}`,
+    });
+  }
+  if (isRecord(schema.properties)) {
+    for (const [name, child] of Object.entries(schema.properties)) {
+      findings.push(...schemaRuntimeSubsetFindings(child, `${path}.properties.${name}`, depth + 1));
+    }
+  }
+  if (Object.hasOwn(schema, "items")) {
+    findings.push(...schemaRuntimeSubsetFindings(schema.items, `${path}.items`, depth + 1));
+  }
+  for (const keyword of ["oneOf", "anyOf"] as const) {
+    const children = schema[keyword];
+    if (!Array.isArray(children)) continue;
+    children.forEach((child, index) => {
+      findings.push(...schemaRuntimeSubsetFindings(child, `${path}.${keyword}[${index}]`, depth + 1));
+    });
+  }
+  return findings;
+}
+
+function boundedSchemaFinding(
+  value: unknown,
+  path = "$",
+  depth = 1,
+  inspected = { entries: 0 },
+): { path: string; reason: string } | null {
+  if (typeof value === "string") {
+    return Buffer.byteLength(value, "utf8") > CONTRACT_SCHEMA_LIMITS.stringBytes
+      ? { path, reason: "schema string exceeds the supported byte limit" }
+      : null;
+  }
+  if (value === null || typeof value === "boolean") return null;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? null : { path, reason: "schema numbers must be finite" };
+  }
+  if (depth > CONTRACT_SCHEMA_LIMITS.depth) {
+    return { path, reason: "schema nesting exceeds the supported limit" };
+  }
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      inspected.entries += 1;
+      if (inspected.entries > CONTRACT_SCHEMA_LIMITS.entries) {
+        return { path, reason: "schema contains too many entries" };
+      }
+      const finding = boundedSchemaFinding(value[index], `${path}[${index}]`, depth + 1, inspected);
+      if (finding) return finding;
+    }
+    return null;
+  }
+  if (!isRecord(value)) return { path, reason: "schema contains a non-JSON value" };
+  for (const [key, child] of Object.entries(value)) {
+    inspected.entries += 1;
+    if (inspected.entries > CONTRACT_SCHEMA_LIMITS.entries) {
+      return { path, reason: "schema contains too many entries" };
+    }
+    if (Buffer.byteLength(key, "utf8") > CONTRACT_SCHEMA_LIMITS.stringBytes) {
+      return { path, reason: "schema property name exceeds the supported byte limit" };
+    }
+    const finding = boundedSchemaFinding(child, `${path}.${key}`, depth + 1, inspected);
+    if (finding) return finding;
+  }
+  return null;
+}
+
 function isContractCollection(value: unknown): value is ContractCollection {
   return isRecord(value) && value.schema === 1 && typeof value.domain === "string" && Array.isArray(value.contracts);
 }
@@ -121,6 +442,15 @@ export async function loadContractSources(
 
     let nestedSchemasValid = true;
     for (const contract of value.contracts) {
+      if (contract.errors.length > 256) {
+        nestedSchemasValid = false;
+        diagnostics.push({
+          level: "error",
+          rule: "contract-runtime-definition-subset",
+          file: displayPath(repositoryRoot, file),
+          message: `${contract.name} errors contains more than 256 entries.`,
+        });
+      }
       for (const [direction, schema] of [
         ["input", contract.input],
         ["output", contract.output],
@@ -137,6 +467,34 @@ export async function loadContractSources(
             rule: "contract-json-schema",
             file: displayPath(repositoryRoot, file),
             message: `${contract.name} ${direction} is not a valid JSON Schema.`,
+          });
+        }
+        const boundedFinding = boundedSchemaFinding(schema);
+        if (boundedFinding) {
+          nestedSchemasValid = false;
+          diagnostics.push({
+            level: "error",
+            rule: "contract-runtime-schema-subset",
+            file: displayPath(repositoryRoot, file),
+            message: `${contract.name} ${direction} ${boundedFinding.path} is unsupported: ${boundedFinding.reason}.`,
+          });
+        }
+        for (const finding of schemaPatternFindings(schema)) {
+          nestedSchemasValid = false;
+          diagnostics.push({
+            level: "error",
+            rule: "contract-pattern-subset",
+            file: displayPath(repositoryRoot, file),
+            message: `${contract.name} ${direction} ${finding.path} is unsupported: ${finding.reason}.`,
+          });
+        }
+        for (const finding of schemaRuntimeSubsetFindings(schema)) {
+          nestedSchemasValid = false;
+          diagnostics.push({
+            level: "error",
+            rule: "contract-runtime-schema-subset",
+            file: displayPath(repositoryRoot, file),
+            message: `${contract.name} ${direction} ${finding.path} is unsupported: ${finding.reason}.`,
           });
         }
       }

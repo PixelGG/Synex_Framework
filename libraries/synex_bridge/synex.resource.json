@@ -17,6 +17,14 @@
     "provide": [],
     "consume": []
   },
+  "events": {
+    "publish": [],
+    "subscribe": []
+  },
+  "hooks": {
+    "register": [],
+    "run": []
+  },
   "dependencies": {
     "required": [
       {

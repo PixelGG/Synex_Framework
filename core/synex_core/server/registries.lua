@@ -7,16 +7,37 @@ factories.registries = function(deps)
     local resources = {}
     local resourceEpochs = {}
     local sessions = {}
+    local activeSessionCount = 0
     local pending = {}
     local bySource = {}
     local sourceEpoch = {}
     local byUser = {}
     local byCharacter = {}
-    local byIdentifier = {}
     local maximumSourceGeneration = 9007199254740991
     local sourceGenerationFloor = 0
     local sourceGenerationSeeded = false
     local maximumPendingDiagnosticAgeMs = 600000
+    local function authorityCurrent(value)
+        if type(value) ~= 'table' then return false end
+        for _, field in ipairs({ 'clusterLease', 'admissionGateLease' }) do
+            local lease = value[field]
+            if lease ~= nil and type(lease) ~= 'table' then return false end
+        end
+        if value.clusterLease == nil and value.admissionGateLease == nil then return true end
+        return type(value.authorityDeadlineAt) == 'number'
+            and value.authorityDeadlineAt > foundation.monotonicMs()
+    end
+    local function boundedCapacity(value, fallback, maximum)
+        if type(value) ~= 'number' or math.type(value) ~= 'integer'
+            or value < 1 or value > maximum then return fallback end
+        return value
+    end
+    local maximumArtifactsPerOwner = boundedCapacity(
+        deps.maximumArtifactsPerOwner, 8192, 32768)
+    local maximumArtifactsPerKind = boundedCapacity(
+        deps.maximumArtifactsPerKind, 4096, 16384)
+    local maximumOperationsPerOwner = boundedCapacity(
+        deps.maximumOperationsPerOwner, 2048, 8192)
 
     local ownerIndex = {}
     function ownerIndex:epoch(resource)
@@ -27,7 +48,10 @@ factories.registries = function(deps)
         owners[resource] = {
             epoch = resourceEpochs[resource],
             artifacts = {},
+            artifactCount = 0,
+            artifactCounts = {},
             operations = {},
+            operationCount = 0,
             quiescing = false,
             quiesceReason = nil
         }
@@ -61,14 +85,23 @@ factories.registries = function(deps)
         if not self:isCurrent(resource, epoch) then
             return nil, foundation.error('OWNER_QUIESCING', 'The resource owner is unavailable or quiescing.', { retryable = true })
         end
+        local owner = owners[resource]
+        if owner.operationCount >= maximumOperationsPerOwner then
+            return nil, foundation.error('OWNER_OPERATION_LIMIT',
+                'The resource has reached its concurrent operation limit.', {
+                    retryable = true
+                })
+        end
         local token = foundation.nextId('operation')
-        owners[resource].operations[token] = { abort = abort }
+        owner.operations[token] = { abort = abort }
+        owner.operationCount = owner.operationCount + 1
         return token, nil
     end
     function ownerIndex:finishOperation(resource, epoch, token)
         local owner = owners[resource]
         if not owner or owner.epoch ~= epoch or not owner.operations[token] then return false end
         owner.operations[token] = nil
+        owner.operationCount = math.max(0, owner.operationCount - 1)
         return true
     end
     function ownerIndex:pendingCount(resource, epoch)
@@ -92,10 +125,14 @@ factories.registries = function(deps)
         for _, item in ipairs(operations) do
             if owner.operations[item.token] == item.operation then
                 owner.operations[item.token] = nil
+                owner.operationCount = math.max(0, owner.operationCount - 1)
                 if type(item.operation.abort) == 'function' then
                     local ok, err = foundation.safeCall(item.operation.abort, tostring(reason or 'owner quiesced'))
                     if not ok then
-                        report.errors[#report.errors + 1] = { token = item.token, error = tostring(err) }
+                        report.errors[#report.errors + 1] = {
+                            token = item.token,
+                            code = foundation.failureCode(err, 'OPERATION_ABORT_FAILED')
+                        }
                     end
                 end
                 report.aborted = report.aborted + 1
@@ -107,15 +144,41 @@ factories.registries = function(deps)
         if not self:isCurrent(resource, epoch) then
             return nil, foundation.error('STALE_RESOURCE', 'The resource owner epoch is no longer active.')
         end
-        local artifacts = owners[resource].artifacts
+        if type(kind) ~= 'string' or #kind < 1 or #kind > 64
+            or type(token) ~= 'string' or #token < 1 or #token > 128
+            or type(cleanup) ~= 'function' then
+            return nil, foundation.error('INVALID_ARGUMENT',
+                'Tracked owner artifacts require bounded identifiers and a cleanup callback.')
+        end
+        local owner = owners[resource]
+        local artifacts = owner.artifacts
         artifacts[kind] = artifacts[kind] or {}
+        if artifacts[kind][token] ~= nil then
+            return nil, foundation.error('DUPLICATE_OWNER_ARTIFACT',
+                'The owner artifact token is already registered.')
+        end
+        if owner.artifactCount >= maximumArtifactsPerOwner
+            or (owner.artifactCounts[kind] or 0) >= maximumArtifactsPerKind then
+            return nil, foundation.error('OWNER_ARTIFACT_LIMIT',
+                'The resource has reached its tracked artifact limit.')
+        end
         artifacts[kind][token] = cleanup
+        owner.artifactCount = owner.artifactCount + 1
+        owner.artifactCounts[kind] = (owner.artifactCounts[kind] or 0) + 1
         return token, nil
     end
     function ownerIndex:release(resource, kind, token)
         local owner = owners[resource]
-        if not owner or not owner.artifacts[kind] then return false end
+        if not owner or not owner.artifacts[kind]
+            or owner.artifacts[kind][token] == nil then return false end
         owner.artifacts[kind][token] = nil
+        owner.artifactCount = math.max(0, owner.artifactCount - 1)
+        owner.artifactCounts[kind] = math.max(0,
+            (owner.artifactCounts[kind] or 1) - 1)
+        if owner.artifactCounts[kind] == 0 then
+            owner.artifactCounts[kind] = nil
+            owner.artifacts[kind] = nil
+        end
         return true
     end
     function ownerIndex:list()
@@ -125,7 +188,8 @@ factories.registries = function(deps)
                 resource = resource,
                 epoch = owner.epoch,
                 quiescing = owner.quiescing == true,
-                pending = self:pendingCount(resource, owner.epoch)
+                pending = self:pendingCount(resource, owner.epoch),
+                artifacts = owner.artifactCount
             }
         end
         table.sort(result, function(a, b) return a.resource < b.resource end)
@@ -160,7 +224,13 @@ factories.registries = function(deps)
         for _, item in ipairs(cleanups) do
             if type(item.cleanup) == 'function' then
                 local ok, err = foundation.safeCall(item.cleanup)
-                if not ok then report.errors[#report.errors + 1] = { kind = item.kind, token = item.token, error = tostring(err) } end
+                if not ok then
+                    report.errors[#report.errors + 1] = {
+                        kind = item.kind,
+                        token = item.token,
+                        code = foundation.failureCode(err, 'RESOURCE_CLEANUP_FAILED')
+                    }
+                end
             end
             report.cleaned = report.cleaned + 1
         end
@@ -188,6 +258,13 @@ factories.registries = function(deps)
         resource.epoch = ownerIndex:epoch(name)
         if health then resource.health = foundation.copy(health) end
         return foundation.copy(resource), nil
+    end
+    function resourceRegistry:invalidateManifest(name)
+        local resource = resources[name]
+        if not resource then return false end
+        resource.manifest = nil
+        resource.epoch = ownerIndex:epoch(name)
+        return true
     end
     function resourceRegistry:get(name) return resources[name] and foundation.copy(resources[name]) or nil end
     function resourceRegistry:list()
@@ -231,7 +308,14 @@ factories.registries = function(deps)
         pending[tempSource].createdAtMs = foundation.monotonicMs()
         return foundation.copy(pending[tempSource]), nil
     end
-    function playerRegistry:getPending(tempSource) return pending[tempSource] and foundation.copy(pending[tempSource]) or nil end
+    function playerRegistry:getPending(tempSource)
+        local connection = pending[tempSource]
+        return connection and authorityCurrent(connection)
+            and foundation.copy(connection) or nil
+    end
+    function playerRegistry:getRawPending(tempSource)
+        return pending[tempSource] and foundation.copy(pending[tempSource]) or nil
+    end
     function playerRegistry:updatePending(tempSource, mutator)
         local connection = pending[tempSource]
         if not connection then return nil, foundation.error('PENDING_CONNECTION_NOT_FOUND', 'The pending connection does not exist.') end
@@ -239,9 +323,11 @@ factories.registries = function(deps)
         local candidate = foundation.copy(connection)
         local ok, mutationError = foundation.safeCall(mutator, candidate)
         if not ok then
-            return nil, foundation.error('PENDING_CONNECTION_UPDATE_FAILED', 'The pending connection update failed.', {
-                details = tostring(mutationError)
-            })
+            return nil, foundation.error('PENDING_CONNECTION_UPDATE_FAILED',
+                'The pending connection update failed.', {
+                    details = { cause = foundation.failureCode(
+                        mutationError, 'PENDING_MUTATOR_EXCEPTION') }
+                })
         end
         if candidate.id ~= connection.id or candidate.tempSource ~= connection.tempSource then
             return nil, foundation.error('PENDING_CONNECTION_IDENTITY_CHANGED', 'Pending connection identity is immutable.')
@@ -265,6 +351,9 @@ factories.registries = function(deps)
         if not connection or connection.sessionId ~= session.id then
             return nil, foundation.error('PENDING_CONNECTION_NOT_FOUND', 'No accepted connection matches this join.')
         end
+        if sessions[session.id] then
+            return nil, foundation.error('SESSION_ALREADY_BOUND', 'The session is already bound.')
+        end
         if bySource[finalSource] then
             return nil, foundation.error('SOURCE_ALREADY_BOUND', 'The final source is already bound.')
         end
@@ -287,14 +376,32 @@ factories.registries = function(deps)
             byUser[stored.userId] = index
         end
         pending[tempSource] = nil
+        activeSessionCount = activeSessionCount + 1
         return foundation.copy(stored), nil
     end
+    function playerRegistry:activeCount() return activeSessionCount end
     function playerRegistry:getSession(id) return sessions[id] and foundation.copy(sessions[id]) or nil end
     function playerRegistry:getBySource(source)
         local index = bySource[source]
+        local session = index and sessions[index.sessionId] or nil
+        return session and authorityCurrent(session) and foundation.copy(session) or nil
+    end
+    function playerRegistry:getRawBySource(source)
+        local index = bySource[source]
         return index and sessions[index.sessionId] and foundation.copy(sessions[index.sessionId]) or nil
     end
+    function playerRegistry:getByCharacter(characterId)
+        local sessionId = byCharacter[characterId]
+        local session = sessionId and sessions[sessionId] or nil
+        return session and authorityCurrent(session) and foundation.copy(session) or nil
+    end
     function playerRegistry:isCurrent(sessionId, source, generation)
+        local index = bySource[source]
+        local session = index and sessions[index.sessionId] or nil
+        return index ~= nil and index.sessionId == sessionId and index.generation == generation
+            and authorityCurrent(session)
+    end
+    function playerRegistry:isRawCurrent(sessionId, source, generation)
         local index = bySource[source]
         return index ~= nil and index.sessionId == sessionId and index.generation == generation
     end
@@ -319,7 +426,11 @@ factories.registries = function(deps)
         if not session then return nil, foundation.error('SESSION_NOT_FOUND', 'The session does not exist.') end
         local candidate = foundation.copy(session)
         local ok, err = foundation.safeCall(mutator, candidate)
-        if not ok then return nil, foundation.error('SESSION_UPDATE_FAILED', 'The session update failed.', { details = tostring(err) }) end
+        if not ok then
+            return nil, foundation.error('SESSION_UPDATE_FAILED', 'The session update failed.', {
+                details = { cause = foundation.failureCode(err, 'SESSION_MUTATOR_EXCEPTION') }
+            })
+        end
         sessions[sessionId] = candidate
         return foundation.copy(candidate), nil
     end
@@ -341,21 +452,27 @@ factories.registries = function(deps)
         session.characterId = nil
         return foundation.copy(session), nil
     end
-    function playerRegistry:bindIdentifier(identifier, userId)
-        local existing = byIdentifier[identifier]
-        if existing and existing ~= userId then
-            return nil, foundation.error('IDENTIFIER_CONFLICT', 'The identifier belongs to another user.')
-        end
-        byIdentifier[identifier] = userId
-        return true, nil
-    end
-    function playerRegistry:userByIdentifier(identifier) return byIdentifier[identifier] end
     function playerRegistry:sessionsByUser(userId)
         local index = byUser[userId]
         local result = {}
         if index then
             for sessionId in pairs(index.sessions) do
-                if sessions[sessionId] then result[#result + 1] = foundation.copy(sessions[sessionId]) end
+                if sessions[sessionId] and authorityCurrent(sessions[sessionId]) then
+                    result[#result + 1] = foundation.copy(sessions[sessionId])
+                end
+            end
+        end
+        table.sort(result, function(a, b) return a.id < b.id end)
+        return result
+    end
+    function playerRegistry:rawSessionsByUser(userId)
+        local index = byUser[userId]
+        local result = {}
+        if index then
+            for sessionId in pairs(index.sessions) do
+                if sessions[sessionId] then
+                    result[#result + 1] = foundation.copy(sessions[sessionId])
+                end
             end
         end
         table.sort(result, function(a, b) return a.id < b.id end)
@@ -381,6 +498,7 @@ factories.registries = function(deps)
         end
         if session.characterId and byCharacter[session.characterId] == sessionId then byCharacter[session.characterId] = nil end
         sessions[sessionId] = nil
+        activeSessionCount = math.max(0, activeSessionCount - 1)
         return foundation.copy(session)
     end
     function playerRegistry:snapshot()
@@ -392,7 +510,7 @@ factories.registries = function(deps)
     end
     function playerRegistry:summary()
         local summary = {
-            activeSessions = 0,
+            activeSessions = activeSessionCount,
             pendingConnections = 0,
             expiredPendingConnections = 0,
             oldestPendingAgeMs = 0,
@@ -400,7 +518,6 @@ factories.registries = function(deps)
             states = {}
         }
         for _, session in pairs(sessions) do
-            summary.activeSessions = summary.activeSessions + 1
             summary.states[session.state] = (summary.states[session.state] or 0) + 1
         end
         local now = foundation.monotonicMs()

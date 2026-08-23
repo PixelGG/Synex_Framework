@@ -11,6 +11,28 @@ factories.bootstrapDiscovery = function(deps)
     local runtimeGate = assert(deps.runtimeGate, 'bootstrap discovery requires runtime gate')
     local manifests = deps.manifests or {}
     local ownerSnapshotMaximumBytes = deps.ownerSnapshotMaximumBytes or 65536
+    local discoveryRevision = 0
+    local validatedRevisions = {}
+    local ownerRevisions = {}
+    local criticalResources = {}
+
+    local function invalidateResource(name)
+        local previous = manifests[name]
+        if previous and previous.critical == true then criticalResources[name] = true end
+        manifests[name] = nil
+        validatedRevisions[name] = nil
+        ownerRevisions[name] = nil
+        if type(security.capabilities.unregisterManifest) == 'function' then
+            security.capabilities:unregisterManifest(name)
+        end
+        if type(lifecycle.dependencies.removeConsumer) == 'function' then
+            lifecycle.dependencies:removeConsumer(name)
+        end
+        if type(registries.resources.invalidateManifest) == 'function' then
+            registries.resources:invalidateManifest(name)
+        end
+        return true
+    end
 
     local function resourceManifestPath(name)
         local path = platform.resourceMetadata(name, 'synex_manifest', 0)
@@ -24,6 +46,7 @@ factories.bootstrapDiscovery = function(deps)
     end
 
     local function discoverResource(name)
+        invalidateResource(name)
         local path = resourceManifestPath(name)
         if not path then return nil, nil end
         local raw = platform.loadResourceFile(name, path)
@@ -32,9 +55,7 @@ factories.bootstrapDiscovery = function(deps)
         if not ok then return nil, foundation.error('RESOURCE_MANIFEST_INVALID_JSON', ('%s has invalid manifest JSON.'):format(name)) end
         local valid, manifestError = validateManifest(name, manifest)
         if not valid then return nil, manifestError end
-        manifests[name] = manifest
         security.capabilities:registerManifest(name, manifest)
-        registries.resources:upsert(name, manifest, platform.resourceState(name))
         for _, requirement in ipairs(manifest.services.require or {}) do
             local service, major = requirement:match('^(.+)@(%d+)$')
             lifecycle.dependencies:require(name, service, '^' .. tostring(major) .. '.0.0', false, manifest.critical)
@@ -43,6 +64,11 @@ factories.bootstrapDiscovery = function(deps)
             local service, major = requirement:match('^(.+)@(%d+)$')
             lifecycle.dependencies:require(name, service, '^' .. tostring(major) .. '.0.0', true, manifest.critical)
         end
+        registries.resources:upsert(name, manifest, platform.resourceState(name))
+        manifests[name] = manifest
+        criticalResources[name] = manifest.critical == true or nil
+        discoveryRevision = discoveryRevision + 1
+        validatedRevisions[name] = discoveryRevision
         return manifest, nil
     end
 
@@ -63,18 +89,36 @@ factories.bootstrapDiscovery = function(deps)
     local function ensureOwner(name)
         local available, availabilityError = runtimeGate:requireAvailable()
         if not available then return nil, availabilityError end
+        local resourceState = platform.resourceState(name)
+        if resourceState ~= 'started' and resourceState ~= 'starting' then
+            return nil, foundation.error('RESOURCE_UNAVAILABLE',
+                'The calling resource is not active.', { retryable = true })
+        end
         local manifest = manifests[name]
-        if not manifest then
+        local validatedRevision = validatedRevisions[name]
+        if not manifest or not validatedRevision then
             local _, err = discoverResource(name)
             if err then return nil, err end
             manifest = manifests[name]
+            validatedRevision = validatedRevisions[name]
         end
-        if not manifest then return nil, foundation.error('RESOURCE_NOT_REGISTERED', 'The calling resource has no Synex manifest.') end
+        if not manifest or not validatedRevision then
+            return nil, foundation.error('RESOURCE_NOT_REGISTERED',
+                'The calling resource has no currently validated Synex manifest.')
+        end
         local epoch = registries.owners:epoch(name)
         if registries.owners:isQuiescing(name, epoch) then
             return nil, foundation.error('OWNER_QUIESCING', 'The calling resource is stopping or restarting.', { retryable = true })
         end
-        if not registries.owners:isCurrent(name, epoch) then epoch = registries.owners:activate(name) end
+        if registries.owners:isCurrent(name, epoch) then
+            if ownerRevisions[name] ~= validatedRevision then
+                return nil, foundation.error('STALE_RESOURCE',
+                    'The calling resource owner does not match its validated manifest revision.', { retryable = true })
+            end
+            return epoch, nil
+        end
+        epoch = registries.owners:activate(name)
+        ownerRevisions[name] = validatedRevision
         return epoch, nil
     end
 
@@ -117,6 +161,17 @@ factories.bootstrapDiscovery = function(deps)
     local function validateActive(inactiveResource, includeInactiveCritical)
         local findings = lifecycle.dependencies:validate(inactiveResource)
         local graph = lifecycle.dependencies:snapshot()
+        if includeInactiveCritical == true then
+            for name in pairs(criticalResources) do
+                if manifests[name] == nil then
+                    findings[#findings + 1] = {
+                        kind = 'resource', resource = name,
+                        state = tostring(platform.resourceState(name)),
+                        code = 'RESOURCE_MANIFEST_UNAVAILABLE', severity = 'error'
+                    }
+                end
+            end
+        end
         for name, manifest in pairs(manifests) do
             local state = name == inactiveResource and 'stopped' or platform.resourceState(name)
             local active = state == 'started' or state == 'starting'
@@ -136,8 +191,10 @@ factories.bootstrapDiscovery = function(deps)
                 for _, provided in ipairs(manifest.services.provide or {}) do
                     local service, major = provided:match('^(.+)@(%d+)$')
                     local version = graph.providers[service] and graph.providers[service][name]
+                        and graph.providers[service][name][major] or nil
                     local runtimeHealth = graph.providerHealth and graph.providerHealth[service]
-                        and graph.providerHealth[service][name] or nil
+                        and graph.providerHealth[service][name]
+                        and graph.providerHealth[service][name][major] or nil
                     if service and (not version or not foundation.semverSatisfies(version,
                         '^' .. tostring(major) .. '.0.0')) then
                         findings[#findings + 1] = {
@@ -169,6 +226,7 @@ factories.bootstrapDiscovery = function(deps)
 
     local function supportsStateHandoff(name)
         local manifest = manifests[name]
+        if not validatedRevisions[name] then return false end
         local snapshot = manifest and manifest.stateSnapshot or nil
         return type(snapshot) == 'table' and snapshot.supported == true and snapshot.schemaVersion == 1
     end
@@ -189,6 +247,7 @@ factories.bootstrapDiscovery = function(deps)
 
     return {
         manifests = manifests,
+        invalidateResource = invalidateResource,
         discoverAll = discoverAll,
         discoverResource = discoverResource,
         ensureOwner = ensureOwner,

@@ -4,7 +4,6 @@ factories.identityRepository = function(deps)
     local platform = assert(deps.platform, 'identity repository requires platform')
     local foundation = assert(deps.foundation, 'identity repository requires foundation')
     local database = assert(deps.database, 'identity repository requires database')
-    local players = assert(deps.players, 'identity repository requires player registry')
     local config = deps.config or {}
     local normalizeIdentifiers = assert(deps.normalizeIdentifiers, 'identity repository requires identifier normalization')
 
@@ -94,100 +93,14 @@ factories.identityRepository = function(deps)
         if not verified or verified.id ~= user.id then
             return nil, foundation.error('IDENTIFIER_CONFLICT', 'Identifier ownership changed during authentication.')
         end
-        for _, identifier in ipairs(identifiers) do players:bindIdentifier(identifier.normalized, user.id) end
         return foundation.copy(user), nil
     end
 
-    local sessionRepository = {}
-    function sessionRepository:create(session)
-        local lease = session.clusterLease
-        local leaseName = type(lease) == 'table' and (lease.name or lease.leaseName) or nil
-        if type(leaseName) ~= 'string' or type(lease.owner) ~= 'string'
-            or type(lease.fencingToken) ~= 'number'
-            or type(lease.requesterInstanceId) ~= 'string'
-            or lease.requesterInstanceId ~= deps.instanceId
-            or type(lease.requesterBootId) ~= 'string'
-            or #lease.requesterBootId < 1 or #lease.requesterBootId > 36 then
-            return nil, foundation.error('LEASE_LOST', 'Session authority is missing or invalid.')
-        end
-        local authorityError = nil
-        local committed, transactionError = database:withTransaction(function(query)
-            local requester = query([[SELECT `status` FROM `synex_instances`
-                WHERE `instance_id` = ? AND `status` = 'ready' FOR UPDATE]],
-                { lease.requesterInstanceId }) or {}
-            if not requester[1] then
-                authorityError = foundation.error('LEASE_LOST',
-                    'Session requester authority changed before persistence.', { retryable = true })
-                return false
-            end
-            local boot = query([[SELECT `boot_id` FROM `synex_instance_boots`
-                WHERE `instance_id` = ? AND `boot_id` = ? FOR UPDATE]],
-                { lease.requesterInstanceId, lease.requesterBootId }) or {}
-            if not boot[1] then
-                authorityError = foundation.error('LEASE_LOST',
-                    'Session boot authority changed before persistence.', { retryable = true })
-                return false
-            end
-            local leaseRows = query([[SELECT `owner_id`, `fencing_token`,
-                    (`expires_at` > CURRENT_TIMESTAMP(6)) AS `valid`
-                FROM `synex_cluster_leases` WHERE `lease_name` = ? FOR UPDATE]], { leaseName }) or {}
-            local current = leaseRows[1]
-            if not current or current.owner_id ~= lease.owner
-                or tonumber(current.fencing_token) ~= lease.fencingToken or tonumber(current.valid) ~= 1 then
-                authorityError = foundation.error('LEASE_LOST',
-                    'Session authority changed before persistence.', { retryable = true })
-                return false
-            end
-            query([[INSERT INTO `synex_sessions`
-                (`id`, `user_id`, `server_instance_id`, `source_value`, `source_generation`, `state`,
-                    `character_id`, `connected_at`, `last_seen_at`, `version`)
-                VALUES (?, ?, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6), ?)]], {
-                session.id, session.userId, deps.instanceId, session.source, session.sourceGeneration or 0,
-                session.state, session.version or 1
-            })
-            return true
-        end)
-        if not committed then return nil, authorityError or transactionError end
-        return true, nil
-    end
-    function sessionRepository:update(session)
-        local affected, err = database:update([[UPDATE `synex_sessions`
-            SET `source_value` = COALESCE(?, `source_value`), `source_generation` = ?, `state` = ?, `character_id` = ?,
-                `last_seen_at` = CURRENT_TIMESTAMP(6), `version` = ?
-            WHERE `id` = ? AND `version` = ?]], {
-            session.source, session.sourceGeneration or 0, session.state, session.characterId,
-            session.version, session.id, session.persistedVersion or math.max(1, (session.version or 1) - 1)
-        })
-        if err then return nil, err end
-        if tonumber(affected) ~= 1 then return nil, foundation.error('SESSION_CONFLICT', 'The session changed concurrently.', { retryable = true }) end
-        return true, nil
-    end
-    function sessionRepository:getState(sessionId)
-        local rows, err = database:query([[SELECT `state`, `character_id`, `version`
-            FROM `synex_sessions` WHERE `id` = ? LIMIT 1]], { sessionId })
-        if err then return nil, err end
-        local row = rows and rows[1]
-        if not row then return nil, foundation.error('SESSION_NOT_FOUND', 'The session does not exist.') end
-        local version = tonumber(row.version)
-        if type(row.state) ~= 'string' or not version or math.type(version) ~= 'integer' or version < 1 then
-            return nil, foundation.error('INVALID_DATABASE_RESULT', 'The persisted session state is invalid.')
-        end
-        return { state = row.state, characterId = row.character_id, version = version }, nil
-    end
-    function sessionRepository:close(session, reason)
-        local affected, err = database:update([[UPDATE `synex_sessions`
-            SET `state` = 'CLOSED', `closed_at` = CURRENT_TIMESTAMP(6), `close_reason` = ?,
-                `last_seen_at` = CURRENT_TIMESTAMP(6), `version` = `version` + 1
-            WHERE `id` = ? AND `closed_at` IS NULL]], { tostring(reason or 'disconnected'):sub(1, 128), session.id })
-        if err then return nil, err end
-        if tonumber(affected) ~= 1 then
-            return nil, foundation.error('SESSION_CONFLICT', 'The session was already closed or changed concurrently.', {
-                retryable = true
-            })
-        end
-        return true, nil
-    end
-
+    local sessionRepository = factories.identitySessionFencing({
+        foundation = foundation,
+        database = database,
+        instanceId = deps.instanceId
+    })
     local accessRepository = {}
     local function validAccessId(value)
         return type(value) == 'string' and #value >= 8 and #value <= 36
@@ -494,38 +407,8 @@ factories.identityRepository = function(deps)
             metadata = ok and metadata or {}, version = tonumber(row.version)
         }
     end
-    function characterRepository:create(userId, input)
-        local slotRows, slotError = database:query([[SELECT `slot_limit` FROM `synex_character_slots`
-            WHERE `user_id` = ? LIMIT 1]], { userId })
-        if slotError then return nil, slotError end
-        local slotLimit = slotRows and slotRows[1] and tonumber(slotRows[1].slot_limit) or 1
-        local slot = tonumber(input.slot)
-        if not slot or math.type(slot) ~= 'integer' or slot < 1 or slot > slotLimit then
-            return nil, foundation.error('CHARACTER_SLOT_UNAVAILABLE', 'The requested character slot is unavailable.')
-        end
-        local function validName(value)
-            return type(value) == 'string' and #value >= 1 and #value <= 64
-                and not value:find('[%z\1-\31\127]')
-        end
-        if not validName(input.firstName) or not validName(input.lastName) then
-            return nil, foundation.error('INVALID_CHARACTER_NAME', 'Character names must contain between 1 and 64 bytes without control characters.')
-        end
-        if input.dateOfBirth ~= nil and (type(input.dateOfBirth) ~= 'string' or not input.dateOfBirth:match('^%d%d%d%d%-%d%d%-%d%d$')) then
-            return nil, foundation.error('INVALID_DATE_OF_BIRTH', 'Date of birth must use YYYY-MM-DD.')
-        end
-        local characterId = foundation.nextId('char')
-        local inserted, insertError = database:insert([[INSERT INTO `synex_characters`
-            (`id`, `user_id`, `slot`, `status`, `first_name`, `last_name`, `date_of_birth`, `metadata_json`, `version`)
-            VALUES (?, ?, ?, 'active', ?, ?, ?, '{}', 1)]], {
-            characterId, userId, slot, input.firstName, input.lastName, input.dateOfBirth
-        })
-        if insertError then return nil, insertError end
-        if inserted == nil then return nil, foundation.error('CHARACTER_CREATE_FAILED', 'The character could not be created.') end
-        return {
-            id = characterId, userId = userId, slot = slot, status = 'active',
-            firstName = input.firstName, lastName = input.lastName,
-            dateOfBirth = input.dateOfBirth, metadata = {}, version = 1
-        }, nil
+    function characterRepository:create(session, input, authorityGuard)
+        return sessionRepository:createCharacter(session, input, authorityGuard)
     end
     function characterRepository:list(userId)
         local rows, err = database:query([[SELECT `id`, `user_id`, `slot`, `status`, `first_name`, `last_name`,

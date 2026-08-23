@@ -100,6 +100,50 @@ factories.persistence = function(deps)
         end
         return tostring(value or '')
     end
+    local databaseClassifications = {
+        [1062] = 'UNIQUE_VIOLATION',
+        [1048] = 'NOT_NULL_VIOLATION',
+        [1205] = 'LOCK_TIMEOUT',
+        [1213] = 'DEADLOCK',
+        [1406] = 'VALUE_TOO_LONG',
+        [1451] = 'FOREIGN_KEY_VIOLATION',
+        [1452] = 'FOREIGN_KEY_VIOLATION',
+        [3819] = 'CHECK_CONSTRAINT_VIOLATION'
+    }
+    local databaseCodeClassifications = {
+        ER_DUP_ENTRY = 'UNIQUE_VIOLATION',
+        ER_BAD_NULL_ERROR = 'NOT_NULL_VIOLATION',
+        ER_LOCK_WAIT_TIMEOUT = 'LOCK_TIMEOUT',
+        ER_LOCK_DEADLOCK = 'DEADLOCK',
+        ER_DATA_TOO_LONG = 'VALUE_TOO_LONG',
+        ER_ROW_IS_REFERENCED_2 = 'FOREIGN_KEY_VIOLATION',
+        ER_NO_REFERENCED_ROW_2 = 'FOREIGN_KEY_VIOLATION',
+        ER_CHECK_CONSTRAINT_VIOLATED = 'CHECK_CONSTRAINT_VIOLATION'
+    }
+    local function failureMetadata(value)
+        local metadata = {}
+        if type(value) ~= 'table' then return metadata end
+        local errno = tonumber(value.errno)
+        if errno and math.type(errno) == 'integer' and errno >= 0 and errno <= 999999 then
+            metadata.errno = errno
+        end
+        local sqlState = value.sqlState or value.sqlstate
+        if type(sqlState) == 'string' and #sqlState == 5
+            and sqlState:match('^[A-Za-z0-9]+$') then
+            metadata.sqlState = sqlState:upper()
+        end
+        metadata.databaseCode = databaseClassifications[errno]
+            or (type(value.code) == 'string' and databaseCodeClassifications[value.code])
+            or 'DATABASE_FAILURE'
+        return metadata
+    end
+    local function logDatabaseFailure(message, fields, failure, failureType)
+        local safeFields = {}
+        for key, value in pairs(fields or {}) do safeFields[key] = value end
+        for key, value in pairs(failureMetadata(failure)) do safeFields[key] = value end
+        safeFields.failureType = failureType
+        logger:error(message, safeFields)
+    end
     local function isRetryableDeadlock(value)
         local detail = failureDetails(value):lower()
         return detail:find('1213', 1, true) ~= nil
@@ -137,10 +181,10 @@ factories.persistence = function(deps)
         end
         if not ok or adapterError ~= nil then
             local failure = ok and adapterError or value
-            logger:error('database operation failed', {
-                kind = kind, statementHash = sha256(sql), error = failureDetails(failure),
+            logDatabaseFailure('database operation failed', {
+                kind = kind, statementHash = sha256(sql),
                 resource = attributed.resource, operation = attributed.operation, traceId = attributed.traceId
-            })
+            }, failure, ok and 'adapter_error' or 'adapter_exception')
             return nil, foundation.error('DATABASE_ERROR', 'The database operation failed.', {
                 retryable = isRetryableDeadlock(failure)
             })
@@ -194,7 +238,9 @@ factories.persistence = function(deps)
                 metrics:increment('synex_db_deadlock_retries_total', { kind = 'batch' })
                 platform.wait(math.min(100, attempt * 10))
             else
-                logger:error('database transaction failed', { durationMs = duration, error = failureDetails(failure), attempt = attempt })
+                logDatabaseFailure('database transaction failed', {
+                    durationMs = duration, attempt = attempt
+                }, failure, ok and 'rejected' or 'adapter_exception')
                 if not ok then
                     return nil, foundation.error('DATABASE_ERROR', 'The database transaction failed.', { retryable = deadlock })
                 end
@@ -221,7 +267,9 @@ factories.persistence = function(deps)
                 metrics:increment('synex_db_deadlock_retries_total', { kind = 'interactive' })
                 platform.wait(math.min(100, attempt * 10))
             else
-                logger:error('interactive database transaction failed', { durationMs = duration, error = failureDetails(failure), attempt = attempt })
+                logDatabaseFailure('interactive database transaction failed', {
+                    durationMs = duration, attempt = attempt
+                }, failure, ok and 'rejected' or 'adapter_exception')
                 if not ok then
                     return nil, foundation.error('DATABASE_ERROR', 'The interactive database transaction failed.', { retryable = deadlock })
                 end
@@ -272,6 +320,34 @@ factories.persistence = function(deps)
                 CHECK ((`state` = 'applying' AND `finished_at` IS NULL)
                     OR (`state` IN ('applied', 'failed') AND `finished_at` IS NOT NULL))
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+        [[CREATE TABLE IF NOT EXISTS `synex_schema_migration_fences` (
+            `resource_name` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `migration_id` VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `checksum_sha256` CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `owner_id` VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `fencing_token` BIGINT UNSIGNED NOT NULL,
+            `state` VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+            `statement_count` SMALLINT UNSIGNED NOT NULL,
+            `completed_statements` SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+            `last_error_code` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
+            `started_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+            `finished_at` DATETIME(6) NULL,
+            `updated_at` DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+            PRIMARY KEY (`resource_name`, `migration_id`),
+            KEY `idx_schema_migration_fences_state` (`state`, `updated_at`),
+            KEY `idx_schema_migration_fences_owner` (`owner_id`, `fencing_token`),
+            CONSTRAINT `chk_schema_migration_fences_checksum`
+                CHECK (`checksum_sha256` REGEXP '^[0-9a-f]{64}$'),
+            CONSTRAINT `chk_schema_migration_fences_token`
+                CHECK (`fencing_token` > 0),
+            CONSTRAINT `chk_schema_migration_fences_state`
+                CHECK (`state` IN ('applying', 'applied', 'failed', 'indeterminate')),
+            CONSTRAINT `chk_schema_migration_fences_progress`
+                CHECK (`completed_statements` <= `statement_count`),
+            CONSTRAINT `chk_schema_migration_fences_finished`
+                CHECK ((`state` = 'applying' AND `finished_at` IS NULL)
+                    OR (`state` IN ('applied', 'failed', 'indeterminate') AND `finished_at` IS NOT NULL))
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;]],
         [[CREATE TABLE IF NOT EXISTS `synex_cluster_leases` (
             `lease_name` VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
             `owner_id` VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
@@ -354,31 +430,94 @@ factories.persistence = function(deps)
             or maximumResources < 1 or maximumResources > 256 then
             return nil, foundation.error('INVALID_ARGUMENT', 'Migration snapshot limit must be an integer from 1 through 256.')
         end
-        local rows, err = database:query([[SELECT `resource_name`, COUNT(*) AS `total_count`,
-                SUM(CASE WHEN `state` = 'applied' THEN 1 ELSE 0 END) AS `applied_count`,
-                SUM(CASE WHEN `state` = 'applying' THEN 1 ELSE 0 END) AS `applying_count`,
-                SUM(CASE WHEN `state` = 'failed' THEN 1 ELSE 0 END) AS `failed_count`,
-                SUM(`attempts`) AS `attempt_count`
+        local recordMaximum = math.min(4096, math.max(64, maximumResources * 16))
+        local attemptRows, attemptError = database:query([[SELECT `resource_name`, `migration_id`,
+                `state`, `attempts`
             FROM `synex_schema_migration_attempts`
-            GROUP BY `resource_name` ORDER BY `resource_name` LIMIT ?]], { maximumResources + 1 })
-        if err then return nil, err end
-        rows = rows or {}
+            ORDER BY `resource_name`, `migration_id` LIMIT ?]], { recordMaximum + 1 })
+        if attemptError then return nil, attemptError end
+        local fenceRows, fenceError = database:query([[SELECT `resource_name`, `migration_id`, `state`
+            FROM `synex_schema_migration_fences`
+            ORDER BY `resource_name`, `migration_id` LIMIT ?]], { recordMaximum + 1 })
+        if fenceError then return nil, fenceError end
+        if type(attemptRows) ~= 'table' or type(fenceRows) ~= 'table'
+            or #attemptRows > recordMaximum + 1 or #fenceRows > recordMaximum + 1 then
+            return nil, foundation.error('MIGRATION_SNAPSHOT_INVALID',
+                'The bounded migration snapshot is invalid.', { retryable = true })
+        end
+        local attemptStates = { applying = true, applied = true, failed = true }
+        local fenceStates = { applying = true, applied = true, failed = true, indeterminate = true }
+        local effective = {}
+        local function identity(row, states, includeAttempts)
+            local resource = type(row) == 'table' and row.resource_name or nil
+            local migration = type(row) == 'table' and row.migration_id or nil
+            local state = type(row) == 'table' and row.state or nil
+            local attempts = includeAttempts and tonumber(row.attempts) or 0
+            if type(resource) ~= 'string' or #resource < 1 or #resource > 64
+                or not resource:match('^[a-z][a-z0-9_]*$')
+                or type(migration) ~= 'string' or #migration < 1 or #migration > 96
+                or not migration:match('^%d%d%d_[a-z0-9_]+$') or not states[state]
+                or not attempts or math.type(attempts) ~= 'integer'
+                or attempts < (includeAttempts and 1 or 0) or attempts > 4294967295 then
+                return nil, foundation.error('MIGRATION_SNAPSHOT_INVALID',
+                    'The bounded migration snapshot contains an invalid row.', { retryable = true })
+            end
+            return {
+                key = resource .. '\0' .. migration,
+                resource = resource,
+                migration = migration,
+                state = state,
+                attempts = attempts
+            }, nil
+        end
+        for index = 1, math.min(#attemptRows, recordMaximum) do
+            local entry, entryError = identity(attemptRows[index], attemptStates, true)
+            if not entry then return nil, entryError end
+            effective[entry.key] = entry
+        end
+        for index = 1, math.min(#fenceRows, recordMaximum) do
+            local entry, entryError = identity(fenceRows[index], fenceStates, false)
+            if not entry then return nil, entryError end
+            local previous = effective[entry.key]
+            if previous then entry.attempts = previous.attempts end
+            effective[entry.key] = entry
+        end
+
+        local grouped = {}
+        for _, row in pairs(effective) do
+            local entry = grouped[row.resource]
+            if not entry then
+                entry = {
+                    resource = row.resource,
+                    defined = 0, applied = 0, applying = 0,
+                    failed = 0, indeterminate = 0, attempts = 0
+                }
+                grouped[row.resource] = entry
+            end
+            entry.defined = entry.defined + 1
+            entry[row.state] = entry[row.state] + 1
+            entry.attempts = entry.attempts + row.attempts
+        end
+        local resourceNames = {}
+        for resource in pairs(grouped) do resourceNames[#resourceNames + 1] = resource end
+        table.sort(resourceNames)
         local resources = {}
-        local totals = { defined = 0, applied = 0, applying = 0, failed = 0, attempts = 0 }
-        for index = 1, math.min(#rows, maximumResources) do
-            local row = rows[index]
-            local entry = {
-                resource = row.resource_name,
-                defined = tonumber(row.total_count) or 0,
-                applied = tonumber(row.applied_count) or 0,
-                applying = tonumber(row.applying_count) or 0,
-                failed = tonumber(row.failed_count) or 0,
-                attempts = tonumber(row.attempt_count) or 0
-            }
+        local totals = {
+            defined = 0, applied = 0, applying = 0, failed = 0, indeterminate = 0, attempts = 0
+        }
+        for index = 1, math.min(#resourceNames, maximumResources) do
+            local entry = grouped[resourceNames[index]]
             resources[index] = entry
             for key in pairs(totals) do totals[key] = totals[key] + entry[key] end
         end
-        return { resources = resources, totals = totals, truncated = #rows > maximumResources }, nil
+        local recordsTruncated = #attemptRows > recordMaximum or #fenceRows > recordMaximum
+        return {
+            resources = resources,
+            totals = totals,
+            truncated = recordsTruncated or #resourceNames > maximumResources,
+            recordsTruncated = recordsTruncated,
+            recordMaximum = recordMaximum
+        }, nil
     end
 
     local function splitStatements(contents)
@@ -398,115 +537,453 @@ factories.persistence = function(deps)
         return statements
     end
 
-    local function recordMigrationFailure(resourceName, migrationId, errorCode)
-        local _, markerError = database:update([[UPDATE `synex_schema_migration_attempts`
-            SET `state` = 'failed', `last_error_code` = ?, `finished_at` = CURRENT_TIMESTAMP(6)
-            WHERE `resource_name` = ? AND `migration_id` = ?]],
-            { errorCode, resourceName, migrationId })
-        if markerError then
-            logger:error('migration failure marker write failed', {
-                resource = resourceName,
-                migration = migrationId,
-                primaryCode = errorCode,
-                code = markerError.code
-            })
-            return nil, markerError
+    local function migrationError(code, message, options)
+        options = options or {}
+        options.retryable = false
+        return foundation.error(code, message, options)
+    end
+
+    local function withCurrentMigrationLease(handler)
+        local heldFence = fence
+        if not heldFence then
+            return nil, migrationError('LEASE_LOST', 'No current migration lease fence is held.')
         end
-        return true, nil
+        local operationError, operationResult = nil, nil
+        local committed, transactionError = database:withTransaction(function(query)
+            local leaseRows = query([[SELECT `owner_id`, `fencing_token`,
+                    (`expires_at` > CURRENT_TIMESTAMP(6)) AS `valid`
+                FROM `synex_cluster_leases`
+                WHERE `lease_name` = ? FOR UPDATE]], { leaseName }) or {}
+            local leaseRow = leaseRows[1]
+            if not leaseRow or leaseRow.owner_id ~= leaseOwner
+                or tonumber(leaseRow.fencing_token) ~= heldFence or tonumber(leaseRow.valid) ~= 1 then
+                operationError = migrationError('LEASE_LOST',
+                    'The migration lease owner or fencing token is no longer current.')
+                return false
+            end
+            local accepted, value, handlerError = handler(query, heldFence)
+            if accepted ~= true then
+                operationError = handlerError or migrationError('MIGRATION_FENCE_LOST',
+                    'The migration ownership fence changed unexpectedly.')
+                return false
+            end
+            operationResult = value
+            return true
+        end)
+        if not committed then return nil, operationError or transactionError end
+        return operationResult == nil and true or operationResult, nil
+    end
+
+    local function checksumError(resourceName, migrationId, context)
+        return migrationError('MIGRATION_CHECKSUM_MISMATCH',
+            ('%s migration %s/%s has a different checksum.'):format(context, resourceName, migrationId))
+    end
+
+    local function claimMigration(resourceName, migrationId, checksum, statementCount)
+        return withCurrentMigrationLease(function(query, heldFence)
+            local appliedRows = query([[SELECT `checksum_sha256`, `instance_id`
+                FROM `synex_schema_migrations`
+                WHERE `resource_name` = ? AND `migration_id` = ? FOR UPDATE]],
+                { resourceName, migrationId }) or {}
+            local fenceRows = query([[SELECT `checksum_sha256`, `owner_id`, `fencing_token`, `state`,
+                    `statement_count`, `completed_statements`
+                FROM `synex_schema_migration_fences`
+                WHERE `resource_name` = ? AND `migration_id` = ? FOR UPDATE]],
+                { resourceName, migrationId }) or {}
+            local attemptRows = query([[SELECT `checksum_sha256`, `state`, `attempts`
+                FROM `synex_schema_migration_attempts`
+                WHERE `resource_name` = ? AND `migration_id` = ? FOR UPDATE]],
+                { resourceName, migrationId }) or {}
+            local applied, ownedFence, attempt = appliedRows[1], fenceRows[1], attemptRows[1]
+
+            if applied and applied.checksum_sha256 ~= checksum then
+                return false, nil, checksumError(resourceName, migrationId, 'Applied')
+            end
+            if ownedFence and ownedFence.checksum_sha256 ~= checksum then
+                return false, nil, checksumError(resourceName, migrationId, 'Fenced')
+            end
+            if attempt and attempt.checksum_sha256 ~= checksum then
+                return false, nil, checksumError(resourceName, migrationId, 'Attempted')
+            end
+
+            if applied then
+                if ownedFence and ownedFence.state ~= 'applied' then
+                    return false, nil, migrationError('MIGRATION_STATE_INCONSISTENT',
+                        ('Migration %s/%s has an applied marker but a non-applied fence.'):format(
+                            resourceName, migrationId))
+                end
+                if not ownedFence then
+                    query([[INSERT INTO `synex_schema_migration_fences`
+                        (`resource_name`, `migration_id`, `checksum_sha256`, `owner_id`, `fencing_token`,
+                         `state`, `statement_count`, `completed_statements`, `last_error_code`,
+                         `started_at`, `finished_at`)
+                        VALUES (?, ?, ?, ?, ?, 'applied', ?, ?, NULL,
+                            CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6))]],
+                        { resourceName, migrationId, checksum, leaseOwner, heldFence,
+                            statementCount, statementCount })
+                end
+                query([[INSERT INTO `synex_schema_migration_attempts`
+                    (`resource_name`, `migration_id`, `checksum_sha256`, `state`, `attempts`,
+                     `last_error_code`, `started_at`, `finished_at`)
+                    VALUES (?, ?, ?, 'applied', 1, NULL, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6))
+                    ON DUPLICATE KEY UPDATE `state` = 'applied', `last_error_code` = NULL,
+                        `finished_at` = CURRENT_TIMESTAMP(6)]], { resourceName, migrationId, checksum })
+                return true, { execute = false }
+            end
+
+            if ownedFence then
+                if ownedFence.state == 'applying' or ownedFence.state == 'failed'
+                    or ownedFence.state == 'indeterminate' then
+                    return false, nil, migrationError('MIGRATION_INDETERMINATE',
+                        ('Migration %s/%s has an unresolved fenced attempt and will not be reclaimed automatically.')
+                            :format(resourceName, migrationId))
+                end
+                if ownedFence.state == 'applied' then
+                    return false, nil, migrationError('MIGRATION_STATE_INCONSISTENT',
+                        ('Migration %s/%s has a completed fence but no applied marker.'):format(
+                            resourceName, migrationId))
+                end
+                return false, nil, migrationError('MIGRATION_STATE_INCONSISTENT',
+                    ('Migration %s/%s has an unsupported fence state.'):format(resourceName, migrationId))
+            end
+
+            if attempt then
+                query([[INSERT INTO `synex_schema_migration_fences`
+                    (`resource_name`, `migration_id`, `checksum_sha256`, `owner_id`, `fencing_token`,
+                     `state`, `statement_count`, `completed_statements`, `last_error_code`,
+                     `started_at`, `finished_at`)
+                    VALUES (?, ?, ?, ?, ?, 'indeterminate', ?, 0, 'LEGACY_ATTEMPT',
+                        CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6))]],
+                    { resourceName, migrationId, checksum, leaseOwner, heldFence, statementCount })
+                return true, {
+                    error = migrationError('MIGRATION_INDETERMINATE',
+                        ('Legacy migration attempt %s/%s is unresolved and will not be reclaimed automatically.')
+                            :format(resourceName, migrationId))
+                }
+            end
+
+            query([[INSERT INTO `synex_schema_migration_fences`
+                (`resource_name`, `migration_id`, `checksum_sha256`, `owner_id`, `fencing_token`,
+                 `state`, `statement_count`, `completed_statements`, `last_error_code`,
+                 `started_at`, `finished_at`)
+                VALUES (?, ?, ?, ?, ?, 'applying', ?, 0, NULL, CURRENT_TIMESTAMP(6), NULL)]],
+                { resourceName, migrationId, checksum, leaseOwner, heldFence, statementCount })
+            query([[INSERT INTO `synex_schema_migration_attempts`
+                (`resource_name`, `migration_id`, `checksum_sha256`, `state`, `attempts`,
+                 `last_error_code`, `started_at`, `finished_at`)
+                VALUES (?, ?, ?, 'applying', 1, NULL, CURRENT_TIMESTAMP(6), NULL)]],
+                { resourceName, migrationId, checksum })
+            return true, { execute = true }
+        end)
+    end
+
+    local function advanceMigrationFence(resourceName, migrationId, checksum, statementIndex)
+        return withCurrentMigrationLease(function(query, heldFence)
+            local rows = query([[SELECT `owner_id`, `fencing_token`, `state`, `checksum_sha256`,
+                    `completed_statements`, `statement_count`
+                FROM `synex_schema_migration_fences`
+                WHERE `resource_name` = ? AND `migration_id` = ? FOR UPDATE]],
+                { resourceName, migrationId }) or {}
+            local row = rows[1]
+            if not row or row.owner_id ~= leaseOwner or tonumber(row.fencing_token) ~= heldFence
+                or row.state ~= 'applying' or row.checksum_sha256 ~= checksum
+                or tonumber(row.completed_statements) ~= statementIndex - 1
+                or statementIndex > (tonumber(row.statement_count) or -1) then
+                return false, nil, migrationError('MIGRATION_FENCE_LOST',
+                    ('Migration statement fence for %s/%s is no longer current.'):format(
+                        resourceName, migrationId))
+            end
+            query([[UPDATE `synex_schema_migration_fences`
+                SET `completed_statements` = ?
+                WHERE `resource_name` = ? AND `migration_id` = ? AND `owner_id` = ?
+                    AND `fencing_token` = ? AND `state` = 'applying'
+                    AND `checksum_sha256` = ? AND `completed_statements` = ?]],
+                { statementIndex, resourceName, migrationId, leaseOwner, heldFence,
+                    checksum, statementIndex - 1 })
+            local advancedRows = query([[SELECT `completed_statements`
+                FROM `synex_schema_migration_fences`
+                WHERE `resource_name` = ? AND `migration_id` = ? AND `owner_id` = ?
+                    AND `fencing_token` = ? AND `state` = 'applying'
+                    AND `checksum_sha256` = ? FOR UPDATE]],
+                { resourceName, migrationId, leaseOwner, heldFence, checksum }) or {}
+            if not advancedRows[1]
+                or tonumber(advancedRows[1].completed_statements) ~= statementIndex then
+                return false, nil, migrationError('MIGRATION_FENCE_LOST',
+                    ('Migration statement fence for %s/%s did not advance atomically.'):format(
+                        resourceName, migrationId))
+            end
+            return true
+        end)
+    end
+
+    local function markMigrationIndeterminate(resourceName, migrationId, checksum, causeCode)
+        return withCurrentMigrationLease(function(query, heldFence)
+            local rows = query([[SELECT `owner_id`, `fencing_token`, `state`, `checksum_sha256`
+                FROM `synex_schema_migration_fences`
+                WHERE `resource_name` = ? AND `migration_id` = ? FOR UPDATE]],
+                { resourceName, migrationId }) or {}
+            local row = rows[1]
+            if not row or row.owner_id ~= leaseOwner or tonumber(row.fencing_token) ~= heldFence
+                or row.state ~= 'applying' or row.checksum_sha256 ~= checksum then
+                return false, nil, migrationError('MIGRATION_FENCE_LOST',
+                    ('Migration failure fence for %s/%s is no longer current.'):format(
+                        resourceName, migrationId))
+            end
+            query([[UPDATE `synex_schema_migration_fences`
+                SET `state` = 'indeterminate', `last_error_code` = ?,
+                    `finished_at` = CURRENT_TIMESTAMP(6)
+                WHERE `resource_name` = ? AND `migration_id` = ? AND `owner_id` = ?
+                    AND `fencing_token` = ? AND `state` = 'applying' AND `checksum_sha256` = ?]],
+                { causeCode, resourceName, migrationId, leaseOwner, heldFence, checksum })
+            return true
+        end)
+    end
+
+    local function finalizeMigration(resourceName, migrationId, checksum, statementCount, durationMs)
+        return withCurrentMigrationLease(function(query, heldFence)
+            local rows = query([[SELECT `owner_id`, `fencing_token`, `state`, `checksum_sha256`,
+                    `statement_count`, `completed_statements`
+                FROM `synex_schema_migration_fences`
+                WHERE `resource_name` = ? AND `migration_id` = ? FOR UPDATE]],
+                { resourceName, migrationId }) or {}
+            local row = rows[1]
+            if not row or row.owner_id ~= leaseOwner or tonumber(row.fencing_token) ~= heldFence
+                or row.state ~= 'applying' or row.checksum_sha256 ~= checksum
+                or tonumber(row.statement_count) ~= statementCount
+                or tonumber(row.completed_statements) ~= statementCount then
+                return false, nil, migrationError('MIGRATION_FENCE_LOST',
+                    ('Migration completion fence for %s/%s is no longer current.'):format(
+                        resourceName, migrationId))
+            end
+            query([[INSERT INTO `synex_schema_migrations`
+                (`migration_id`, `resource_name`, `checksum_sha256`, `duration_ms`, `instance_id`)
+                VALUES (?, ?, ?, ?, ?)]],
+                { migrationId, resourceName, checksum, durationMs, leaseOwner })
+            query([[UPDATE `synex_schema_migration_fences`
+                SET `state` = 'applied', `last_error_code` = NULL,
+                    `finished_at` = CURRENT_TIMESTAMP(6)
+                WHERE `resource_name` = ? AND `migration_id` = ? AND `owner_id` = ?
+                    AND `fencing_token` = ? AND `state` = 'applying' AND `checksum_sha256` = ?]],
+                { resourceName, migrationId, leaseOwner, heldFence, checksum })
+            query([[UPDATE `synex_schema_migration_attempts`
+                SET `state` = 'applied', `last_error_code` = NULL,
+                    `finished_at` = CURRENT_TIMESTAMP(6)
+                WHERE `resource_name` = ? AND `migration_id` = ?
+                    AND `checksum_sha256` = ? AND `state` = 'applying']],
+                { resourceName, migrationId, checksum })
+            local markerRows = query([[SELECT `checksum_sha256`, `instance_id`
+                FROM `synex_schema_migrations`
+                WHERE `resource_name` = ? AND `migration_id` = ? FOR UPDATE]],
+                { resourceName, migrationId }) or {}
+            local completedRows = query([[SELECT `owner_id`, `fencing_token`, `state`
+                FROM `synex_schema_migration_fences`
+                WHERE `resource_name` = ? AND `migration_id` = ? FOR UPDATE]],
+                { resourceName, migrationId }) or {}
+            local attemptRows = query([[SELECT `state`, `checksum_sha256`
+                FROM `synex_schema_migration_attempts`
+                WHERE `resource_name` = ? AND `migration_id` = ? FOR UPDATE]],
+                { resourceName, migrationId }) or {}
+            local marker, completed, attempt = markerRows[1], completedRows[1], attemptRows[1]
+            if not marker or marker.checksum_sha256 ~= checksum or marker.instance_id ~= leaseOwner
+                or not completed or completed.owner_id ~= leaseOwner
+                or tonumber(completed.fencing_token) ~= heldFence or completed.state ~= 'applied'
+                or not attempt or attempt.state ~= 'applied' or attempt.checksum_sha256 ~= checksum then
+                return false, nil, migrationError('MIGRATION_MARKER_WRITE_FAILED',
+                    ('Migration completion markers for %s/%s were not atomically persisted.'):format(
+                        resourceName, migrationId))
+            end
+            return true
+        end)
+    end
+
+    local function startMigrationHeartbeat(manager)
+        local heartbeat = { active = true }
+        if type(platform.createThread) ~= 'function' then return heartbeat end
+        local intervalMs = math.max(1000, math.min(10000, math.floor(leaseSeconds * 1000 / 3)))
+        platform.createThread(function()
+            while heartbeat.active do
+                platform.wait(intervalMs)
+                if not heartbeat.active then break end
+                local renewed, heartbeatError = manager:renewLease()
+                if not renewed then
+                    heartbeat.error = heartbeatError
+                    heartbeat.active = false
+                    break
+                end
+                metrics:increment('synex_migration_lease_heartbeats_total', { ok = true })
+            end
+            if heartbeat.error then
+                metrics:increment('synex_migration_lease_heartbeats_total', { ok = false })
+            end
+        end)
+        return heartbeat
     end
 
     function migrationManager:apply(resourceName, migrations)
         for _, migration in ipairs(migrations or {}) do
             local contents = platform.loadResourceFile(resourceName, migration.path)
             if not contents then
-                return nil, foundation.error('MIGRATION_NOT_FOUND', ('Migration %s is missing.'):format(migration.path))
+                return nil, migrationError('MIGRATION_NOT_FOUND',
+                    ('Migration %s is missing.'):format(migration.path))
+            end
+            local statements = splitStatements(contents)
+            if #statements < 1 or #statements > 65535 then
+                return nil, migrationError('MIGRATION_STATEMENT_COUNT_INVALID',
+                    ('Migration %s/%s must contain between 1 and 65535 statements.'):format(
+                        resourceName, migration.id))
             end
             local checksum = sha256(contents:gsub('\r\n', '\n'))
-            local rows, readErr = database:query([[SELECT `checksum_sha256` FROM `synex_schema_migrations`
-                WHERE `resource_name` = ? AND `migration_id` = ?]], { resourceName, migration.id })
-            if readErr then return nil, readErr end
-            if rows and rows[1] then
-                if rows[1].checksum_sha256 ~= checksum then
-                    return nil, foundation.error('MIGRATION_CHECKSUM_MISMATCH',
-                        ('Applied migration %s/%s was modified.'):format(resourceName, migration.id))
-                end
-                local attemptRows, attemptReadError = database:query([[SELECT `checksum_sha256` FROM `synex_schema_migration_attempts`
-                    WHERE `resource_name` = ? AND `migration_id` = ? LIMIT 1]], { resourceName, migration.id })
-                if attemptReadError then return nil, attemptReadError end
-                if attemptRows and attemptRows[1] and attemptRows[1].checksum_sha256 ~= checksum then
-                    return nil, foundation.error('MIGRATION_CHECKSUM_MISMATCH',
-                        ('Migration attempt history for %s/%s has a different checksum.'):format(resourceName, migration.id))
-                end
-                local _, attemptRepairError = database:update([[INSERT INTO `synex_schema_migration_attempts`
-                    (`resource_name`, `migration_id`, `checksum_sha256`, `state`, `attempts`, `last_error_code`, `started_at`, `finished_at`)
-                    VALUES (?, ?, ?, 'applied', 1, NULL, CURRENT_TIMESTAMP(6), CURRENT_TIMESTAMP(6))
-                    ON DUPLICATE KEY UPDATE `state` = 'applied', `last_error_code` = NULL,
-                        `finished_at` = CURRENT_TIMESTAMP(6)]], { resourceName, migration.id, checksum })
-                if attemptRepairError then return nil, attemptRepairError end
-            else
-                local attempts, attemptsError = database:query([[SELECT `checksum_sha256`, `state`, `attempts`
-                    FROM `synex_schema_migration_attempts`
-                    WHERE `resource_name` = ? AND `migration_id` = ? LIMIT 1]], { resourceName, migration.id })
-                if attemptsError then return nil, attemptsError end
-                if attempts and attempts[1] and attempts[1].checksum_sha256 ~= checksum then
-                    return nil, foundation.error('MIGRATION_CHECKSUM_MISMATCH',
-                        ('Incomplete migration %s/%s was modified before retry.'):format(resourceName, migration.id))
-                end
-                local _, attemptWriteError = database:update([[INSERT INTO `synex_schema_migration_attempts`
-                    (`resource_name`, `migration_id`, `checksum_sha256`, `state`, `attempts`, `last_error_code`, `started_at`, `finished_at`)
-                    VALUES (?, ?, ?, 'applying', 1, NULL, CURRENT_TIMESTAMP(6), NULL)
-                    ON DUPLICATE KEY UPDATE `state` = 'applying', `attempts` = LEAST(`attempts` + 1, 65535),
-                        `last_error_code` = NULL, `started_at` = CURRENT_TIMESTAMP(6), `finished_at` = NULL]],
-                    { resourceName, migration.id, checksum })
-                if attemptWriteError then return nil, attemptWriteError end
+            local claim, claimError = claimMigration(resourceName, migration.id, checksum, #statements)
+            if not claim then return nil, claimError end
+            if claim.error then return nil, claim.error end
+            if claim.execute then
                 local started = foundation.monotonicMs()
-                for _, statement in ipairs(splitStatements(contents)) do
-                    local renewed, renewErr = self:renewLease()
+                local heartbeat = startMigrationHeartbeat(self)
+                for statementIndex, statement in ipairs(statements) do
+                    local renewed, renewError = self:renewLease()
                     if not renewed then
-                        recordMigrationFailure(resourceName, migration.id, renewErr.code or 'LEASE_LOST')
-                        return nil, renewErr
+                        heartbeat.active = false
+                        return nil, renewError
                     end
-                    local _, statementErr = database:update(statement, {})
-                    if statementErr then
-                        recordMigrationFailure(resourceName, migration.id, statementErr.code or 'DATABASE_ERROR')
-                        return nil, statementErr
+                    local _, statementError = database:update(statement, {})
+                    if statementError then
+                        heartbeat.active = false
+                        local causeCode = type(statementError.code) == 'string'
+                            and statementError.code:sub(1, 64) or 'DATABASE_ERROR'
+                        local marked, markerError = markMigrationIndeterminate(
+                            resourceName, migration.id, checksum, causeCode)
+                        if not marked then
+                            logger:error('migration indeterminate marker write failed', {
+                                resource = resourceName, migration = migration.id,
+                                primaryCode = causeCode, code = markerError and markerError.code
+                            })
+                        end
+                        return nil, migrationError('MIGRATION_INDETERMINATE',
+                            ('Migration statement %d for %s/%s returned without a provable outcome.')
+                                :format(statementIndex, resourceName, migration.id), {
+                                details = { causeCode = causeCode, statementIndex = statementIndex }
+                            })
+                    end
+                    renewed, renewError = self:renewLease()
+                    if not renewed then
+                        heartbeat.active = false
+                        return nil, renewError
+                    end
+                    local advanced, advanceError = advanceMigrationFence(
+                        resourceName, migration.id, checksum, statementIndex)
+                    if not advanced then
+                        heartbeat.active = false
+                        return nil, advanceError
                     end
                 end
-                local _, insertErr = database:insert([[INSERT INTO `synex_schema_migrations`
-                    (`migration_id`, `resource_name`, `checksum_sha256`, `duration_ms`, `instance_id`)
-                    VALUES (?, ?, ?, ?, ?)]], {
-                    migration.id, resourceName, checksum,
-                    math.max(0, foundation.monotonicMs() - started), leaseOwner
+                heartbeat.active = false
+                local durationMs = math.max(0, math.min(0xffffffff,
+                    foundation.monotonicMs() - started))
+                local finalized, finalizeError = finalizeMigration(
+                    resourceName, migration.id, checksum, #statements, durationMs)
+                if not finalized then return nil, finalizeError end
+                logger:info('migration applied', {
+                    resource = resourceName, migration = migration.id, checksum = checksum
                 })
-                if insertErr then
-                    recordMigrationFailure(resourceName, migration.id, insertErr.code or 'DATABASE_ERROR')
-                    return nil, insertErr
-                end
-                local completedAffected, completedError = database:update([[UPDATE `synex_schema_migration_attempts`
-                    SET `state` = 'applied', `last_error_code` = NULL, `finished_at` = CURRENT_TIMESTAMP(6)
-                    WHERE `resource_name` = ? AND `migration_id` = ? AND `checksum_sha256` = ?]],
-                    { resourceName, migration.id, checksum })
-                if completedError then return nil, completedError end
-                if tonumber(completedAffected) ~= 1 then
-                    return nil, foundation.error('MIGRATION_ATTEMPT_STATE_LOST',
-                        ('Migration attempt state for %s/%s changed unexpectedly.'):format(resourceName, migration.id))
-                end
-                logger:info('migration applied', { resource = resourceName, migration = migration.id, checksum = checksum })
             end
         end
         return true, nil
     end
 
+    local terminalLeaseStates = {
+        saga = { completed = true, failed = true, cancelled = true },
+        character = { completed = true, failed = true, cancelled = true }
+    }
+    local function durableLeaseDomain(name)
+        if name:sub(1, 5) == 'saga:' then
+            local domainId = name:sub(6)
+            if #domainId >= 1 and #domainId <= 36
+                and domainId:match('^[a-z0-9_]+$') then
+                return 'saga', domainId
+            end
+            return false, nil
+        end
+        if name:sub(1, 17) == 'character-delete:' then
+            local domainId = name:sub(18)
+            if #domainId >= 1 and #domainId <= 36
+                and domainId:match('^[a-z0-9_]+$') then
+                return 'character', domainId
+            end
+            return false, nil
+        end
+        return nil, nil
+    end
+
     local leases = {}
+    local nextAuthorityRecoveryKind = 'session'
+    local leaseCapacityKinds = { 'admission', 'character', 'other', 'saga', 'session' }
+    local leaseCapacityKindSet = {
+        admission = true, character = true, other = true, saga = true, session = true
+    }
+    local leaseCapacityHighWatermarks = {
+        global = 0, admission = 0, character = 0, other = 0, saga = 0, session = 0
+    }
+    local function leaseCapacityKind(name)
+        if name == 'schema_migrations' then return nil end
+        if name:sub(1, 8) == 'session:' then return 'session' end
+        if name:sub(1, 10) == 'admission:' then return 'admission' end
+        if name:sub(1, 5) == 'saga:' then return 'saga' end
+        if name:sub(1, 17) == 'character-delete:' then return 'character' end
+        return 'other'
+    end
+    local function leaseCapacityInteger(value, minimum)
+        local parsed = tonumber(value)
+        if not parsed or math.type(parsed) ~= 'integer'
+            or parsed < minimum or parsed > 4294967295 then return nil end
+        return parsed
+    end
+    local function leaseStorageText(value, maximum)
+        if type(value) ~= 'string' or #value < 1 or #value > maximum then return false end
+        for index = 1, #value do
+            local byte = value:byte(index)
+            if byte < 33 or byte > 126 then return false end
+        end
+        return true
+    end
+    local function leaseAffectedRows(value)
+        if type(value) == 'table' then return tonumber(value.affectedRows) end
+        return tonumber(value)
+    end
+    local function emitLeaseCapacityMetrics(snapshot)
+        if type(snapshot) ~= 'table' then return end
+        local function emit(scope, current, limit)
+            if type(current) ~= 'number' or type(limit) ~= 'number' or limit <= 0 then return end
+            local utilization = current / limit
+            metrics:gauge('synex_cluster_lease_capacity_entries', { scope = scope }, current)
+            metrics:gauge('synex_cluster_lease_capacity_limit', { scope = scope }, limit)
+            metrics:gauge('synex_cluster_lease_capacity_utilization', { scope = scope }, utilization)
+            leaseCapacityHighWatermarks[scope] = math.max(
+                leaseCapacityHighWatermarks[scope], utilization)
+            metrics:gauge('synex_cluster_lease_capacity_utilization_high_watermark',
+                { scope = scope }, leaseCapacityHighWatermarks[scope])
+        end
+        local global = snapshot.global
+        if type(global) == 'table' then emit('global', global.current, global.limit) end
+        for _, kind in ipairs(leaseCapacityKinds) do
+            local value = snapshot.kinds and snapshot.kinds[kind] or nil
+            if type(value) == 'table' then emit(kind, value.current, value.limit) end
+        end
+    end
     function leases:acquire(name, owner, ttlSeconds, requesterInstanceId, requesterBootId)
-        if type(name) ~= 'string' or #name < 1 or #name > 96 or type(owner) ~= 'string' or #owner < 1 or #owner > 96 then
+        if not leaseStorageText(name, 96) or not leaseStorageText(owner, 96) then
             return nil, foundation.error('INVALID_LEASE', 'Lease name or owner is invalid.')
         end
         local requesterFenced = requesterInstanceId ~= nil or requesterBootId ~= nil
         local sessionLease = name:sub(1, 8) == 'session:'
-        if sessionLease and not requesterFenced then
+        local admissionLease = name:sub(1, 10) == 'admission:'
+        local domainKind, domainId = durableLeaseDomain(name)
+        if domainKind == false then
+            return nil, foundation.error('INVALID_LEASE',
+                'The durable lease domain name is invalid.')
+        end
+        if (sessionLease or admissionLease or domainKind ~= nil) and not requesterFenced then
             return nil, foundation.error('INVALID_LEASE_AUTHORITY',
-                'Session leases require the current runtime boot authority.')
+                'Durable domain leases require the current runtime boot authority.')
         end
         if requesterFenced and (type(requesterInstanceId) ~= 'string' or #requesterInstanceId < 1
             or #requesterInstanceId > 36
@@ -514,18 +991,19 @@ factories.persistence = function(deps)
             or type(requesterBootId) ~= 'string' or #requesterBootId < 1 or #requesterBootId > 36
             or (type(runtimeInstanceId) == 'string' and requesterInstanceId ~= runtimeInstanceId)) then
             return nil, foundation.error('INVALID_LEASE_AUTHORITY',
-                'Session lease requester authority is invalid.')
+                'Lease requester authority is invalid.')
         end
         ttlSeconds = math.max(5, math.min(tonumber(ttlSeconds) or 30, 300))
-        if requesterFenced then
-            local acquiredFence = nil
-            local authorityError = nil
-            local committed, transactionError = database:withTransaction(function(query)
+        local capacityKind = leaseCapacityKind(name)
+        local acquiredFence, acquireError, capacitySnapshot = nil, nil, nil
+        local committed, transactionError = database:withTransaction(function(query)
+            acquiredFence, acquireError, capacitySnapshot = nil, nil, nil
+            if requesterFenced then
                 local requester = query([[SELECT `status` FROM `synex_instances`
                     WHERE `instance_id` = ? AND `status` = 'ready' FOR UPDATE]],
                     { requesterInstanceId }) or {}
                 if not requester[1] then
-                    authorityError = foundation.error('LEASE_BUSY',
+                    acquireError = foundation.error('LEASE_BUSY',
                         'The requester no longer owns ready runtime authority.', { retryable = true })
                     return false
                 end
@@ -533,76 +1011,254 @@ factories.persistence = function(deps)
                     WHERE `instance_id` = ? AND `boot_id` = ? FOR UPDATE]],
                     { requesterInstanceId, requesterBootId }) or {}
                 if not boot[1] then
-                    authorityError = foundation.error('LEASE_BUSY',
+                    acquireError = foundation.error('LEASE_BUSY',
                         'The requester boot generation is no longer current.', { retryable = true })
                     return false
                 end
-                query([[INSERT INTO `synex_cluster_leases`
-                    (`lease_name`, `owner_id`, `fencing_token`, `expires_at`)
-                    VALUES (?, ?, 1, TIMESTAMPADD(SECOND, ?, CURRENT_TIMESTAMP(6)))
-                    ON DUPLICATE KEY UPDATE
-                        `owner_id` = IF(`expires_at` <= CURRENT_TIMESTAMP(6) OR `owner_id` = ?,
-                            ?, `owner_id`),
-                        `fencing_token` = IF(`expires_at` <= CURRENT_TIMESTAMP(6) OR `owner_id` = ?,
-                            `fencing_token` + 1, `fencing_token`),
-                        `expires_at` = IF(`expires_at` <= CURRENT_TIMESTAMP(6) OR `owner_id` = ?,
-                            TIMESTAMPADD(SECOND, ?, CURRENT_TIMESTAMP(6)), `expires_at`)]],
-                    { name, owner, ttlSeconds, owner, owner, owner, owner, ttlSeconds })
-                local rows = query([[SELECT `owner_id`, `fencing_token`,
+                if domainKind ~= nil then
+                    local rows = nil
+                    if domainKind == 'saga' then
+                        rows = query([[SELECT `state` FROM `synex_sagas`
+                            WHERE `public_id` = ? FOR UPDATE]], { domainId }) or {}
+                    else
+                        rows = query([[SELECT `state` FROM `synex_character_deletion_plans`
+                            WHERE `id` = ? FOR UPDATE]], { domainId }) or {}
+                    end
+                    local domain = rows[1]
+                    if not domain then
+                        acquireError = foundation.error('LEASE_DOMAIN_NOT_FOUND',
+                            'The durable lease domain does not exist.')
+                        return false
+                    end
+                    if terminalLeaseStates[domainKind][domain.state] then
+                        acquireError = foundation.error('LEASE_DOMAIN_TERMINAL',
+                            'The durable lease domain is already terminal.')
+                        return false
+                    end
+                end
+            end
+            local function lockExactLease()
+                if capacityKind == nil then
+                    return query([[SELECT `owner_id`, `fencing_token`,
+                            (`expires_at` > CURRENT_TIMESTAMP(6)) AS `valid`
+                        FROM `synex_cluster_leases`
+                        WHERE `lease_name` = ? FOR UPDATE]], { name }) or {}
+                end
+                return query([[SELECT `owner_id`, `fencing_token`, `lease_capacity_kind`,
                         (`expires_at` > CURRENT_TIMESTAMP(6)) AS `valid`
-                    FROM `synex_cluster_leases` WHERE `lease_name` = ? FOR UPDATE]], { name }) or {}
-                local row = rows[1]
-                if not row or row.owner_id ~= owner or tonumber(row.valid) ~= 1
-                    or not tonumber(row.fencing_token) then
-                    authorityError = foundation.error('LEASE_BUSY',
+                    FROM `synex_cluster_leases`
+                    WHERE `lease_name` = ? FOR UPDATE]], { name }) or {}
+            end
+            local rows = lockExactLease()
+            if #rows > 1 then
+                acquireError = foundation.error('LEASE_CAPACITY_INVALID',
+                    'The exact cluster lease identity is not unique.', { retryable = true })
+                return false
+            end
+            local row = rows[1]
+            local created = false
+            if not row then
+                local inserted = query([[INSERT IGNORE INTO `synex_cluster_leases`
+                    (`lease_name`, `owner_id`, `fencing_token`, `expires_at`)
+                    VALUES (?, ?, 1, TIMESTAMPADD(SECOND, ?, CURRENT_TIMESTAMP(6)))]],
+                    { name, owner, ttlSeconds })
+                local insertedRows = leaseAffectedRows(inserted)
+                if insertedRows == 1 then
+                    created = true
+                    row = {
+                        owner_id = owner, fencing_token = 1, valid = 1,
+                        lease_capacity_kind = capacityKind
+                    }
+                elseif insertedRows == 0 then
+                    rows = lockExactLease()
+                    if #rows ~= 1 then
+                        acquireError = foundation.error('LEASE_CAPACITY_INVALID',
+                            'A contended cluster lease identity could not be locked exactly.', {
+                                retryable = true
+                            })
+                        return false
+                    end
+                    row = rows[1]
+                else
+                    acquireError = foundation.error('LEASE_CAPACITY_INVALID',
+                        'The cluster lease identity reservation returned an invalid result.', {
+                            retryable = true
+                        })
+                    return false
+                end
+            end
+            if row and capacityKind ~= nil and row.lease_capacity_kind ~= capacityKind then
+                acquireError = foundation.error('LEASE_CAPACITY_INVALID',
+                    'The persisted cluster lease kind is invalid.', { retryable = true })
+                return false
+            end
+            if not created then
+                local fenceValue = tonumber(row.fencing_token)
+                if not fenceValue or fenceValue < 1 then
+                    acquireError = foundation.error('LEASE_CAPACITY_INVALID',
+                        'The persisted cluster lease fence is invalid.', { retryable = true })
+                    return false
+                end
+                if tonumber(row.valid) == 1 and row.owner_id ~= owner then
+                    acquireError = foundation.error('LEASE_BUSY',
                         'The lease is held by another server instance.', { retryable = true })
                     return false
                 end
-                acquiredFence = tonumber(row.fencing_token)
-                return true
-            end)
-            if not committed then return nil, authorityError or transactionError end
-            return {
-                name = name, owner = owner, fencingToken = acquiredFence, ttlSeconds = ttlSeconds,
-                requesterInstanceId = requesterInstanceId, requesterBootId = requesterBootId
-            }, nil
+                local updated = query([[UPDATE `synex_cluster_leases`
+                    SET `terminal_compaction_at` = IF(
+                            (? = 1 OR ? = 1), NULL, `terminal_compaction_at`),
+                        `owner_id` = ?, `fencing_token` = `fencing_token` + 1,
+                        `expires_at` = TIMESTAMPADD(SECOND, ?, CURRENT_TIMESTAMP(6))
+                    WHERE `lease_name` = ?
+                        AND (`expires_at` <= CURRENT_TIMESTAMP(6) OR `owner_id` = ?)]],
+                    { sessionLease and 1 or 0, admissionLease and 1 or 0,
+                        owner, ttlSeconds, name, owner })
+                if leaseAffectedRows(updated) ~= 1 then
+                    acquireError = foundation.error('LEASE_CAPACITY_INVALID',
+                        'The existing cluster lease changed unexpectedly.', { retryable = true })
+                    return false
+                end
+            elseif capacityKind ~= nil then
+                local globalRows = query([[SELECT `entry_count`, `global_limit`
+                        FROM `synex_cluster_lease_capacity`
+                        WHERE `singleton_id` = 1 FOR UPDATE]]) or {}
+                    local global = globalRows[1]
+                    local globalCount = global and leaseCapacityInteger(global.entry_count, 0) or nil
+                    local globalLimit = global and leaseCapacityInteger(global.global_limit, 1) or nil
+                    if #globalRows ~= 1 or not globalCount or not globalLimit then
+                        acquireError = foundation.error('LEASE_CAPACITY_INVALID',
+                            'The global cluster lease capacity authority is missing or invalid.', {
+                                retryable = true
+                            })
+                        return false
+                    end
+                    local kindRows = query([[SELECT `lease_capacity_kind`, `entry_count`, `kind_limit`
+                        FROM `synex_cluster_lease_kind_capacity`
+                        WHERE `lease_capacity_kind` = ? FOR UPDATE]], { capacityKind }) or {}
+                    local kindRow = kindRows[1]
+                    local kindCount = kindRow and leaseCapacityInteger(kindRow.entry_count, 0) or nil
+                    local kindLimit = kindRow and leaseCapacityInteger(kindRow.kind_limit, 1) or nil
+                    if #kindRows ~= 1 or not kindRow
+                        or kindRow.lease_capacity_kind ~= capacityKind
+                        or not kindCount or not kindLimit or kindLimit > globalLimit
+                        or kindCount > globalCount then
+                        acquireError = foundation.error('LEASE_CAPACITY_INVALID',
+                            'The cluster lease kind capacity authority is missing or invalid.', {
+                                retryable = true
+                            })
+                        return false
+                    end
+                    capacitySnapshot = {
+                        global = { current = globalCount, limit = globalLimit },
+                        kinds = {
+                            [capacityKind] = { current = kindCount, limit = kindLimit }
+                        }
+                    }
+                    local deniedScope = globalCount >= globalLimit and 'global'
+                        or kindCount >= kindLimit and capacityKind or nil
+                    if deniedScope then
+                        acquireError = foundation.error('LEASE_CAPACITY_EXCEEDED',
+                            'Persistent cluster lease capacity is exhausted for this scope.', {
+                                retryable = true, details = { scope = deniedScope }
+                            })
+                        return false
+                    end
+                    local globalUpdated = query([[UPDATE `synex_cluster_lease_capacity`
+                        SET `entry_count` = `entry_count` + 1
+                        WHERE `singleton_id` = 1 AND `entry_count` = ?
+                            AND `entry_count` < `global_limit`
+                            AND `entry_count` < 4294967295]], { globalCount })
+                    if leaseAffectedRows(globalUpdated) ~= 1 then
+                        acquireError = foundation.error('LEASE_CAPACITY_INVALID',
+                            'The global cluster lease counter changed unexpectedly.', {
+                                retryable = true
+                            })
+                        return false
+                    end
+                    local kindUpdated = query([[UPDATE `synex_cluster_lease_kind_capacity`
+                        SET `entry_count` = `entry_count` + 1
+                        WHERE `lease_capacity_kind` = ? AND `entry_count` = ?
+                            AND `entry_count` < `kind_limit`
+                            AND `entry_count` < 4294967295]], { capacityKind, kindCount })
+                if leaseAffectedRows(kindUpdated) ~= 1 then
+                    acquireError = foundation.error('LEASE_CAPACITY_INVALID',
+                        'The cluster lease kind counter changed unexpectedly.', {
+                            retryable = true
+                        })
+                    return false
+                end
+            end
+            local verifiedRows
+            if capacityKind == nil then
+                verifiedRows = query([[SELECT `owner_id`, `fencing_token`,
+                        (`expires_at` > CURRENT_TIMESTAMP(6)) AS `valid`
+                    FROM `synex_cluster_leases`
+                    WHERE `lease_name` = ? FOR UPDATE]], { name }) or {}
+            else
+                verifiedRows = query([[SELECT `owner_id`, `fencing_token`, `lease_capacity_kind`,
+                        (`expires_at` > CURRENT_TIMESTAMP(6)) AS `valid`
+                    FROM `synex_cluster_leases`
+                    WHERE `lease_name` = ? FOR UPDATE]], { name }) or {}
+            end
+            local verified = verifiedRows[1]
+            acquiredFence = verified and tonumber(verified.fencing_token) or nil
+            if #verifiedRows ~= 1 or not acquiredFence or acquiredFence < 1
+                or verified.owner_id ~= owner or tonumber(verified.valid) ~= 1
+                or (capacityKind ~= nil and verified.lease_capacity_kind ~= capacityKind) then
+                acquireError = foundation.error('LEASE_CAPACITY_INVALID',
+                    'The acquired cluster lease could not be verified exactly.', {
+                        retryable = true
+                    })
+                return false
+            end
+            if created and capacityKind ~= nil then
+                capacitySnapshot.global.current = capacitySnapshot.global.current + 1
+                capacitySnapshot.kinds[capacityKind].current
+                    = capacitySnapshot.kinds[capacityKind].current + 1
+            end
+            return true
+        end)
+        emitLeaseCapacityMetrics(capacitySnapshot)
+        if not committed then
+            if acquireError and acquireError.code == 'LEASE_CAPACITY_EXCEEDED' then
+                metrics:increment('synex_cluster_lease_capacity_denials_total', {
+                    scope = acquireError.details.scope
+                })
+            elseif acquireError and acquireError.code == 'LEASE_CAPACITY_INVALID' then
+                metrics:increment('synex_cluster_lease_capacity_denials_total', {
+                    scope = 'integrity'
+                })
+            end
+            return nil, acquireError or transactionError
         end
-        local _, updateError = database:update([[UPDATE `synex_cluster_leases`
-            SET `owner_id` = ?, `fencing_token` = `fencing_token` + 1,
-                `expires_at` = TIMESTAMPADD(SECOND, ?, CURRENT_TIMESTAMP(6))
-            WHERE `lease_name` = ? AND (`expires_at` < CURRENT_TIMESTAMP(6) OR `owner_id` = ?)]],
-            { owner, ttlSeconds, name, owner })
-        if updateError then return nil, updateError end
-        local _, insertError = database:update([[INSERT IGNORE INTO `synex_cluster_leases`
-            (`lease_name`, `owner_id`, `fencing_token`, `expires_at`)
-            VALUES (?, ?, 1, TIMESTAMPADD(SECOND, ?, CURRENT_TIMESTAMP(6)))]],
-            { name, owner, ttlSeconds })
-        if insertError then return nil, insertError end
-        local rows, readError = database:query([[SELECT `owner_id`, `fencing_token`,
-                (`expires_at` > CURRENT_TIMESTAMP(6)) AS `valid`
-            FROM `synex_cluster_leases` WHERE `lease_name` = ? LIMIT 1]], { name })
-        if readError then return nil, readError end
-        local row = rows and rows[1]
-        if not row or row.owner_id ~= owner or tonumber(row.valid) ~= 1 then
-            return nil, foundation.error('LEASE_BUSY', 'The lease is held by another server instance.', { retryable = true })
-        end
-        return { name = name, owner = owner, fencingToken = tonumber(row.fencing_token),
-            ttlSeconds = ttlSeconds }, nil
+        return {
+            name = name, owner = owner, fencingToken = acquiredFence, ttlSeconds = ttlSeconds,
+            requesterInstanceId = requesterInstanceId, requesterBootId = requesterBootId
+        }, nil
     end
     function leases:renew(lease)
         if type(lease) ~= 'table' then return nil, foundation.error('INVALID_LEASE', 'Lease snapshot is invalid.') end
         local requesterFenced = lease.requesterInstanceId ~= nil or lease.requesterBootId ~= nil
         local leaseName = lease.name or lease.leaseName
-        if type(leaseName) == 'string' and leaseName:sub(1, 8) == 'session:' and not requesterFenced then
+        local domainKind = nil
+        if type(leaseName) == 'string' then domainKind = durableLeaseDomain(leaseName) end
+        if domainKind == false then
+            return nil, foundation.error('INVALID_LEASE',
+                'The durable lease domain name is invalid.')
+        end
+        if type(leaseName) == 'string'
+            and (leaseName:sub(1, 8) == 'session:'
+                or leaseName:sub(1, 10) == 'admission:' or domainKind ~= nil)
+            and not requesterFenced then
             return nil, foundation.error('INVALID_LEASE_AUTHORITY',
-                'Session lease renewal requires the current runtime boot authority.')
+                'Durable lease renewal requires the current runtime boot authority.')
         end
         if requesterFenced and (type(lease.requesterInstanceId) ~= 'string'
             or #lease.requesterInstanceId < 1 or #lease.requesterInstanceId > 36
             or type(lease.requesterBootId) ~= 'string'
             or #lease.requesterBootId < 1 or #lease.requesterBootId > 36) then
             return nil, foundation.error('INVALID_LEASE_AUTHORITY',
-                'Session lease renewal authority is invalid.')
+                'Lease renewal authority is invalid.')
         end
         if requesterFenced then
             local authorityError = nil
@@ -643,10 +1299,269 @@ factories.persistence = function(deps)
     end
     function leases:release(lease)
         if type(lease) ~= 'table' then return false, nil end
-        local _, err = database:update([[UPDATE `synex_cluster_leases` SET `expires_at` = CURRENT_TIMESTAMP(6)
-            WHERE `lease_name` = ? AND `owner_id` = ? AND `fencing_token` = ?]],
-            { lease.name, lease.owner, lease.fencingToken })
-        return err and nil or true, err
+        local name = lease.name or lease.leaseName
+        local compactable = type(name) == 'string'
+            and (name:sub(1, 8) == 'session:' or name:sub(1, 10) == 'admission:')
+        local affected, err
+        if compactable then
+            affected, err = database:update([[UPDATE `synex_cluster_leases`
+                SET `owner_id` = 'retired',
+                    `fencing_token` = CASE
+                        WHEN `fencing_token` < 18446744073709551615
+                            THEN `fencing_token` + 1
+                        ELSE `fencing_token`
+                    END,
+                    `expires_at` = CURRENT_TIMESTAMP(6),
+                    `terminal_compaction_at` = CURRENT_TIMESTAMP(6)
+                WHERE `lease_name` = ? AND `owner_id` = ? AND `fencing_token` = ?]],
+                { name, lease.owner, lease.fencingToken })
+        else
+            affected, err = database:update([[UPDATE `synex_cluster_leases`
+                SET `expires_at` = CURRENT_TIMESTAMP(6)
+                WHERE `lease_name` = ? AND `owner_id` = ? AND `fencing_token` = ?]],
+                { name, lease.owner, lease.fencingToken })
+        end
+        if err then return nil, err end
+        if compactable and tonumber(affected) ~= 1 then
+            return nil, foundation.error('LEASE_LOST',
+                'The released session or admission lease is stale.', { retryable = true })
+        end
+        return true, nil
+    end
+    function leases:retireExpiredAuthority(maximum)
+        maximum = maximum == nil and 250 or maximum
+        if type(maximum) ~= 'number' or math.type(maximum) ~= 'integer'
+            or maximum < 1 or maximum > 1000 then
+            return nil, foundation.error('INVALID_ARGUMENT',
+                'Expired authority retirement batch size must be an integer from 1 through 1000.')
+        end
+        local kind = nextAuthorityRecoveryKind
+        local selected, retired = 0, 0
+        local retirementError = nil
+        local committed, transactionError = database:withTransaction(function(query)
+            retirementError = nil
+            local rows = query([[SELECT `lease_name`
+                FROM `synex_cluster_leases`
+                    FORCE INDEX (`idx_cluster_leases_authority_expiry`)
+                WHERE `lease_authority_kind` = ? AND `terminal_compaction_at` IS NULL
+                    AND `expires_at` <= CURRENT_TIMESTAMP(6)
+                ORDER BY `expires_at` ASC, `lease_name` ASC LIMIT ? FOR UPDATE]], {
+                kind, maximum
+            }) or {}
+            if type(rows) ~= 'table' or #rows > maximum then
+                retirementError = foundation.error('DATABASE_RESULT_INVALID',
+                    'Expired authority retirement returned an invalid candidate batch.', {
+                        retryable = true
+                    })
+                return false
+            end
+            selected = #rows
+            if selected == 0 then return true end
+            local names, placeholders, seen = {}, {}, {}
+            for index, row in ipairs(rows) do
+                local name = type(row) == 'table' and row.lease_name or nil
+                local prefix = kind == 'session' and 'session:' or 'admission:'
+                if type(name) ~= 'string' or #name <= #prefix or #name > 96
+                    or name:sub(1, #prefix) ~= prefix or seen[name] then
+                    retirementError = foundation.error('DATABASE_RESULT_INVALID',
+                        'Expired authority retirement returned an invalid lease identity.', {
+                            retryable = true
+                        })
+                    return false
+                end
+                seen[name] = true
+                names[index], placeholders[index] = name, '?'
+            end
+            local parameters = { kind }
+            for _, name in ipairs(names) do parameters[#parameters + 1] = name end
+            local updated = query([[UPDATE `synex_cluster_leases`
+                SET `owner_id` = 'retired',
+                    `fencing_token` = CASE
+                        WHEN `fencing_token` < 18446744073709551615
+                            THEN `fencing_token` + 1
+                        ELSE `fencing_token`
+                    END,
+                    `terminal_compaction_at` = CURRENT_TIMESTAMP(6)
+                WHERE `lease_authority_kind` = ? AND `terminal_compaction_at` IS NULL
+                    AND `expires_at` <= CURRENT_TIMESTAMP(6)
+                    AND `lease_name` IN (]] .. table.concat(placeholders, ',') .. ')', parameters)
+            retired = type(updated) == 'table' and tonumber(updated.affectedRows)
+                or tonumber(updated)
+            if not retired or math.type(retired) ~= 'integer' or retired ~= selected then
+                retirementError = foundation.error('DATABASE_RESULT_INVALID',
+                    'Expired authority retirement did not match the locked candidate batch.', {
+                        retryable = true
+                    })
+                return false
+            end
+            return true
+        end)
+        if not committed then return nil, retirementError or transactionError end
+        nextAuthorityRecoveryKind = kind == 'session' and 'admission' or 'session'
+        metrics:increment('synex_cluster_lease_retirement_total', {
+            kind = kind, result = 'complete'
+        }, retired)
+        return { kind = kind, selected = selected, retired = retired, maximum = maximum }, nil
+    end
+    function leases:compactTerminal(maximum)
+        maximum = maximum == nil and 250 or maximum
+        if type(maximum) ~= 'number' or math.type(maximum) ~= 'integer'
+            or maximum < 1 or maximum > 1000 then
+            return nil, foundation.error('INVALID_ARGUMENT',
+                'Terminal lease compaction batch size must be an integer from 1 through 1000.')
+        end
+        local report = { selected = 0, deleted = 0, maximum = maximum }
+        local compactionError, capacitySnapshot = nil, nil
+        local committed, transactionError = database:withTransaction(function(query)
+            report.selected, report.deleted = 0, 0
+            compactionError, capacitySnapshot = nil, nil
+            local rows = query([[SELECT `lease_name`, `lease_capacity_kind`
+                FROM `synex_cluster_leases`
+                    FORCE INDEX (`idx_cluster_leases_terminal_compaction`)
+                WHERE `terminal_compaction_at` <= CURRENT_TIMESTAMP(6)
+                    AND `lease_capacity_kind` IS NOT NULL
+                    AND `lease_name` <> 'schema_migrations'
+                ORDER BY `terminal_compaction_at` ASC, `lease_name` ASC
+                LIMIT ? FOR UPDATE]], { maximum }) or {}
+            if type(rows) ~= 'table' or #rows > maximum then
+                compactionError = foundation.error('LEASE_CAPACITY_INVALID',
+                    'Terminal lease compaction returned an invalid candidate batch.', {
+                        retryable = true
+                    })
+                return false
+            end
+            report.selected = #rows
+            if #rows == 0 then return true end
+
+            local names, placeholders, seen = {}, {}, {}
+            local kindReleaseCounts, kinds = {}, {}
+            for index, row in ipairs(rows) do
+                local name = type(row) == 'table' and row.lease_name or nil
+                local kind = type(row) == 'table' and row.lease_capacity_kind or nil
+                if type(name) ~= 'string' or #name < 1 or #name > 96
+                    or name == 'schema_migrations' or seen[name]
+                    or not leaseCapacityKindSet[kind] or leaseCapacityKind(name) ~= kind then
+                    compactionError = foundation.error('LEASE_CAPACITY_INVALID',
+                        'Terminal lease compaction returned invalid capacity authority.', {
+                            retryable = true
+                        })
+                    return false
+                end
+                seen[name] = true
+                names[index], placeholders[index] = name, '?'
+                if kindReleaseCounts[kind] == nil then
+                    kindReleaseCounts[kind] = 0
+                    kinds[#kinds + 1] = kind
+                end
+                kindReleaseCounts[kind] = kindReleaseCounts[kind] + 1
+            end
+            table.sort(kinds)
+
+            local globalRows = query([[SELECT `entry_count`, `global_limit`
+                FROM `synex_cluster_lease_capacity`
+                WHERE `singleton_id` = 1 FOR UPDATE]]) or {}
+            local global = globalRows[1]
+            local globalCount = global and leaseCapacityInteger(global.entry_count, 0) or nil
+            local globalLimit = global and leaseCapacityInteger(global.global_limit, 1) or nil
+            if #globalRows ~= 1 or not globalCount or not globalLimit
+                or globalCount < #rows then
+                compactionError = foundation.error('LEASE_CAPACITY_INVALID',
+                    'The global cluster lease counter cannot release the locked batch.', {
+                        retryable = true
+                    })
+                return false
+            end
+
+            local kindValues, lockedKindTotal = {}, 0
+            capacitySnapshot = {
+                global = { current = globalCount, limit = globalLimit }, kinds = {}
+            }
+            for _, kind in ipairs(kinds) do
+                local kindRows = query([[SELECT `lease_capacity_kind`, `entry_count`, `kind_limit`
+                    FROM `synex_cluster_lease_kind_capacity`
+                    WHERE `lease_capacity_kind` = ? FOR UPDATE]], { kind }) or {}
+                local kindRow = kindRows[1]
+                local count = kindRow and leaseCapacityInteger(kindRow.entry_count, 0) or nil
+                local limit = kindRow and leaseCapacityInteger(kindRow.kind_limit, 1) or nil
+                local releaseCount = kindReleaseCounts[kind]
+                if #kindRows ~= 1 or not kindRow or kindRow.lease_capacity_kind ~= kind
+                    or not count or not limit or limit > globalLimit
+                    or not releaseCount or count < releaseCount then
+                    compactionError = foundation.error('LEASE_CAPACITY_INVALID',
+                        'A cluster lease kind counter cannot release its locked rows.', {
+                            retryable = true
+                        })
+                    return false
+                end
+                kindValues[kind] = { current = count, limit = limit }
+                capacitySnapshot.kinds[kind] = { current = count, limit = limit }
+                lockedKindTotal = lockedKindTotal + count
+            end
+            if lockedKindTotal > globalCount then
+                compactionError = foundation.error('LEASE_CAPACITY_INVALID',
+                    'Cluster lease kind counters exceed global retained capacity.', {
+                        retryable = true
+                    })
+                return false
+            end
+
+            local deleted = query([[DELETE FROM `synex_cluster_leases`
+                WHERE `lease_name` IN (]] .. table.concat(placeholders, ',') .. [[)
+                    AND `terminal_compaction_at` <= CURRENT_TIMESTAMP(6)
+                    AND `lease_capacity_kind` IS NOT NULL
+                    AND `lease_name` <> 'schema_migrations']], names)
+            if leaseAffectedRows(deleted) ~= #rows then
+                compactionError = foundation.error('LEASE_CAPACITY_INVALID',
+                    'Terminal cluster leases changed during exact deletion.', {
+                        retryable = true
+                    })
+                return false
+            end
+
+            local globalUpdated = query([[UPDATE `synex_cluster_lease_capacity`
+                SET `entry_count` = `entry_count` - ?
+                WHERE `singleton_id` = 1 AND `entry_count` = ? AND `entry_count` >= ?]],
+                { #rows, globalCount, #rows })
+            if leaseAffectedRows(globalUpdated) ~= 1 then
+                compactionError = foundation.error('LEASE_CAPACITY_INVALID',
+                    'The global cluster lease counter changed during release.', {
+                        retryable = true
+                    })
+                return false
+            end
+            for _, kind in ipairs(kinds) do
+                local value = kindValues[kind]
+                local releaseCount = kindReleaseCounts[kind]
+                local kindUpdated = query([[UPDATE `synex_cluster_lease_kind_capacity`
+                    SET `entry_count` = `entry_count` - ?
+                    WHERE `lease_capacity_kind` = ? AND `entry_count` = ?
+                        AND `entry_count` >= ?]],
+                    { releaseCount, kind, value.current, releaseCount })
+                if leaseAffectedRows(kindUpdated) ~= 1 then
+                    compactionError = foundation.error('LEASE_CAPACITY_INVALID',
+                        'A cluster lease kind counter changed during release.', {
+                            retryable = true
+                        })
+                    return false
+                end
+                capacitySnapshot.kinds[kind].current = value.current - releaseCount
+            end
+            capacitySnapshot.global.current = globalCount - #rows
+            report.deleted = #rows
+            return true
+        end)
+        emitLeaseCapacityMetrics(capacitySnapshot)
+        if not committed then
+            metrics:increment('synex_cluster_lease_capacity_denials_total', {
+                scope = 'integrity'
+            })
+            metrics:increment('synex_cluster_lease_compaction_total', { result = 'failed' })
+            return nil, compactionError or transactionError
+        end
+        metrics:increment('synex_cluster_lease_compaction_total', {
+            result = 'complete'
+        }, report.deleted)
+        return report, nil
     end
 
     return {

@@ -209,6 +209,8 @@ test("resource scaffolding creates missing parents and validates cleanly", async
       capabilities: { request: [] },
       services: { provide: [], require: [], optional: [] },
       contracts: { provide: [], consume: [] },
+      events: { publish: [], subscribe: [] },
+      hooks: { register: [], run: [] },
       dependencies: { required: [], optional: [], development: [] },
       migrations: [],
       dataOwnership: { tables: [], characterDelete: "none" },
@@ -245,7 +247,12 @@ test("repository validation enforces cross-field runtime configuration invariant
   const configurationPath = join(root, "core", "synex_core", "config", "default.json");
   const configuration = JSON.parse(await readFile(configurationPath, "utf8")) as {
     rpc: { timeoutMs: number; maximumTimeoutMs: number };
-    connections: { queueReservedSlots: number; maximumActiveSessions: number };
+    connections: {
+      queueReservedSlots: number;
+      maximumActiveSessions: number;
+      clusterSessionLeaseSeconds: number;
+      clusterHeartbeatMs: number;
+    };
   };
   configuration.rpc.timeoutMs = 5_000;
   configuration.rpc.maximumTimeoutMs = 1_000;
@@ -264,4 +271,21 @@ test("repository validation enforces cross-field runtime configuration invariant
     entry.rule === "configuration-semantic" && entry.message.includes("/connections/queueReservedSlots")
   );
   assert.ok(reservedFinding);
+
+  configuration.connections.queueReservedSlots = 0;
+  configuration.connections.clusterSessionLeaseSeconds = 10;
+  configuration.connections.clusterHeartbeatMs = 9_999;
+  await writeFile(configurationPath, `${JSON.stringify(configuration, null, 2)}\n`, "utf8");
+  const heartbeatValidation = await validateRepository(root);
+  const heartbeatFinding = heartbeatValidation.diagnostics.find((entry) =>
+    entry.rule === "configuration-semantic" && entry.message.includes("/connections/clusterHeartbeatMs")
+  );
+  assert.ok(heartbeatFinding);
+
+  configuration.connections.clusterHeartbeatMs = 3_333;
+  await writeFile(configurationPath, `${JSON.stringify(configuration, null, 2)}\n`, "utf8");
+  const safeHeartbeatValidation = await validateRepository(root);
+  assert.equal(safeHeartbeatValidation.diagnostics.some((entry) =>
+    entry.rule === "configuration-semantic" && entry.message.includes("/connections/clusterHeartbeatMs")
+  ), false);
 });

@@ -28,6 +28,14 @@
     ],
     "consume": []
   },
+  "events": {
+    "publish": ["synex.groups.*"],
+    "subscribe": []
+  },
+  "hooks": {
+    "register": [],
+    "run": []
+  },
   "dependencies": {
     "required": [
       {

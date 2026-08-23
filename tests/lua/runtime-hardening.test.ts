@@ -14,7 +14,24 @@ async function coreEngine(modules: string[]): Promise<LuaEngine> {
   const engine = await new LuaFactory().createEngine();
   await load(engine, 'core/synex_core/shared/protocol.lua');
   await load(engine, 'core/synex_core/server/factories.lua');
-  for (const module of modules) await load(engine, `core/synex_core/server/${module}.lua`);
+  for (const module of modules) {
+    if (module === 'identity_repository') {
+      await load(engine, 'core/synex_core/server/identity_session_fencing.lua');
+    }
+    if (module === 'identity_characters') {
+      await load(engine, 'core/synex_core/server/identity_character_deletion_reconciliation.lua');
+      await load(engine, 'core/synex_core/server/identity_character_unloads.lua');
+    }
+    if (module === 'runtime_persistence') {
+      for (const dependency of [
+        'runtime_persistence_instances',
+        'runtime_persistence_control',
+        'runtime_persistence_control_retention',
+        'runtime_persistence_rbac',
+      ]) await load(engine, `core/synex_core/server/${dependency}.lua`);
+    }
+    await load(engine, `core/synex_core/server/${module}.lua`);
+  }
   return engine;
 }
 
@@ -22,7 +39,7 @@ test('persistent RBAC caches subjects, enforces deny precedence, and invalidates
   const engine = await coreEngine(['foundation', 'security']);
   try {
     const result = await engine.doString(`
-      local now, subjectLoads = 1000, 0
+      local now, subjectLoads, subjectVersion = 1000, 0, 1
       local assigned = true
       local platform = {
         nowGame = function() return now end,
@@ -32,19 +49,21 @@ test('persistent RBAC caches subjects, enforces deny precedence, and invalidates
       }
       local foundation = SynexCoreFactories.foundation({ platform = platform })
       local store = {}
-      function store:loadRoles()
-        return {
+      function store:loadRoleSnapshot()
+        return { revision = 1, rows = {
           { role_name = 'operator', version = 3, permission_key = 'fixture.*', effect = 'allow' },
           { role_name = 'operator', version = 3, permission_key = 'fixture.delete', effect = 'deny' }
-        }, nil
+        } }, nil
       end
+      function store:loadPolicyRevision() return 1, nil end
       function store:loadSubject()
         subjectLoads = subjectLoads + 1
-        return { version = subjectLoads, roles = assigned and {'operator'} or {} }, nil
+        return { version = subjectVersion, roles = assigned and {'operator'} or {} }, nil
       end
+      function store:loadSubjectVersion() return subjectVersion, nil end
       function store:defineRole() return true, nil end
-      function store:assign() assigned = true return true, nil end
-      function store:revoke() assigned = false return true, nil end
+      function store:assign() assigned = true subjectVersion = subjectVersion + 1 return true, nil end
+      function store:revoke() assigned = false subjectVersion = subjectVersion + 1 return true, nil end
 
       local security = SynexCoreFactories.security({
         platform = platform, foundation = foundation, coreResource = 'synex_core',
@@ -208,10 +227,32 @@ test('cluster heartbeat preserves the explicit local lifecycle status', async ()
         end
         return 1, nil
       end
-      function database:query()
-        return {{ total_count = 1, healthy_count = 1, stale_count = 0 }}, nil
+      function database:withTransaction(handler)
+        local committed = handler(function(sql, parameters)
+          if sql:find('synex_instance_boots', 1, true) then
+            return {{ boot_id = registeredBoot }}
+          end
+          assert(sql:find('stale_session', 1, true)
+            and sql:find('LIMIT ?', 1, true) and parameters[2] == 250)
+          return {}
+        end)
+        return committed == true and true or nil,
+          committed == true and nil or foundation.error('TRANSACTION_REJECTED', 'fixture rejected')
       end
-      function database:scalar() return 0, nil end
+      function database:query(sql, parameters)
+        if sql:find('idx_session_control_state_scan', 1, true) then
+          assert(parameters[1] == '' and parameters[2] == 250)
+          return {}, nil
+        end
+        assert(sql:find('ORDER BY \`instance_id\` ASC LIMIT ?', 1, true))
+        assert(parameters[1] == 251)
+        return {{ status = databaseStatus }}, nil
+      end
+      function database:scalar(sql, parameters)
+        assert(sql:find('bounded_pending_requests', 1, true))
+        assert(parameters[1] == 251)
+        return 0, nil
+      end
       local instances = SynexCoreFactories.runtimePersistence({
         foundation = foundation, database = database, platform = platform,
         instanceId = 'instance-a'
@@ -239,6 +280,251 @@ test('cluster heartbeat preserves the explicit local lifecycle status', async ()
       return table.concat(explicitStatuses, ':') .. ':' .. heartbeatWrites .. ':' .. lateReadyError.code
     `);
     assert.equal(result, 'degraded:ready:3:INSTANCE_NOT_REGISTERED');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('cluster heartbeat catch-up mutations are deterministic bounded batches', async () => {
+  const engine = await coreEngine(['foundation', 'runtime_persistence']);
+  try {
+    const result = await engine.doString(`
+      local platform = {
+        nowGame = function() return 1000 end, random = function() return 1 end,
+        print = function() end, jsonEncode = function() return '{}' end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      foundation.configureIds('heartbeat-batch-bound')
+      local maintenanceCalls = 0
+      local database = {
+        transaction = function() return true, nil end,
+        update = function(_, sql, parameters)
+          if sql:find('CASE WHEN', 1, true) then return 1, nil end
+          if sql:find('selected_instance', 1, true) then
+            maintenanceCalls = maintenanceCalls + 1
+            assert(sql:find('ORDER BY \`stale_candidate\`.\`heartbeat_at\` ASC', 1, true)
+              and sql:find('LIMIT ?', 1, true) and parameters[3] == 7)
+            return 7, nil
+          end
+          if sql:find('selected_session', 1, true) then
+            maintenanceCalls = maintenanceCalls + 1
+            assert(sql:find('ORDER BY \`stale_session\`.\`last_seen_at\` ASC', 1, true)
+              and sql:find('LIMIT ?', 1, true) and parameters[2] == 7)
+            return 7, nil
+          end
+          if sql:find('selected_request', 1, true) then
+            maintenanceCalls = maintenanceCalls + 1
+            assert(sql:find('ORDER BY \`candidate_request\`.\`expires_at\` ASC', 1, true)
+              and sql:find('LIMIT ?', 1, true) and parameters[1] == 7)
+            return 7, nil
+          end
+          if sql:find('request_claim', 1, true) and sql:find(' IN (', 1, true) then
+            maintenanceCalls = maintenanceCalls + 1
+            assert(#parameters == 9 and parameters[1] == 'instance-a')
+            return 7, nil
+          end
+          error('unexpected heartbeat update')
+        end,
+        query = function(_, sql, parameters)
+          if sql:find('idx_session_control_state_scan', 1, true) then
+            assert(parameters[1] == '' and parameters[2] == 7)
+            local controls = {}
+            for index = 1, 7 do
+              controls[index] = { request_id = ('control-%02d'):format(index) }
+            end
+            return controls, nil
+          end
+          assert(sql:find('ORDER BY \`instance_id\` ASC LIMIT ?', 1, true)
+            and parameters[1] == 8)
+          return {
+            { status = 'ready' },
+            { status = 'stale' }, { status = 'stale' }, { status = 'stale' },
+            { status = 'stale' }, { status = 'stale' }, { status = 'stale' },
+            { status = 'stale' }
+          }, nil
+        end,
+        scalar = function(_, sql, parameters)
+          assert(sql:find('bounded_pending_requests', 1, true)
+            and sql:find('LIMIT ?', 1, true) and parameters[1] == 8)
+          return 8, nil
+        end,
+        withTransaction = function(_, handler)
+          local committed = handler(function(sql, parameters)
+            if sql:find('synex_instance_boots', 1, true) then return {{ boot_id = 'boot-a' }} end
+            if sql:find('SELECT', 1, true) and sql:find('stale_session', 1, true) then
+              local rows = {}
+              for index = 1, 7 do
+                rows[index] = { id = ('stale-%02d'):format(index), user_id = 'user-' .. index,
+                  server_instance_id = 'stale-instance-' .. index }
+              end
+              return rows
+            end
+            if sql:find('synex_cluster_leases', 1, true) then
+              maintenanceCalls = maintenanceCalls + 1
+              return { affectedRows = 7 }
+            end
+            if sql:find('instance heartbeat expired', 1, true) then
+              maintenanceCalls = maintenanceCalls + 1
+              return { affectedRows = 7 }
+            end
+            error('unexpected heartbeat transaction query')
+          end)
+          return committed == true and true or nil,
+            committed == true and nil or foundation.error('TRANSACTION_REJECTED', 'fixture rejected')
+        end
+      }
+      local instances = SynexCoreFactories.runtimePersistence({
+        foundation = foundation, database = database, platform = platform,
+        instanceId = 'instance-a', maintenanceBatchMaximum = 7
+      }).instances
+      assert(instances:register('Instance A'))
+      local snapshot = assert(instances:heartbeat(45))
+      assert(maintenanceCalls == 5 and snapshot.total == 7
+        and snapshot.healthy == 1 and snapshot.stale == 6
+        and snapshot.pendingControlRequests == 7
+        and snapshot.instanceSummaryTruncated == true
+        and snapshot.pendingControlRequestsTruncated == true)
+
+      local invalidMaintenanceCalls = 0
+      local invalidDatabase = {
+        transaction = function() return true, nil end,
+        update = function(_, sql)
+          if sql:find('CASE WHEN', 1, true) then return 1, nil end
+          invalidMaintenanceCalls = invalidMaintenanceCalls + 1
+          return 8, nil
+        end,
+        query = function() error('invalid batch must fail before summary') end,
+        scalar = function() error('invalid batch must fail before summary') end
+      }
+      local invalidInstances = SynexCoreFactories.runtimePersistence({
+        foundation = foundation, database = invalidDatabase, platform = platform,
+        instanceId = 'instance-b', maintenanceBatchMaximum = 7
+      }).instances
+      assert(invalidInstances:register('Instance B'))
+      local invalid, failure = invalidInstances:heartbeat(45)
+      assert(invalid == nil and failure.code == 'MAINTENANCE_BATCH_INVALID'
+        and invalidMaintenanceCalls == 1)
+
+      local overlongRows = {}
+      for index = 1, 9 do overlongRows[index] = { status = 'ready' } end
+      local invalidSummaryDatabase = {
+        transaction = function() return true, nil end,
+        update = function() return 1, nil end,
+        query = function(_, sql)
+          if sql:find('idx_session_control_state_scan', 1, true) then return {}, nil end
+          return overlongRows, nil
+        end,
+        scalar = function() error('overlong instance rows must fail before pending summary') end,
+        withTransaction = function(_, handler)
+          local committed = handler(function(sql)
+            if sql:find('synex_instance_boots', 1, true) then return {{ boot_id = 'boot-c' }} end
+            return {}
+          end)
+          return committed == true and true or nil,
+            committed == true and nil or foundation.error('TRANSACTION_REJECTED', 'fixture rejected')
+        end
+      }
+      local invalidSummaryInstances = SynexCoreFactories.runtimePersistence({
+        foundation = foundation, database = invalidSummaryDatabase, platform = platform,
+        instanceId = 'instance-c', maintenanceBatchMaximum = 7
+      }).instances
+      assert(invalidSummaryInstances:register('Instance C'))
+      local invalidSummary, invalidSummaryError = invalidSummaryInstances:heartbeat(45)
+      assert(invalidSummary == nil and invalidSummaryError.code == 'CLUSTER_SUMMARY_INVALID')
+
+      local invalidPendingDatabase = {
+        transaction = function() return true, nil end,
+        update = function() return 1, nil end,
+        query = function(_, sql)
+          if sql:find('idx_session_control_state_scan', 1, true) then return {}, nil end
+          return {{ status = 'ready' }}, nil
+        end,
+        scalar = function() return 9, nil end,
+        withTransaction = function(_, handler)
+          local committed = handler(function(sql)
+            if sql:find('synex_instance_boots', 1, true) then return {{ boot_id = 'boot-d' }} end
+            return {}
+          end)
+          return committed == true and true or nil,
+            committed == true and nil or foundation.error('TRANSACTION_REJECTED', 'fixture rejected')
+        end
+      }
+      local invalidPendingInstances = SynexCoreFactories.runtimePersistence({
+        foundation = foundation, database = invalidPendingDatabase, platform = platform,
+        instanceId = 'instance-d', maintenanceBatchMaximum = 7
+      }).instances
+      assert(invalidPendingInstances:register('Instance D'))
+      local invalidPending, invalidPendingError = invalidPendingInstances:heartbeat(45)
+      assert(invalidPending == nil and invalidPendingError.code == 'CLUSTER_SUMMARY_INVALID')
+      return table.concat({maintenanceCalls, snapshot.stale,
+        snapshot.pendingControlRequests, failure.code,
+        invalidSummaryError.code, invalidPendingError.code}, ':')
+    `);
+    assert.equal(result, '5:6:7:MAINTENANCE_BATCH_INVALID:'
+      + 'CLUSTER_SUMMARY_INVALID:CLUSTER_SUMMARY_INVALID');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('cluster control-authority audit advances a bounded cursor across valid requests', async () => {
+  const engine = await coreEngine(['foundation', 'runtime_persistence']);
+  try {
+    const result = await engine.doString(`
+      local platform = {
+        nowGame = function() return 1000 end, random = function() return 1 end,
+        print = function() end, jsonEncode = function() return '{}' end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      local cursors, auditUpdates, registeredBoot = {}, 0, nil
+      local database = {
+        transaction = function(_, statements)
+          registeredBoot = statements[2].values[2]
+          return true, nil
+        end,
+        update = function(_, sql)
+          if sql:find('request_claim', 1, true) and sql:find(' IN (', 1, true) then
+            auditUpdates = auditUpdates + 1
+          end
+          return sql:find('CASE WHEN', 1, true) and 1 or 0, nil
+        end,
+        query = function(_, sql, parameters)
+          if sql:find('idx_session_control_state_scan', 1, true) then
+            cursors[#cursors + 1] = parameters[1]
+            assert(parameters[2] == 2)
+            if parameters[1] == '' then
+              return {{ request_id = 'control-a' }, { request_id = 'control-b' }}, nil
+            end
+            if parameters[1] == 'control-b' then
+              return {{ request_id = 'control-c' }, { request_id = 'control-d' }}, nil
+            end
+            return {}, nil
+          end
+          return {{ status = 'ready' }}, nil
+        end,
+        scalar = function() return 0, nil end,
+        withTransaction = function(_, handler)
+          local committed = handler(function(sql)
+            if sql:find('synex_instance_boots', 1, true) then
+              return {{ boot_id = registeredBoot }}
+            end
+            return {}
+          end)
+          return committed == true and true or nil,
+            committed == true and nil or foundation.error('TRANSACTION_REJECTED', 'fixture rejected')
+        end
+      }
+      local instances = SynexCoreFactories.runtimePersistence({
+        foundation = foundation, database = database, platform = platform,
+        instanceId = 'instance-a', maintenanceBatchMaximum = 2
+      }).instances
+      assert(instances:register('Instance A'))
+      for _ = 1, 4 do assert(instances:heartbeat(45)) end
+      assert(table.concat(cursors, ':') == ':control-b:control-d:')
+      assert(auditUpdates == 3)
+      return table.concat({#cursors, auditUpdates, cursors[2], cursors[3]}, ':')
+    `);
+    assert.equal(result, '4:3:control-b:control-d');
   } finally {
     engine.global.close();
   }
@@ -273,8 +559,11 @@ test('runtime boot generations fence delayed status, cleanup, and source-floor w
         return 0, nil
       end
       function database:query(sql, parameters)
-        assert(sql:find('MAX(', 1, true) and sql:find('source_generation', 1, true))
-        assert(sql:find('synex_instance_boots', 1, true) and not sql:find('closed_at', 1, true))
+        assert(not sql:find('MAX(', 1, true) and sql:find('source_generation', 1, true))
+        assert(sql:find('ORDER BY', 1, true) and sql:find('DESC LIMIT 1', 1, true))
+        assert(sql:find('synex_instance_boots', 1, true)
+          and sql:find('server_instance_id', 1, true)
+          and not sql:find('closed_at', 1, true))
         if not hasCurrentBoot(parameters) then return {}, nil end
         return {{ source_generation_floor = floorValue }}, nil
       end
@@ -371,27 +660,39 @@ test('local session termination atomically revokes orphaned runtime authority', 
         and operations[1].parameters[1] == 'instance-a'
         and operations[1].parameters[2] == registeredBoot)
       assert(operations[2].sql:find('synex_cluster_leases', 1, true)
-        and operations[2].sql:find('LEFT(', 1, true)
+        and operations[2].sql:find('INNER JOIN', 1, true)
+        and operations[2].sql:find('synex_sessions', 1, true)
         and operations[2].sql:find('lease_name', 1, true)
         and operations[2].sql:find("'session:'", 1, true)
-        and operations[2].parameters[1] == #'instance-a:'
-        and operations[2].parameters[2] == 'instance-a:')
+        and operations[2].sql:find('closed_at', 1, true)
+        and operations[2].sql:find('expires_at', 1, true)
+        and operations[2].sql:find('CONCAT', 1, true)
+        and #operations[2].parameters == 1
+        and operations[2].parameters[1] == 'instance-a')
       assert(operations[3].sql:find('synex_session_control_requests', 1, true)
         and operations[3].sql:find("'pending'", 1, true)
         and operations[3].sql:find('requested_by_instance_id', 1, true)
-        and operations[3].sql:find('server_instance_id', 1, true)
-        and operations[3].sql:find(' OR ', 1, true)
+        and operations[3].sql:find('target_instance_id', 1, true)
+        and operations[3].sql:find('idx_session_control_requester_pending', 1, true)
+        and operations[3].sql:find('idx_session_control_target_pending', 1, true)
+        and operations[3].sql:find('UNION', 1, true)
+        and operations[3].sql:find('LIMIT ?', 1, true)
         and not operations[3].sql:find('closed_at', 1, true)
         and operations[3].parameters[1] == 'instance-a'
-        and operations[3].parameters[2] == 'instance-a',
+        and operations[3].parameters[2] == 250
+        and operations[3].parameters[3] == 'instance-a'
+        and operations[3].parameters[4] == 250
+        and operations[3].parameters[5] == 250
+        and operations[3].parameters[6] == 'instance-a'
+        and operations[3].parameters[7] == 'instance-a',
         'incoming and outgoing pending controls, including closed local targets, must expire')
       assert(operations[4].sql:find('synex_sessions', 1, true)
         and operations[4].sql:find("'CLOSED'", 1, true)
         and operations[4].parameters[1] == 'synex_core restarted'
         and operations[4].parameters[2] == 'instance-a')
-      return table.concat({#operations, operations[2].parameters[2], operations[4].parameters[1]}, ':')
+      return table.concat({#operations, operations[2].parameters[1], operations[4].parameters[1]}, ':')
     `);
-    assert.equal(result, '4:instance-a::synex_core restarted');
+    assert.equal(result, '4:instance-a:synex_core restarted');
   } finally {
     engine.global.close();
   }
@@ -432,6 +733,93 @@ test('local session termination propagates transaction failure without partial s
   }
 });
 
+test('local session termination rejects cleanup work beyond the configured live-session bound', async () => {
+  const engine = await coreEngine(['foundation', 'runtime_persistence']);
+  try {
+    const result = await engine.doString(`
+      local platform = {
+        nowGame = function() return 1000 end, random = function() return 1 end,
+        print = function() end, jsonEncode = function() return '{}' end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      local registeredBoot, rolledBack, writes = nil, false, 0
+      local database = {}
+      function database:transaction(statements)
+        registeredBoot = statements[2].values[2]
+        return true, nil
+      end
+      function database:withTransaction(handler)
+        local committed = handler(function(sql)
+          if sql:find('FOR UPDATE', 1, true) then return {{ boot_id = registeredBoot }} end
+          writes = writes + 1
+          if sql:find('synex_cluster_leases', 1, true) then return { affectedRows = 7 } end
+          return { affectedRows = 1 }
+        end)
+        rolledBack = committed ~= true
+        return committed == true and true or nil,
+          committed == true and nil or foundation.error('TRANSACTION_REJECTED', 'fixture rollback')
+      end
+      local instances = SynexCoreFactories.runtimePersistence({
+        foundation = foundation, database = database, platform = platform,
+        instanceId = 'instance-a', maximumLocalSessions = 3
+      }).instances
+      assert(instances:register('Instance A'))
+      local terminated, terminationError = instances:terminateLocalSessions('bounded cleanup')
+      assert(terminated == nil and terminationError.code == 'RUNTIME_MUTATION_BOUND_INVALID')
+      assert(rolledBack and writes == 1)
+      return terminationError.code
+    `);
+    assert.equal(result, 'RUNTIME_MUTATION_BOUND_INVALID');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('local session termination rolls back when boot control cleanup exceeds its batch', async () => {
+  const engine = await coreEngine(['foundation', 'runtime_persistence']);
+  try {
+    const result = await engine.doString(`
+      local platform = {
+        nowGame = function() return 1000 end, random = function() return 1 end,
+        print = function() end, jsonEncode = function() return '{}' end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      local registeredBoot, rolledBack, writes = nil, false, 0
+      local database = {}
+      function database:transaction(statements)
+        registeredBoot = statements[2].values[2]
+        return true, nil
+      end
+      function database:withTransaction(handler)
+        local committed = handler(function(sql)
+          if sql:find('FOR UPDATE', 1, true) then return {{ boot_id = registeredBoot }} end
+          writes = writes + 1
+          if sql:find('synex_session_control_requests', 1, true) then
+            return { affectedRows = 4 }
+          end
+          return { affectedRows = 1 }
+        end)
+        rolledBack = committed ~= true
+        return committed == true and true or nil,
+          committed == true and nil or foundation.error('TRANSACTION_REJECTED', 'fixture rollback')
+      end
+      local instances = SynexCoreFactories.runtimePersistence({
+        foundation = foundation, database = database, platform = platform,
+        instanceId = 'instance-a', maintenanceBatchMaximum = 3,
+        maximumLocalSessions = 10
+      }).instances
+      assert(instances:register('Instance A'))
+      local terminated, terminationError = instances:terminateLocalSessions('bounded cleanup')
+      assert(terminated == nil and terminationError.code == 'MAINTENANCE_BATCH_INVALID')
+      assert(rolledBack and writes == 2)
+      return terminationError.code
+    `);
+    assert.equal(result, 'MAINTENANCE_BATCH_INVALID');
+  } finally {
+    engine.global.close();
+  }
+});
+
 test('remote replacement controls are fenced across quiesce and requester restarts', async () => {
   const engine = await coreEngine(['foundation', 'runtime_persistence']);
   try {
@@ -450,22 +838,34 @@ test('remote replacement controls are fenced across quiesce and requester restar
           queryBoot = statements[2].values[2]
           return true, nil
         end,
-        query = function(_, sql)
-          assert(sql:find('connected_at', 1, true))
-          queryGuard = false
-          return {{ id = 'remote-session-a' }}, nil
-        end,
+        query = function() return {}, nil end,
         update = function() error('query guard must abort before compensation') end,
-        withTransaction = function() queryTransactions = queryTransactions + 1 return true, nil end
+        withTransaction = function(_, handler)
+          queryTransactions = queryTransactions + 1
+          local committed = handler(function(sql, parameters)
+            if sql:find('synex_instances', 1, true) then return {{ instance_id = 'instance-a' }} end
+            if sql:find('synex_cluster_leases', 1, true) then
+              return {{ owner_id = 'instance-a:admission-a', fencing_token = 3, valid = 1 }}
+            end
+            assert(sql:find('idx_sessions_user_open', 1, true)
+              and sql:find('ORDER BY \`connected_at\` ASC, \`id\` ASC LIMIT 32', 1, true))
+            queryGuard = false
+            return {{ id = 'remote-session-a', server_instance_id = 'instance-b' }}
+          end)
+          return committed == true and true or nil,
+            committed == true and nil or foundation.error('TRANSACTION_REJECTED', 'fixture rejected')
+        end
       }
       local queryInstances = SynexCoreFactories.runtimePersistence({
         foundation = foundation, database = queryDatabase, platform = platform,
         instanceId = 'instance-a'
       }).instances
       assert(queryInstances:register('Instance A') and queryInstances:bootId() == queryBoot)
+      local queryGate = { name = 'admission:user-a', owner = 'instance-a:admission-a',
+        fencingToken = 3, requesterInstanceId = 'instance-a', requesterBootId = queryBoot }
       local queryRequest, queryError = queryInstances:requestRemoteKicks(
-        'user-a', 45, function() return queryGuard end)
-      assert(queryRequest == nil and queryError.code == 'CORE_STOPPING' and queryTransactions == 0)
+        'user-a', 45, function() return queryGuard end, queryGate)
+      assert(queryRequest == nil and queryError.code == 'CORE_STOPPING' and queryTransactions == 1)
 
       local insertGuard, inserts, claims, expiries, expiredIds = true, 0, 0, 0, nil
       local insertBoot = nil
@@ -475,7 +875,10 @@ test('remote replacement controls are fenced across quiesce and requester restar
           return true, nil
         end,
         query = function()
-          return {{ id = 'remote-session-a' }, { id = 'remote-session-b' }}, nil
+          return {
+            { id = 'remote-session-a', server_instance_id = 'instance-b' },
+            { id = 'remote-session-b', server_instance_id = 'instance-b' }
+          }, nil
         end,
         update = function(_, sql, parameters)
           assert(sql:find('request_id', 1, true) and sql:find(' IN (', 1, true))
@@ -485,12 +888,36 @@ test('remote replacement controls are fenced across quiesce and requester restar
         end,
         withTransaction = function(_, handler)
           local committed = handler(function(sql, parameters)
-            if sql:find('synex_instances', 1, true) and sql:find('FOR UPDATE', 1, true) then
+            if sql:find('SELECT \`requester\`.\`instance_id\`', 1, true) then
               assert(parameters[1] == insertBoot and parameters[2] == 'instance-a')
               return {{ instance_id = 'instance-a' }}
             end
+            if sql:find('synex_cluster_leases', 1, true) then
+              return {{ owner_id = 'instance-a:admission-a', fencing_token = 4, valid = 1 }}
+            end
+            if sql:find('connected_at', 1, true) and sql:find('synex_sessions', 1, true) then
+              return {
+                { id = 'remote-session-a', server_instance_id = 'instance-b' },
+                { id = 'remote-session-b', server_instance_id = 'instance-b' }
+              }
+            end
             if sql:find('synex_sessions', 1, true) and sql:find('FOR UPDATE', 1, true) then
-              return {{ id = parameters[1] }}
+              return {{ id = parameters[1], server_instance_id = 'instance-b' }}
+            end
+            if sql:find('FROM \`synex_session_control_capacity\`', 1, true) then
+              return {{ entry_count = 0, global_limit = 100000, requester_limit = 10000 }}
+            end
+            if sql:find('INSERT IGNORE INTO', 1, true)
+              and sql:find('synex_session_control_requester_capacity', 1, true) then
+              return 1
+            end
+            if sql:find('FROM \`synex_session_control_requester_capacity\`', 1, true) then
+              return {{ requested_by_instance_id = 'instance-a', entry_count = 0 }}
+            end
+            if sql:find('UPDATE \`synex_session_control_capacity\`', 1, true)
+              or (sql:find('UPDATE', 1, true)
+                and sql:find('synex_session_control_requester_capacity', 1, true)) then
+              return 1
             end
             if sql:find('SELECT', 1, true) and sql:find('request_id', 1, true) then return {} end
             if sql:find('INSERT INTO', 1, true)
@@ -515,13 +942,15 @@ test('remote replacement controls are fenced across quiesce and requester restar
         instanceId = 'instance-a'
       }).instances
       assert(insertInstances:register('Instance A'))
+      local insertGate = { name = 'admission:user-a', owner = 'instance-a:admission-a',
+        fencingToken = 4, requesterInstanceId = 'instance-a', requesterBootId = insertBoot }
       local insertRequest, insertError = insertInstances:requestRemoteKicks(
-        'user-a', 45, function() return insertGuard end)
+        'user-a', 45, function() return insertGuard end, insertGate)
       assert(insertRequest == nil and insertError.code == 'CORE_STOPPING')
       assert(inserts == 1 and claims == 1 and expiries == 1 and #expiredIds == 3)
       assert(expiredIds[1] == insertBoot and expiredIds[2] == 'instance-a')
 
-      local transactionSql, pollSql, completionSql = {}, nil, nil
+      local transactionSql, pollSql, completionSql, completionParameters = {}, nil, nil, nil
       local currentBoot, controlWrites = nil, 0
       local successDatabase = {}
       function successDatabase:transaction(statements)
@@ -529,26 +958,46 @@ test('remote replacement controls are fenced across quiesce and requester restar
         return true, nil
       end
       function successDatabase:query(sql)
-        if sql:find('SELECT', 1, true) and sql:find('synex_sessions', 1, true)
-          and sql:find('connected_at', 1, true) then
-            return {{ id = 'remote-session-c' }}, nil
-        end
         pollSql = sql
         return {}, nil
       end
-      function successDatabase:update(sql)
+      function successDatabase:update(sql, parameters)
         completionSql = sql
+        completionParameters = parameters
         return 1, nil
       end
       function successDatabase:withTransaction(handler)
         local committed = handler(function(sql, parameters)
           transactionSql[#transactionSql + 1] = sql
-          if sql:find('synex_instances', 1, true) and sql:find('FOR UPDATE', 1, true) then
+          if sql:find('SELECT \`requester\`.\`instance_id\`', 1, true) then
             if parameters[1] ~= currentBoot then return {} end
             return {{ instance_id = 'instance-a' }}
           end
+          if sql:find('synex_cluster_leases', 1, true) then
+            return {{ owner_id = 'instance-a:admission-a', fencing_token = 5, valid = 1 }}
+          end
+          if sql:find('connected_at', 1, true) and sql:find('synex_sessions', 1, true) then
+            assert(sql:find('idx_sessions_user_open', 1, true)
+              and sql:find('ORDER BY \`connected_at\` ASC, \`id\` ASC LIMIT 32', 1, true))
+            return {{ id = 'remote-session-c', server_instance_id = 'instance-b' }}
+          end
           if sql:find('synex_sessions', 1, true) and sql:find('FOR UPDATE', 1, true) then
-            return {{ id = parameters[1] }}
+            return {{ id = parameters[1], server_instance_id = 'instance-b' }}
+          end
+          if sql:find('FROM \`synex_session_control_capacity\`', 1, true) then
+            return {{ entry_count = 0, global_limit = 100000, requester_limit = 10000 }}
+          end
+          if sql:find('INSERT IGNORE INTO', 1, true)
+            and sql:find('synex_session_control_requester_capacity', 1, true) then
+            return 1
+          end
+          if sql:find('FROM \`synex_session_control_requester_capacity\`', 1, true) then
+            return {{ requested_by_instance_id = 'instance-a', entry_count = 0 }}
+          end
+          if sql:find('UPDATE \`synex_session_control_capacity\`', 1, true)
+            or (sql:find('UPDATE', 1, true)
+              and sql:find('synex_session_control_requester_capacity', 1, true)) then
+            return 1
           end
           if sql:find('SELECT', 1, true) and sql:find('request_id', 1, true) then return {} end
           if sql:find('synex_session_control_requests', 1, true)
@@ -574,18 +1023,28 @@ test('remote replacement controls are fenced across quiesce and requester restar
       assert(successInstances:register('Instance A'))
       local activeBoot = assert(successInstances:bootId())
       assert(staleBoot ~= activeBoot and currentBoot == activeBoot)
+      local staleGate = { name = 'admission:user-a', owner = 'instance-a:admission-a',
+        fencingToken = 5, requesterInstanceId = 'instance-a', requesterBootId = staleBoot }
       local staleRequest, staleError = staleInstances:requestRemoteKicks(
-        'user-a', 45, function() return true end)
-      assert(staleRequest == nil and staleError.code == 'CORE_STOPPING' and controlWrites == 0)
+        'user-a', 45, function() return true end, staleGate)
+      assert(staleRequest == nil and staleError.code == 'ADMISSION_GATE_LOST' and controlWrites == 0)
       transactionSql = {}
-      assert(successInstances:requestRemoteKicks('user-a', 45, function() return true end) == 1)
-      assert(controlWrites == 2 and #transactionSql == 5)
+      local activeGate = { name = 'admission:user-a', owner = 'instance-a:admission-a',
+        fencingToken = 5, requesterInstanceId = 'instance-a', requesterBootId = activeBoot }
+      assert(successInstances:requestRemoteKicks(
+        'user-a', 45, function() return true end, activeGate) == 1)
+      assert(controlWrites == 2 and #transactionSql == 15)
       assert(successInstances:pendingLocalControls())
-      assert(successInstances:completeControl('control-a'))
+      assert(successInstances:completeControl({
+        request_id = 'control-a', target_session_id = 'remote-session-c',
+        target_instance_id = 'instance-a', action = 'kick'
+      }, true))
       assert(transactionSql[1]:find('synex_instance_boots', 1, true)
         and transactionSql[1]:find("'ready'", 1, true)
-        and transactionSql[4]:find('synex_session_control_requests', 1, true)
-        and transactionSql[5]:find('synex_session_control_authority', 1, true))
+        and transactionSql[2]:find('synex_cluster_leases', 1, true)
+        and transactionSql[3]:find('idx_sessions_user_open', 1, true)
+        and transactionSql[14]:find('synex_session_control_requests', 1, true)
+        and transactionSql[15]:find('synex_session_control_authority', 1, true))
       assert(pollSql:find('requester', 1, true)
         and pollSql:find('request_claim', 1, true)
         and pollSql:find('requester_boot', 1, true)
@@ -596,19 +1055,26 @@ test('remote replacement controls are fenced across quiesce and requester restar
         and completionSql:find('request_claim', 1, true)
         and completionSql:find('requester_boot', 1, true)
         and completionSql:find("'ready'", 1, true)
+        and completionSql:find('target_session_id', 1, true)
+        and completionSql:find('target_instance_id', 1, true)
+        and completionSql:find('closed_at', 1, true)
         and completionSql:find('created_at', 1, true)
         and completionSql:find('started_at', 1, true))
+      assert(completionParameters[2] == 'control-a'
+        and completionParameters[3] == 'remote-session-c'
+        and completionParameters[4] == 'instance-a'
+        and completionParameters[5] == 'kick' and completionParameters[6] == 1)
       return table.concat({queryError.code, insertError.code, staleError.code,
         inserts, claims, expiries, controlWrites}, ':')
     `);
-    assert.equal(result, 'CORE_STOPPING:CORE_STOPPING:CORE_STOPPING:1:1:1:2');
+    assert.equal(result, 'CORE_STOPPING:CORE_STOPPING:ADMISSION_GATE_LOST:1:1:1:2');
   } finally {
     engine.global.close();
   }
 });
 
 test('failed restart cleanup keeps the persisted instance fenced and admission closed', async () => {
-  const engine = await coreEngine(['foundation', 'registries', 'lifecycle', 'bootstrap_restart', 'bootstrap_lifecycle']);
+  const engine = await coreEngine(['foundation', 'registries', 'lifecycle', 'bootstrap_restart', 'bootstrap_resource_events', 'bootstrap_lifecycle']);
   try {
     const result = await engine.doString(`
       local calls, persistedStatus = {}, 'ready'
@@ -692,7 +1158,8 @@ test('failed restart cleanup keeps the persisted instance fenced and admission c
           registerCoreContracts = noop, registerCoreServices = noop
         },
         discovery = {
-          discoverResource = noop, discoverAll = function() return true, nil end,
+          discoverResource = noop, invalidateResource = noop,
+          discoverAll = function() return true, nil end,
           validateActive = function() return {} end, ensureOwner = noop,
           supportsStateHandoff = noop, captureStateHandoff = noop, restoreStateHandoff = noop
         }
@@ -715,7 +1182,7 @@ test('failed restart cleanup keeps the persisted instance fenced and admission c
 });
 
 test('late boot failure purges scheduled workers and stale timeout callbacks remain inert', async () => {
-  const engine = await coreEngine(['foundation', 'registries', 'lifecycle', 'bootstrap_restart', 'bootstrap_lifecycle']);
+  const engine = await coreEngine(['foundation', 'registries', 'lifecycle', 'bootstrap_restart', 'bootstrap_resource_events', 'bootstrap_lifecycle']);
   try {
     const result = await engine.doString(`
       local now, callbacks, statusWrites = 1000, {}, {}
@@ -840,7 +1307,7 @@ test('late boot failure purges scheduled workers and stale timeout callbacks rem
           registerCoreServices = function() return 'service-token', nil end
         },
         discovery = {
-          discoverResource = noop, discoverAll = noop, ensureOwner = noop,
+          discoverResource = noop, invalidateResource = noop, discoverAll = noop, ensureOwner = noop,
           supportsStateHandoff = noop, captureStateHandoff = noop, restoreStateHandoff = noop,
           validateActive = function()
             validationCalls = validationCalls + 1
@@ -853,7 +1320,8 @@ test('late boot failure purges scheduled workers and stale timeout callbacks rem
       assert(started == nil and bootError.code == 'BOOT_FAILED')
       assert(connectionQuiesced == true and releaseCalls == 1)
       assert(terminateCalls == 2)
-      assert(#callbacks == 7, 'all recurring workers must have reached scheduler registration')
+      assert(#callbacks == 1,
+        'all recurring workers must share one bounded scheduler pump timer')
       assert(#statusWrites == 3 and statusWrites[1] == 'ready'
         and statusWrites[2] == 'stopping' and statusWrites[3] == 'stopped')
       assert(lifecycle.core:get() == 'FAILED' and lifecycle.core:canAdmitPlayers() == false)
@@ -871,14 +1339,14 @@ test('late boot failure purges scheduled workers and stale timeout callbacks rem
       return table.concat({bootError.code, callbackCount, releaseCalls, terminateCalls,
         mutations.outbox, mutations.saga, mutations.deletion, mutations.heartbeat}, ':')
     `);
-    assert.equal(result, 'BOOT_FAILED:7:1:2:0:0:0:0');
+    assert.equal(result, 'BOOT_FAILED:1:1:2:0:0:0:0');
   } finally {
     engine.global.close();
   }
 });
 
 test('core raw stop is synchronous while explicit restart preparation drains durable authority', async () => {
-  const engine = await coreEngine(['foundation', 'bootstrap_restart', 'bootstrap_lifecycle']);
+  const engine = await coreEngine(['foundation', 'bootstrap_restart', 'bootstrap_resource_events', 'bootstrap_lifecycle']);
   try {
     const result = await engine.doString(`
       SynexCoreFactories.commands = function()
@@ -975,7 +1443,8 @@ test('core raw stop is synchronous while explicit restart preparation drains dur
             registerCoreContracts = noop, registerCoreServices = noop
           },
           discovery = {
-            discoverResource = noop, discoverAll = noop, validateActive = function() return {} end,
+            discoverResource = noop, invalidateResource = noop,
+            discoverAll = noop, validateActive = function() return {} end,
             ensureOwner = noop, supportsStateHandoff = noop,
             captureStateHandoff = noop, restoreStateHandoff = noop
           }
@@ -1052,6 +1521,8 @@ test('persistent RBAC mutations write actor, reason, before, and after in the sa
       local database = {}
       function database:withTransaction(handler)
         local function query(sql, parameters)
+          if sql:find('synex_rbac_policy_revisions', 1, true)
+            and sql:find('SELECT', 1, true) then return {{ revision = 1 }} end
           if sql:find('synex_rbac_roles', 1, true) and sql:find('SELECT', 1, true) then return {} end
           if sql:find('assigned_by_ref', 1, true) and sql:find('SELECT', 1, true) then
             return assignment and {{ assigned_by_ref = 'synex_control', expires_at = nil }} or {}
@@ -1158,9 +1629,10 @@ test('character deletion persists reconciliation and retries domain commit error
   try {
     const result = await engine.doString(`
       local foundation, persistedPlan
-      local now, participantCalls, leaseCount, published = 1000, 0, 0, 0
+      local now, participantCalls, leaseCount, leaseRenewals, published, statePurges,
+        terminalRetirements = 1000, 0, 0, 0, 0, 0, 0
       local leaseOwners = {}
-      local planState, planId = nil, nil
+      local planState, planId, planVersion = nil, nil, 0
       local platform = {
         nowGame = function() now = now + 1 return now end,
         random = function() return 1 end,
@@ -1186,7 +1658,22 @@ test('character deletion persists reconciliation and retries domain commit error
             return {{ version = 1, status = 'active', deleted_at = nil }}
           end
           if sql:find('INSERT INTO', 1, true) and sql:find('synex_character_deletion_plans', 1, true) then
-            planId, planState = parameters[1], 'executing'
+            planId, planState, planVersion = parameters[1], 'executing', 1
+            return { affectedRows = 1 }
+          end
+          if sql:find('UPDATE', 1, true)
+              and sql:find('synex_character_deletion_plans', 1, true)
+              and sql:find("'completed'", 1, true) then
+            assert(planState == 'executing' and planId == parameters[1]
+              and planVersion == parameters[2])
+            planState, planVersion = 'completed', planVersion + 1
+            return { affectedRows = 1 }
+          end
+          if sql:find('UPDATE', 1, true) and sql:find('synex_cluster_leases', 1, true) then
+            assert(sql:find('terminal_compaction_at', 1, true)
+              and parameters[1] == 'character-delete:' .. planId
+              and type(parameters[2]) == 'string' and parameters[3] == leaseCount)
+            terminalRetirements = terminalRetirements + 1
             return { affectedRows = 1 }
           end
           if sql:find('UPDATE', 1, true) and sql:find('synex_characters', 1, true) then return { affectedRows = 1 } end
@@ -1196,18 +1683,32 @@ test('character deletion persists reconciliation and retries domain commit error
       end
       function database:update(sql)
         if sql:find("state", 1, true) and sql:find("completed", 1, true) then planState = 'completed' end
+        planVersion = planVersion + 1
         return 1, nil
       end
       function database:query(sql)
         assert(sql:find('synex_character_deletion_plans', 1, true))
-        if planState == 'executing' then return {{ id = planId, plan_json = '{"schema":1}' }}, nil end
+        if planState == 'executing' then
+          return {{
+            id = planId, character_id = 'character-a',
+            version = planVersion, plan_json = '{"schema":1}'
+          }}, nil
+        end
         return {}, nil
       end
+      local deletionSession = {
+        id = 'session-a', userId = 'user-a', state = 'SELECTING_CHARACTER',
+        source = 41, sourceGeneration = 1, persistedSource = 41,
+        persistedSourceGeneration = 1, version = 1, persistedVersion = 1,
+        clusterLease = { name = 'session:user-a', owner = 'instance-a:session-a',
+          fencingToken = 1, requesterInstanceId = 'instance-a', requesterBootId = 'boot-a' }
+      }
       local players = {
         getSession = function(_, sessionId)
-          if sessionId == 'session-a' then
-            return { id = sessionId, userId = 'user-a', state = 'SELECTING_CHARACTER' }
-          end
+          if sessionId == deletionSession.id then return foundation.copy(deletionSession) end
+        end,
+        isCurrent = function(_, sessionId, source, generation)
+          return sessionId == deletionSession.id and source == 41 and generation == 1
         end
       }
       local messaging = {
@@ -1218,12 +1719,17 @@ test('character deletion persists reconciliation and retries domain commit error
         end }
       }
       local leases = {
-        acquire = function(_, name, owner)
+        acquire = function(_, name, owner, ttl)
           leaseCount = leaseCount + 1
-          assert(name:find('character-delete:', 1, true) == 1 and owner:find(':character-delete', 1, true))
+          assert(name:find('character-delete:', 1, true) == 1
+            and owner:find(':character-delete', 1, true) and ttl == 120)
           assert(leaseOwners[owner] == nil, 'each character deletion attempt needs a unique lease owner')
           leaseOwners[owner] = true
           return { name = name, owner = owner, fencingToken = leaseCount }, nil
+        end,
+        renew = function()
+          leaseRenewals = leaseRenewals + 1
+          return true, nil
         end,
         release = function() return true, nil end
       }
@@ -1235,6 +1741,11 @@ test('character deletion persists reconciliation and retries domain commit error
         end },
         sessionRepository = {}, leases = leases,
         instances = { bootId = function() return 'boot-a', nil end }, instanceId = 'instance-a',
+        stateService = { purgeSubject = function(_, scope, subject)
+          assert(scope == 'character' and subject == 'character-a')
+          statePurges = statePurges + 1
+          return { cleared = 1 }, nil
+        end },
         invokeOwned = function(entry, handler, ...)
           assert(registries.owners:isCurrent(entry.owner, entry.epoch))
           return foundation.safeCall(handler, ...)
@@ -1243,6 +1754,7 @@ test('character deletion persists reconciliation and retries domain commit error
       })
       assert(characters:registerParticipant('synex_domain', domainEpoch, {
         name = 'synex_domain', prepare = function() return true end,
+        rollback = function() return true end,
         deletePreflight = function() return { action = 'anonymize' }, nil end,
         deleteCommit = function()
           participantCalls = participantCalls + 1
@@ -1266,10 +1778,12 @@ test('character deletion persists reconciliation and retries domain commit error
       assert(participantCalls == 1 and published == 0)
       local report = assert(characters:reconcileDeletions(10))
       assert(report.completed == 1 and report.deferred == 0 and planState == 'completed')
-      assert(participantCalls == 2 and published == 1 and leaseCount == 2)
-      return table.concat({deletion.state, report.completed, participantCalls, published}, ':')
+      assert(participantCalls == 2 and published == 1 and leaseCount == 2 and statePurges == 1)
+      assert(leaseRenewals >= 7 and terminalRetirements == 1)
+      return table.concat({deletion.state, report.completed, participantCalls, published,
+        statePurges}, ':')
     `);
-    assert.equal(result, 'reconciling:1:2:1');
+    assert.equal(result, 'reconciling:1:2:1:1');
   } finally {
     engine.global.close();
   }
@@ -1292,11 +1806,17 @@ test('required character participant deadlines fail closed for load and unload',
       registries.owners:activate('synex_core')
       local session = {
         id = 'session-a', userId = 'user-a', state = 'SELECTING_CHARACTER',
-        characterId = nil, version = 1, persistedVersion = 1
+        characterId = nil, source = 42, sourceGeneration = 1,
+        persistedSource = 42, persistedSourceGeneration = 1,
+        version = 1, persistedVersion = 1,
+        clusterLease = { name = 'session:user-a', owner = 'instance-a:session-a',
+          fencingToken = 1, requesterInstanceId = 'instance-a', requesterBootId = 'boot-a' }
       }
       local players = {}
       function players:getSession(id) if id == session.id then return foundation.copy(session) end end
-      function players:sessionsByUser() return { foundation.copy(session) } end
+      function players:isCurrent(id, source, generation)
+        return id == session.id and source == session.source and generation == session.sourceGeneration
+      end
       function players:updateSession(id, mutator)
         if id ~= session.id then return nil, foundation.error('SESSION_NOT_FOUND', 'missing') end
         local candidate = foundation.copy(session)
@@ -1304,8 +1824,16 @@ test('required character participant deadlines fail closed for load and unload',
         session = candidate
         return foundation.copy(session), nil
       end
-      function players:bindCharacter() return true, nil end
-      function players:unbindCharacter() return true, nil end
+      function players:bindCharacter(id, characterId)
+        if id ~= session.id or session.characterId ~= nil then return nil, foundation.error('BIND_FAILED', 'fixture') end
+        session.characterId = characterId
+        return foundation.copy(session), nil
+      end
+      function players:unbindCharacter(id)
+        if id ~= session.id then return nil, foundation.error('SESSION_NOT_FOUND', 'fixture') end
+        session.characterId = nil
+        return foundation.copy(session), nil
+      end
       local characters = SynexCoreFactories.identityCharacters({
         platform = platform, foundation = foundation, database = {}, players = players,
         owners = registries.owners,
@@ -1331,11 +1859,20 @@ test('required character participant deadlines fail closed for load and unload',
       local invalidParticipant, invalidParticipantError = characters:registerParticipant(
         'synex_invalid_commit', invalidEpoch, {
           name = 'invalid_required_commit', prepare = function() return true end,
+          rollback = function() return true end,
           commit = function() return true end
         }
       )
       assert(invalidParticipant == nil and invalidParticipantError.code == 'INVALID_PARTICIPANT')
       assert(invalidParticipantError.message:find('cannot define commit', 1, true))
+      local missingRollbackEpoch = registries.owners:activate('synex_missing_rollback')
+      local missingRollback, missingRollbackError = characters:registerParticipant(
+        'synex_missing_rollback', missingRollbackEpoch, {
+          name = 'missing_required_rollback', prepare = function() return true end
+        }
+      )
+      assert(missingRollback == nil and missingRollbackError.code == 'INVALID_PARTICIPANT')
+      assert(missingRollbackError.message:find('must define rollback', 1, true))
       local optionalCommitCalls = 0
       local notificationEpoch = registries.owners:activate('synex_optional_commit')
       assert(characters:registerParticipant('synex_optional_commit', notificationEpoch, {
@@ -1347,13 +1884,19 @@ test('required character participant deadlines fail closed for load and unload',
         end
       }))
       local requiredEpoch = registries.owners:activate('synex_required_load')
+      local loadRollbacks = 0
       assert(characters:registerParticipant('synex_required_load', requiredEpoch, {
         name = 'required_load', timeoutMs = 100,
-        prepare = function() now = now + 101 return true end
+        prepare = function() now = now + 101 return { prepared = true } end,
+        rollback = function(prepared)
+          assert(prepared and prepared.prepared)
+          loadRollbacks = loadRollbacks + 1
+          return true
+        end
       }))
       local loaded, loadError = characters:select('session-a', 'character-a')
       assert(loaded == nil and loadError.code == 'PARTICIPANT_TIMEOUT')
-      assert(session.state == 'SELECTING_CHARACTER' and session.characterId == nil)
+      assert(session.state == 'SELECTING_CHARACTER' and session.characterId == nil and loadRollbacks == 1)
       registries.owners:purge('synex_required_load', requiredEpoch, 'fixture')
       local optionalEpoch = registries.owners:activate('synex_optional_load')
       assert(characters:registerParticipant('synex_optional_load', optionalEpoch, {
@@ -1362,24 +1905,48 @@ test('required character participant deadlines fail closed for load and unload',
       }))
       assert(characters:select('session-a', 'character-a'))
       assert(session.state == 'ACTIVE' and session.characterId == 'character-a')
+      local unloadOrder = {}
+      local firstUnloadEpoch = registries.owners:activate('synex_first_unload')
+      assert(characters:registerParticipant('synex_first_unload', firstUnloadEpoch, {
+        name = 'first_unload', priority = -10, prepare = function() return true end,
+        rollback = function() return true end,
+        unload = function()
+          unloadOrder[#unloadOrder + 1] = 'first'
+          return true
+        end
+      }))
       local unloadEpoch = registries.owners:activate('synex_required_unload')
       assert(characters:registerParticipant('synex_required_unload', unloadEpoch, {
         name = 'required_unload', timeoutMs = 100, prepare = function() return true end,
-        unload = function() now = now + 101 return true end
+        rollback = function() return true end,
+        unload = function()
+          unloadOrder[#unloadOrder + 1] = 'failure'
+          now = now + 101
+          return true
+        end
+      }))
+      local finalUnloadEpoch = registries.owners:activate('synex_final_unload')
+      assert(characters:registerParticipant('synex_final_unload', finalUnloadEpoch, {
+        name = 'final_unload', priority = 10, prepare = function() return true end,
+        rollback = function() return true end,
+        unload = function()
+          unloadOrder[#unloadOrder + 1] = 'final'
+          return true
+        end
       }))
       local unloaded, unloadError = characters:unload('session-a', 'fixture')
       assert(unloaded == nil and unloadError.code == 'CHARACTER_UNLOAD_FAILED')
-      assert(unloadError.details.cause == 'PARTICIPANT_TIMEOUT' and unloadError.details.stateRestored)
-      assert(session.state == 'ACTIVE' and session.characterId == 'character-a')
-      registries.owners:purge('synex_required_unload', unloadEpoch, 'fixture')
-      assert(characters:unload('session-a', 'fixture'))
+      assert(unloadError.details.cause == 'PARTICIPANT_TIMEOUT'
+        and unloadError.details.cleanupContinued and not unloadError.details.stateRestored
+        and unloadError.details.persisted and unloadError.details.state == 'SELECTING_CHARACTER')
+      assert(table.concat(unloadOrder, ',') == 'first,failure,final')
       assert(session.state == 'SELECTING_CHARACTER' and session.characterId == nil)
       assert(optionalCommitCalls == 1)
-      return table.concat({invalidParticipantError.code, optionalCommitCalls, loadError.code,
-        unloadError.code, session.state}, ':')
+      return table.concat({invalidParticipantError.code, missingRollbackError.code,
+        optionalCommitCalls, loadRollbacks, loadError.code, unloadError.code, session.state}, ':')
     `);
     assert.equal(result,
-      'INVALID_PARTICIPANT:1:PARTICIPANT_TIMEOUT:CHARACTER_UNLOAD_FAILED:SELECTING_CHARACTER');
+      'INVALID_PARTICIPANT:INVALID_PARTICIPANT:1:1:PARTICIPANT_TIMEOUT:CHARACTER_UNLOAD_FAILED:SELECTING_CHARACTER');
   } finally {
     engine.global.close();
   }
@@ -1404,7 +1971,11 @@ test('failed character unload persistence blocks reuse and reconciles bounded pe
         assert(players:createPending(tempSource, { sessionId = id }))
         assert(players:bindJoined(tempSource, source, {
           id = id, userId = 'user-a', state = state, characterId = characterId,
-          version = 5, persistedVersion = 5
+          version = 5, persistedVersion = 5, persistedSource = source,
+          persistedSourceGeneration = 1,
+          clusterLease = { name = 'session:user-a:' .. id, owner = 'instance-a:' .. id,
+            fencingToken = 1, requesterInstanceId = 'instance-a', requesterBootId = 'boot-a' },
+          clusterLeaseDeadlineAt = 26000, authorityDeadlineAt = 26000
         }))
         if characterId then assert(players:bindCharacter(id, characterId)) end
       end
@@ -1414,8 +1985,14 @@ test('failed character unload persistence blocks reuse and reconciles bounded pe
         ['session-a'] = { state = 'ACTIVE', characterId = 'character-a', version = 5 }
       }
       local failNext = { ['session-a'] = true }
+      local failAlways = {}
       local sessionRepository = {}
       function sessionRepository:update(candidate)
+        if failAlways[candidate.id] then
+          return nil, foundation.error('DATABASE_ERROR', 'persistent fixture outage', {
+            retryable = true
+          })
+        end
         if failNext[candidate.id] then
           failNext[candidate.id] = nil
           return nil, foundation.error('DATABASE_ERROR', 'fixture outage', { retryable = true })
@@ -1478,9 +2055,25 @@ test('failed character unload persistence blocks reuse and reconciles bounded pe
       local snapshot = characters:cacheSnapshot()
       assert(abandoned.abandoned == 1 and abandoned.pending == 0
         and snapshot.pendingSessionWrites == 0 and snapshot.pendingSessionWriteMaximum == 64)
-      return table.concat({unloadError.code, report.completed, abandoned.abandoned, repositoryCalls}, ':')
+
+      addSession(-4, 44, 'session-d', 'ACTIVE', 'character-d')
+      addSession(-5, 45, 'session-e', 'ACTIVE', 'character-e')
+      persisted['session-d'] = { state = 'ACTIVE', characterId = 'character-d', version = 5 }
+      persisted['session-e'] = { state = 'ACTIVE', characterId = 'character-e', version = 5 }
+      failNext['session-d'] = true
+      failNext['session-e'] = true
+      assert(characters:unload('session-d', 'fixture') == nil)
+      assert(characters:unload('session-e', 'fixture') == nil)
+      failAlways['session-d'] = true
+      local blockedHead = assert(characters:reconcileUnloads(1))
+      local rotated = assert(characters:reconcileUnloads(1))
+      assert(blockedHead.deferred == 1 and rotated.completed == 1)
+      assert(players:getSession('session-d').persistencePending == true)
+      assert(players:getSession('session-e').persistencePending == nil)
+      return table.concat({unloadError.code, report.completed, abandoned.abandoned,
+        blockedHead.deferred, rotated.completed, repositoryCalls}, ':')
     `);
-    assert.equal(result, 'SESSION_PERSISTENCE_PENDING:1:1:0');
+    assert.equal(result, 'SESSION_PERSISTENCE_PENDING:1:1:1:1:0');
   } finally {
     engine.global.close();
   }
@@ -1511,15 +2104,159 @@ test('recurring scheduler entries expose bounded worker health and recover after
         if attempts <= 3 then return nil, { code = 'FIXTURE_FAILURE' } end
         return true, nil
       end, { name = 'fixture.worker' }))
-      for index = 1, 3 do callbacks[index]() end
+      for index = 1, 3 do now = now + 100 callbacks[index]() end
       local unhealthy = lifecycle.scheduler:snapshot()[1]
       assert(unhealthy.health == 'UNHEALTHY' and unhealthy.runs == 3 and unhealthy.lastError == 'FIXTURE_FAILURE')
+      now = now + 100
       callbacks[4]()
       local recovered = lifecycle.scheduler:snapshot()[1]
       assert(recovered.health == 'HEALTHY' and recovered.runs == 4 and recovered.lastError == nil)
       return table.concat({unhealthy.health, recovered.health, recovered.durationMs}, ':')
     `);
     assert.equal(result, 'UNHEALTHY:HEALTHY:5');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('scheduler bounds active work, shares one timer, and rolls back failed timer arms', async () => {
+  const engine = await coreEngine(['foundation', 'registries', 'lifecycle']);
+  try {
+    const result = await engine.doString(`
+      local callbacks, throwOnArm = {}, false
+      local platform = {
+        nowGame = function() return 1000 end,
+        random = function() return 1 end,
+        print = function() end,
+        jsonEncode = function() return '{}' end,
+        setTimeout = function(_, callback)
+          if throwOnArm then error('timer adapter fixture secret') end
+          callbacks[#callbacks + 1] = callback
+        end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      foundation.configureIds('scheduler-capacity')
+      local registries = SynexCoreFactories.registries({
+        foundation = foundation,
+        maximumArtifactsPerOwner = 8,
+        maximumArtifactsPerKind = 8
+      })
+      local epoch = registries.owners:activate('synex_fixture')
+      local lifecycle = SynexCoreFactories.lifecycle({
+        platform = platform,
+        foundation = foundation,
+        owners = registries.owners,
+        maximumSchedules = 2,
+        maximumSchedulesPerOwner = 2
+      })
+
+      local nanSchedule, nanError = lifecycle.scheduler:after(
+        'synex_fixture', epoch, 0 / 0, function() end)
+      local fractional, fractionalError = lifecycle.scheduler:after(
+        'synex_fixture', epoch, 1.5, function() end)
+      assert(nanSchedule == nil and nanError.code == 'INVALID_ARGUMENT')
+      assert(fractional == nil and fractionalError.code == 'INVALID_ARGUMENT')
+
+      local first = assert(lifecycle.scheduler:after(
+        'synex_fixture', epoch, 86400000, function() end))
+      local second = assert(lifecycle.scheduler:after(
+        'synex_fixture', epoch, 86400000, function() end))
+      local overflow, overflowError = lifecycle.scheduler:after(
+        'synex_fixture', epoch, 86400000, function() end)
+      assert(overflow == nil and overflowError.code == 'SCHEDULER_LIMIT')
+      assert(lifecycle.scheduler:cancel('synex_fixture', first))
+      assert(lifecycle.scheduler:cancel('synex_fixture', second))
+      assert(lifecycle.scheduler:count() == 0)
+      local retained = assert(lifecycle.scheduler:after(
+        'synex_fixture', epoch, 86400000, function() end))
+      assert(#callbacks == 1, 'schedule churn must not allocate more native timers')
+      assert(lifecycle.scheduler:cancel('synex_fixture', retained))
+      assert(lifecycle.scheduler:count() == 0)
+      assert(registries.owners:list()[1].artifacts == 0)
+
+      callbacks[1]()
+      assert(lifecycle.scheduler:capacity().pendingTimers == 0)
+      local reusable = assert(lifecycle.scheduler:after(
+        'synex_fixture', epoch, 86400000, function() end))
+      assert(lifecycle.scheduler:cancel('synex_fixture', reusable))
+      callbacks[2]()
+
+      local old = assert(lifecycle.scheduler:after(
+        'synex_fixture', epoch, 86400000, function() end))
+      local purge = registries.owners:purge('synex_fixture', epoch, 'fixture restart')
+      assert(purge.cleaned == 1 and lifecycle.scheduler:count() == 0)
+      local nextEpoch = registries.owners:activate('synex_fixture')
+      local afterRestart = assert(lifecycle.scheduler:after(
+        'synex_fixture', nextEpoch, 86400000, function() end))
+      assert(#callbacks == 3, 'restart must reuse the already armed shared timer')
+      assert(lifecycle.scheduler:cancel('synex_fixture', afterRestart))
+      callbacks[3]()
+
+      throwOnArm = true
+      local failed, failedError = lifecycle.scheduler:after(
+        'synex_fixture', nextEpoch, 100, function() end)
+      assert(failed == nil and failedError.code == 'SCHEDULER_ARM_FAILED')
+      assert(lifecycle.scheduler:count() == 0)
+      local capacity = lifecycle.scheduler:capacity()
+      assert(capacity.pendingTimers == 0)
+      assert(registries.owners:list()[1].artifacts == 0)
+      return table.concat({overflowError.code, failedError.code,
+        capacity.schedules, capacity.pendingTimers}, ':')
+    `);
+    assert.equal(result, 'SCHEDULER_LIMIT:SCHEDULER_ARM_FAILED:0:0');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('yielding scheduler handlers are isolated across owners', async () => {
+  const engine = await coreEngine(['foundation', 'registries', 'lifecycle']);
+  try {
+    const result = await engine.doString(`
+      local now, callbacks, threads = 1000, {}, {}
+      local firstRuns, secondRuns = 0, 0
+      local platform = {
+        nowGame = function() return now end,
+        random = function() return 1 end,
+        print = function() end,
+        jsonEncode = function() return '{}' end,
+        setTimeout = function(_, callback) callbacks[#callbacks + 1] = callback end,
+        createThread = function(handler)
+          threads[#threads + 1] = coroutine.create(handler)
+        end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      foundation.configureIds('scheduler-isolation')
+      local registries = SynexCoreFactories.registries({ foundation = foundation })
+      local firstEpoch = registries.owners:activate('synex_first')
+      local secondEpoch = registries.owners:activate('synex_second')
+      local lifecycle = SynexCoreFactories.lifecycle({
+        platform = platform, foundation = foundation, owners = registries.owners
+      })
+      assert(lifecycle.scheduler:after('synex_first', firstEpoch, 50, function()
+        coroutine.yield('fixture wait')
+        firstRuns = firstRuns + 1
+        return true
+      end, { name = 'first.blocking' }))
+      assert(lifecycle.scheduler:after('synex_second', secondEpoch, 50, function()
+        secondRuns = secondRuns + 1
+        return true
+      end, { name = 'second.ready' }))
+      assert(#callbacks == 1)
+      now = 1050
+      callbacks[1]()
+      assert(#threads == 2, 'the pump must dispatch both due handlers without running either inline')
+      local firstOk = coroutine.resume(threads[1])
+      assert(firstOk and coroutine.status(threads[1]) == 'suspended')
+      local secondOk, secondError = coroutine.resume(threads[2])
+      assert(secondOk, tostring(secondError))
+      assert(secondRuns == 1 and firstRuns == 0)
+      local resumed, resumeError = coroutine.resume(threads[1])
+      assert(resumed, tostring(resumeError))
+      assert(firstRuns == 1 and lifecycle.scheduler:count() == 0)
+      return table.concat({firstRuns, secondRuns, #threads}, ':')
+    `);
+    assert.equal(result, '1:1:2');
   } finally {
     engine.global.close();
   }
@@ -1546,7 +2283,16 @@ test('failed runtime gate blocks owner discovery and cached facade mutations', a
           discoveryReads = discoveryReads + 1
           return '{}'
         end,
-        jsonDecode = function() return {} end,
+        jsonDecode = function()
+          return {
+            critical = false, capabilities = { request = {} }, contracts = { provide = {}, consume = {} },
+            events = { publish = {}, subscribe = {} },
+            hooks = { register = {}, run = {} },
+            services = { provide = {}, require = {}, optional = {} },
+            dependencies = { required = {}, optional = {}, development = {} },
+            migrations = {}, stateSnapshot = { supported = false, schemaVersion = 1 }
+          }
+        end,
         setTimeout = function()
           timeoutMutations = timeoutMutations + 1
         end
@@ -1559,15 +2305,11 @@ test('failed runtime gate blocks owner discovery and cached facade mutations', a
       })
       local runtimeGate = SynexCoreFactories.runtimeGate({ foundation = foundation })
 
-      local manifests = {
-        synex_fixture = {
-          critical = false, capabilities = { request = {} },
-          services = { provide = {}, require = {}, optional = {} }
-        }
-      }
+      local manifests = {}
       local security = {
         capabilities = {
           registerManifest = function() return true, nil end,
+          unregisterManifest = function() return true end,
           preflight = function() return {} end
         }
       }
@@ -1599,12 +2341,12 @@ test('failed runtime gate blocks owner discovery and cached facade mutations', a
       local facade = assert(api.getAPIForCaller('synex_fixture', '^1.0.0'))
       local cached = assert(api.getAPIForCaller('synex_fixture', '^1.0.0'))
       assert(cached == facade and registries.owners:epoch('synex_fixture') == 1)
-      assert(#registries.owners:list() == 1 and discoveryReads == 0)
+      assert(#registries.owners:list() == 1 and discoveryReads == 2)
 
       runtimeGate:fail()
       local owner, ownerError = discovery.ensureOwner('synex_missing')
       assert(owner == nil and ownerError.code == 'CORE_FAILED' and ownerError.retryable == false)
-      assert(discoveryReads == 0 and registries.owners:epoch('synex_missing') == 0)
+      assert(discoveryReads == 2 and registries.owners:epoch('synex_missing') == 0)
       assert(#registries.owners:list() == 1)
 
       local schedule, scheduleError = facade.Scheduler.after(100, function() end)
@@ -1617,7 +2359,7 @@ test('failed runtime gate blocks owner discovery and cached facade mutations', a
       return table.concat({ownerError.code, scheduleError.code, registrationError.code,
         discoveryReads, timeoutMutations, registrationMutations}, ':')
     `);
-    assert.equal(result, 'CORE_FAILED:CORE_FAILED:CORE_FAILED:0:0:0');
+    assert.equal(result, 'CORE_FAILED:CORE_FAILED:CORE_FAILED:2:0:0');
   } finally {
     engine.global.close();
   }
@@ -1705,15 +2447,15 @@ test('live dependency validation requires running providers, real registration, 
       assert(#registered == 1 and registered[1].kind == 'capability'
         and registered[1].resource == 'synex_blocked' and registered[1].severity == 'error')
       assert(lifecycle.dependencies:setProviderHealth(
-        'synex_provider', 'synex.fixture', 'UNHEALTHY', 'CLOSED'))
+        'synex_provider', 'synex.fixture', '1.0.0', 'UNHEALTHY', 'CLOSED'))
       local unhealthy = discovery.validateActive()
       assert(#unhealthy == 4)
       assert(lifecycle.dependencies:setProviderHealth(
-        'synex_provider', 'synex.fixture', 'HEALTHY', 'OPEN'))
+        'synex_provider', 'synex.fixture', '1.0.0', 'HEALTHY', 'OPEN'))
       local opened = discovery.validateActive()
       assert(#opened == 4)
       assert(lifecycle.dependencies:setProviderHealth(
-        'synex_provider', 'synex.fixture', 'HEALTHY', 'CLOSED'))
+        'synex_provider', 'synex.fixture', '1.0.0', 'HEALTHY', 'CLOSED'))
       assert(#discovery.validateActive() == 1)
       states.synex_provider = 'stopped'
       local stopped = discovery.validateActive()
@@ -1841,7 +2583,7 @@ test('resource dependency versions fail closed at runtime and optional metadata 
 });
 
 test('dependency health refresh clears recovered registry findings without changing resource state', async () => {
-  const engine = await coreEngine(['foundation', 'registries', 'lifecycle', 'bootstrap_restart', 'bootstrap_lifecycle']);
+  const engine = await coreEngine(['foundation', 'registries', 'lifecycle', 'bootstrap_restart', 'bootstrap_resource_events', 'bootstrap_lifecycle']);
   try {
     const result = await engine.doString(`
       local findings = {
@@ -1887,7 +2629,7 @@ test('dependency health refresh clears recovered registry findings without chang
           registerCoreContracts = noop, registerCoreServices = noop
         },
         discovery = {
-          discoverResource = noop, discoverAll = noop,
+          discoverResource = noop, invalidateResource = noop, discoverAll = noop,
           validateActive = function() return findings end,
           ensureOwner = noop, supportsStateHandoff = noop,
           captureStateHandoff = noop, restoreStateHandoff = noop
@@ -1944,7 +2686,7 @@ test('dependency health refresh clears recovered registry findings without chang
 });
 
 test('instance status synchronization clears a failed write after desired status reverses', async () => {
-  const engine = await coreEngine(['foundation', 'registries', 'lifecycle', 'bootstrap_restart', 'bootstrap_lifecycle']);
+  const engine = await coreEngine(['foundation', 'registries', 'lifecycle', 'bootstrap_restart', 'bootstrap_resource_events', 'bootstrap_lifecycle']);
   try {
     const result = await engine.doString(`
       local criticalFinding, failNextReady = true, false
@@ -2032,7 +2774,7 @@ test('instance status synchronization clears a failed write after desired status
           registerCoreContracts = noop, registerCoreServices = noop
         },
         discovery = {
-          discoverResource = noop, discoverAll = noop, ensureOwner = noop,
+          discoverResource = noop, invalidateResource = noop, discoverAll = noop, ensureOwner = noop,
           supportsStateHandoff = noop, captureStateHandoff = noop, restoreStateHandoff = noop,
           validateActive = function(_, enforceCritical)
             if enforceCritical and criticalFinding then
@@ -2263,8 +3005,10 @@ test('control diagnostic search crosses its declared and granted capability gate
 test('queue admission preserves reserved slots for ACE staff and maintenance fails closed', async () => {
   const engine = await coreEngine([
     'foundation', 'registries', 'identity_connection_replacement',
-    'identity_connection_claims', 'identity_connection_authority', 'identity_connection_terminals',
+    'identity_connection_claims', 'identity_connection_authority', 'identity_connection_ingress',
+    'identity_connection_terminals',
     'identity_connection_join',
+    'identity_connection_connecting', 'identity_connection_heartbeat',
     'identity_connection_maintenance', 'identity_connections',
   ]);
   try {
@@ -2308,6 +3052,7 @@ test('queue admission preserves reserved slots for ACE staff and maintenance fai
       local instances = {
         bootId = function() return 'boot-a', nil end,
         requestRemoteKicks = function() return 0, nil end,
+        hasOpenUserSessions = function() return false, nil end,
         touchSessions = function() return true, nil end,
         heartbeat = function() return {}, nil end,
         pendingLocalControls = function() return {}, nil end,
@@ -2322,7 +3067,11 @@ test('queue admission preserves reserved slots for ACE staff and maintenance fai
         messaging = { network = { purgeSource = function() end } }, config = config,
         instanceId = 'instance-a', coreResource = 'synex_core', leases = leases, instances = instances,
         rateLimiter = { consume = function() return true, nil end, purge = function() end },
-        sha256 = function(value) return value end,
+        sha256 = function(value)
+          local hash = 2166136261
+          for index = 1, #value do hash = ((hash ~ value:byte(index)) * 16777619) & 0xffffffff end
+          return string.rep(('%08x'):format(hash), 8)
+        end,
         characters = {}, userRepository = { authenticate = function(_, identifiers)
           return { id = identifiers[1]:gsub('[^A-Za-z0-9_-]', '_'), status = 'active' }, nil
         end },
@@ -2345,7 +3094,8 @@ test('queue admission preserves reserved slots for ACE staff and maintenance fai
       staff = true
       connection:handleConnecting(-3, 'Staff', deferrals(-3))
       assert(completions[-3] == '<accepted>' and players:getPending(-3).staff == true)
-      assert(leaseNames[1]:match('^session:') and leaseNames[1]:find(':sessi_', 1, true))
+      assert(leaseNames[1]:match('^admission:')
+        and leaseNames[2]:match('^session:') and leaseNames[2]:find(':sessi_', 1, true))
       config.maintenanceMode = true
       staff = false
       connection:handleConnecting(-4, 'Maintenance', deferrals(-4))
@@ -2354,22 +3104,24 @@ test('queue admission preserves reserved slots for ACE staff and maintenance fai
       assert(snapshot.reservedSlots == 1 and snapshot.rejected == 1 and snapshot.maintenance)
       return table.concat({snapshot.rejected, snapshot.reservedSlots, #leaseNames}, ':')
     `);
-    assert.equal(result, '1:1:1');
+    assert.equal(result, '1:1:2');
   } finally {
     engine.global.close();
   }
 });
 
-test('disconnect cleanup attempts every step and always removes runtime authority', async () => {
+test('disconnect close failure retains capacity and recovers the exact durable authority', async () => {
   const engine = await coreEngine([
     'foundation', 'registries', 'identity_connection_replacement',
-    'identity_connection_claims', 'identity_connection_authority', 'identity_connection_terminals',
+    'identity_connection_claims', 'identity_connection_authority', 'identity_connection_ingress',
+    'identity_connection_terminals',
     'identity_connection_join',
+    'identity_connection_connecting', 'identity_connection_heartbeat',
     'identity_connection_maintenance', 'identity_connections',
   ]);
   try {
     const result = await engine.doString(`
-      local now, closeAttempts, purges = 1000, 0, 0
+      local now, closeAttempts, purges, releases = 1000, 0, 0, 0
       local platform = {
         nowGame = function() return now end, random = function() return 1 end,
         print = function() end, jsonEncode = function() return '{}' end,
@@ -2383,7 +3135,8 @@ test('disconnect cleanup attempts every step and always removes runtime authorit
       assert(players:createPending(-1, { sessionId = 'session-fixture' }))
       assert(players:bindJoined(-1, 42, {
         id = 'session-fixture', userId = 'user-fixture', state = 'ACTIVE', version = 1,
-        clusterLease = { name = 'session:user-fixture', owner = 'instance-a:session-fixture', fencingToken = 1, ttlSeconds = 45 }
+        clusterLease = { name = 'session:user-fixture', owner = 'instance-a:session-fixture', fencingToken = 1, ttlSeconds = 45 },
+        clusterLeaseDeadlineAt = 26000, authorityDeadlineAt = 26000
       }))
       local lifecycleHealth = nil
       local connection = SynexCoreFactories.identityConnections({
@@ -2396,26 +3149,43 @@ test('disconnect cleanup attempts every step and always removes runtime authorit
         config = { duplicatePolicy = 'deny_new', clusterSessionLeaseSeconds = 45, queueReconnectGraceMs = 60000 },
         instanceId = 'instance-a', coreResource = 'synex_core',
         rateLimiter = { consume = function() return true, nil end, purge = function() end },
-        sha256 = function(value) return value end,
-        leases = { release = function() return nil, { code = 'LEASE_RELEASE_FAILED' } end },
+        sha256 = function(value)
+          local hash = 2166136261
+          for index = 1, #value do hash = ((hash ~ value:byte(index)) * 16777619) & 0xffffffff end
+          return string.rep(('%08x'):format(hash), 8)
+        end,
+        leases = { release = function()
+          releases = releases + 1
+          return true, nil
+        end },
         instances = { bootId = function() return 'boot-a', nil end },
         characters = { unload = function() return nil, { code = 'UNLOAD_FAILED' } end },
         userRepository = {}, accessRepository = {},
-        sessionRepository = { close = function()
+        sessionRepository = { close = function(_, candidate)
           closeAttempts = closeAttempts + 1
-          return nil, { code = 'CLOSE_FAILED' }
+          assert(candidate.id == 'session-fixture' and candidate.userId == 'user-fixture')
+          assert(candidate.persistedSource == nil or candidate.persistedSource == 42)
+          if closeAttempts <= 2 then return nil, { code = 'CLOSE_FAILED' } end
+          return true, nil
         end },
         invokeOwned = function() end, normalizeIdentifiers = function() return {} end,
         sessionTransitions = { ACTIVE = { DISCONNECTING = true } },
         transition = function(session, target) session.state = target return true, nil end
       })
       local report = connection:handleDropped(42, 'fixture')
-      assert(report.closed == false and #report.failures >= 4)
-      assert(players:getSession('session-fixture') == nil and closeAttempts == 2 and purges == 1)
+      assert(report.closed == false and #report.failures >= 3)
+      local retained = assert(players:getSession('session-fixture'))
+      assert(retained.source == nil and players:getBySource(42) == nil)
+      assert(closeAttempts == 2 and purges == 1 and releases == 0)
+      assert(connection:snapshot().activeSessions == 1)
+      assert(connection:snapshot().reconnectGraceEntries == 0)
+      local reconciled = assert(connection:reconcileClosures(1))
+      assert(reconciled.inspected == 1 and reconciled.closed == 1 and reconciled.pending == 0)
+      assert(players:getSession('session-fixture') == nil and releases == 1)
       assert(lifecycleHealth == 'DEGRADED' and connection:snapshot().reconnectGraceEntries == 1)
-      return table.concat({#report.failures, closeAttempts, purges, lifecycleHealth}, ':')
+      return table.concat({#report.failures, closeAttempts, purges, releases, lifecycleHealth}, ':')
     `);
-    assert.match(String(result), /^\d+:2:1:DEGRADED$/u);
+    assert.match(String(result), /^\d+:3:1:1:DEGRADED$/u);
   } finally {
     engine.global.close();
   }
@@ -2721,7 +3491,7 @@ test('durable saga runtime resumes with leases, retries, deadlines, and reverse 
   try {
     const result = await engine.doString(`
       local now, saga, sequence = 1000, nil, 0
-      local runs, compensations, leasesAcquired, leasesReleased, audits = 0, {}, 0, 0, 0
+      local runs, compensations, leasesAcquired, leasesReleased, leaseRenewals, audits = 0, {}, 0, 0, 0, 0
       local leaseOwners = {}
       local platform = {
         nowGame = function() return now end, random = function() return 1 end,
@@ -2732,10 +3502,12 @@ test('durable saga runtime resumes with leases, retries, deadlines, and reverse 
       local registries = SynexCoreFactories.registries({ foundation = foundation })
       local epoch = registries.owners:activate('synex_fixture')
       local store = {}
-      function store:start(sagaType, correlationId, context, options)
+      function store:start(ownerResource, sagaType, correlationId, context, options)
+        assert(ownerResource == 'synex_fixture')
         sequence = sequence + 1
         saga = {
           publicId = ('saga-%d'):format(sequence), sagaType = sagaType, correlationId = correlationId,
+          ownerResource = ownerResource,
           state = 'pending', currentStep = 0, version = 1, context = foundation.copy(context),
           steps = {}, ageMs = 100000, deadlineExpired = false, deadlineAt = options.deadlineAt
         }
@@ -2743,14 +3515,19 @@ test('durable saga runtime resumes with leases, retries, deadlines, and reverse 
       end
       function store:candidates()
         if not saga or saga.state == 'completed' or saga.state == 'failed' then return {}, nil end
-        return {{ publicId = saga.publicId, sagaType = saga.sagaType, state = saga.state, version = saga.version }}, nil
+        return {{ publicId = saga.publicId, ownerResource = saga.ownerResource,
+          sagaType = saga.sagaType, state = saga.state, version = saga.version }}, nil
       end
-      function store:load(publicId)
+      function store:load(publicId, ownerResource)
         assert(saga and publicId == saga.publicId)
+        if ownerResource ~= saga.ownerResource then
+          return nil, foundation.error('SAGA_NOT_FOUND', 'The saga does not exist.')
+        end
         return foundation.copy(saga), nil
       end
       function store:appendRuntimeEvent(command)
-        assert(command.publicId == saga.publicId and command.expectedVersion == saga.version)
+        assert(command.publicId == saga.publicId and command.expectedVersion == saga.version
+          and command.ownerResource == saga.ownerResource)
         saga.currentStep = saga.currentStep + 1
         saga.version = saga.version + 1
         saga.state = command.nextState
@@ -2775,12 +3552,18 @@ test('durable saga runtime resumes with leases, retries, deadlines, and reverse 
         acquire = function(_, name, owner, ttl, requesterInstanceId, requesterBootId)
           leasesAcquired = leasesAcquired + 1
           assert(name == 'saga:' .. saga.publicId
-            and owner:find('instance-a:saga:', 1, true) == 1 and #owner <= 96 and ttl == 45
+            and owner:find('instance-a:saga:', 1, true) == 1 and #owner <= 96 and ttl == 300
             and requesterInstanceId == 'instance-a' and requesterBootId == 'boot-a')
           assert(leaseOwners[owner] == nil, 'each saga attempt needs a unique lease owner')
           leaseOwners[owner] = true
           return { name = name, owner = owner, fencingToken = leasesAcquired, ttlSeconds = ttl,
             requesterInstanceId = requesterInstanceId, requesterBootId = requesterBootId }, nil
+        end,
+        renew = function(_, lease)
+          leaseRenewals = leaseRenewals + 1
+          assert(lease and lease.requesterInstanceId == 'instance-a'
+            and lease.requesterBootId == 'boot-a' and lease.ttlSeconds == 300)
+          return true, nil
         end,
         release = function() leasesReleased = leasesReleased + 1 return true, nil end
       }
@@ -2821,6 +3604,14 @@ test('durable saga runtime resumes with leases, retries, deadlines, and reverse 
         }
       }))
       assert(runtime:start('synex_fixture', 'fixture.purchase', 'correlation-1', { value = 1 }, {}, 'trace-start'))
+      local foreignStart, foreignStartError = runtime:start(
+        'synex_attacker', 'fixture.purchase', 'foreign-correlation', {}, {}, 'trace-foreign')
+      assert(foreignStart == nil and foreignStartError.code == 'SAGA_OWNER_DENIED')
+      local foreignRead, foreignReadError = runtime:get('synex_attacker', saga.publicId)
+      assert(foreignRead == nil and foreignReadError.code == 'SAGA_NOT_FOUND')
+      local foreignRecord, foreignRecordError = runtime:record(
+        'synex_attacker', saga.publicId, saga.version, 'reserve', 'started', {}, nil)
+      assert(foreignRecord == nil and foreignRecordError.code == 'SAGA_NOT_FOUND')
       for index = 1, 5 do
         local report, dispatchError = runtime:dispatchBatch(10)
         assert(report and dispatchError == nil)
@@ -2844,9 +3635,220 @@ test('durable saga runtime resumes with leases, retries, deadlines, and reverse 
       assert(runs == runsBeforeDeadline)
       local snapshot = runtime:snapshot()
       assert(snapshot.enabled and #snapshot.handlers == 1 and snapshot.persisted.total == 1)
+
+      assert(runtime:register('synex_fixture', epoch, {
+        name = 'fixture.explode', steps = {{
+          name = 'explode', maxAttempts = 1,
+          run = function() error('database password must never escape') end,
+          compensate = function() return { output = {} }, nil end
+        }}
+      }))
+      assert(runtime:start('synex_fixture', 'fixture.explode', 'correlation-3', {}, {}, 'trace-explode'))
+      assert(runtime:dispatchBatch(10))
+      assert(saga.lastError.code == 'SAGA_HANDLER_FAILED')
+      assert(saga.lastError.details.cause == 'SAGA_HANDLER_FAILED')
+      assert(not tostring(saga.lastError.message):find('password', 1, true))
+      assert(leaseRenewals >= 13)
       return table.concat({runs, compensations[1], compensations[2], leasesAcquired, audits}, ':')
     `);
-    assert.match(String(result), /^2:commit:reserve:6:\d+$/u);
+    assert.match(String(result), /^2:commit:reserve:7:\d+$/u);
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('saga dispatch rotates unavailable owners so runnable work cannot starve behind the queue head', async () => {
+  const engine = await coreEngine(['foundation', 'registries', 'saga_runtime']);
+  try {
+    const result = await engine.doString(`
+      local now, healthyRuns, healthyState, healthyVersion = 1000, 0, 'pending', 1
+      local platform = {
+        nowGame = function() now = now + 1 return now end,
+        random = function() return 1 end,
+        print = function() end,
+        jsonEncode = function() return '{}' end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      foundation.configureIds('saga-starvation')
+      local registries = SynexCoreFactories.registries({ foundation = foundation })
+      local epoch = registries.owners:activate('synex_fixture')
+      local store = {}
+      local orphan = {
+        publicId = 'saga-orphan', ownerResource = 'synex_stopped',
+        sagaType = 'stopped.workflow', state = 'pending', version = 1
+      }
+      local healthy = {
+        publicId = 'saga-healthy', ownerResource = 'synex_fixture',
+        sagaType = 'fixture.healthy', state = 'pending', version = 1
+      }
+      function store:candidates(maximum, selectors)
+        assert(maximum == 50 and #selectors == 1)
+        assert(selectors[1].ownerResource == 'synex_fixture'
+          and selectors[1].sagaType == 'fixture.healthy')
+        if healthyState == 'completed' then return {orphan}, nil end
+        return {orphan, healthy}, nil
+      end
+      function store:load(publicId, owner)
+        assert(publicId == healthy.publicId and owner == healthy.ownerResource)
+        return {
+          publicId = healthy.publicId, ownerResource = healthy.ownerResource,
+          sagaType = healthy.sagaType, correlationId = 'correlation-healthy',
+          state = healthyState, currentStep = 0, version = healthyVersion,
+          context = {}, steps = {}, ageMs = 100000, deadlineExpired = false
+        }, nil
+      end
+      function store:appendRuntimeEvent(command)
+        assert(command.publicId == healthy.publicId
+          and command.ownerResource == healthy.ownerResource
+          and command.expectedVersion == healthyVersion)
+        healthyVersion = healthyVersion + 1
+        healthyState = command.nextState
+        healthy.state = healthyState
+        healthy.version = healthyVersion
+        return {
+          publicId = healthy.publicId, state = healthyState,
+          currentStep = 1, version = healthyVersion
+        }, nil
+      end
+      function store:snapshot()
+        return { enabled = true, total = 2, states = { [healthyState] = 1, pending = 1 } }, nil
+      end
+      local leases = {
+        acquire = function(_, name, owner, ttl, instanceId, bootId)
+          return {
+            name = name, owner = owner, fencingToken = 1, ttlSeconds = ttl,
+            requesterInstanceId = instanceId, requesterBootId = bootId
+          }, nil
+        end,
+        renew = function() return true, nil end,
+        release = function() return true, nil end
+      }
+      local runtime = SynexCoreFactories.sagaRuntime({
+        foundation = foundation, platform = platform, sagas = store,
+        audit = { append = function() return { eventId = 'audit' }, nil end },
+        leases = leases, owners = registries.owners,
+        instances = { bootId = function() return 'boot-a', nil end },
+        instanceId = 'instance-a', enabled = true
+      })
+      assert(runtime:register('synex_fixture', epoch, {
+        name = 'fixture.healthy', steps = {{
+          name = 'complete',
+          run = function()
+            healthyRuns = healthyRuns + 1
+            return { context = {}, output = { ok = true } }, nil
+          end,
+          compensate = function() return { output = {} }, nil end
+        }}
+      }))
+      local first = assert(runtime:dispatchBatch(1))
+      assert(first.claimed == 2 and first.deferred == 1 and first.processed == 1
+        and healthyRuns == 1 and healthyState == 'completed')
+      return table.concat({first.deferred, healthyRuns, healthyState}, ':')
+    `);
+    assert.equal(result, '1:1:completed');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('saga retry deferrals preserve elapsed backoff and eventually resume', async () => {
+  const engine = await coreEngine(['foundation', 'registries', 'saga_runtime']);
+  try {
+    const result = await engine.doString(`
+      local now, ageMs, runs, version, state = 1000, 1000, 0, 1, 'pending'
+      local history = {}
+      local platform = {
+        nowGame = function() return now end,
+        random = function() return 1 end,
+        print = function() end,
+        jsonEncode = function() return '{}' end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      foundation.configureIds('saga-backoff')
+      local registries = SynexCoreFactories.registries({ foundation = foundation })
+      local epoch = registries.owners:activate('synex_fixture')
+      local store = {}
+      function store:candidates(maximum, selectors)
+        assert(maximum == 50 and #selectors == 1)
+        if state == 'completed' then return {}, nil end
+        return {{
+          publicId = 'saga-backoff', ownerResource = 'synex_fixture',
+          sagaType = 'fixture.backoff', state = state, version = version
+        }}, nil
+      end
+      function store:load(publicId, owner)
+        assert(publicId == 'saga-backoff' and owner == 'synex_fixture')
+        return {
+          publicId = publicId, ownerResource = owner, sagaType = 'fixture.backoff',
+          correlationId = 'correlation-backoff', state = state, currentStep = #history,
+          version = version, context = {}, steps = foundation.copy(history),
+          ageMs = ageMs, deadlineExpired = false
+        }, nil
+      end
+      function store:appendRuntimeEvent(command)
+        assert(command.expectedVersion == version)
+        version = version + 1
+        state = command.nextState
+        history[#history + 1] = {
+          sequence = #history + 1,
+          name = command.stepName,
+          event = command.eventType,
+          attempt = command.attempt,
+          payload = foundation.copy(command.payload),
+          error = foundation.copy(command.error)
+        }
+        ageMs = 0
+        return {
+          publicId = 'saga-backoff', state = state,
+          currentStep = #history, version = version
+        }, nil
+      end
+      function store:snapshot()
+        return { enabled = true, total = 1, states = { [state] = 1 } }, nil
+      end
+      local leases = {
+        acquire = function(_, name, owner, ttl, instanceId, bootId)
+          return {
+            name = name, owner = owner, fencingToken = version, ttlSeconds = ttl,
+            requesterInstanceId = instanceId, requesterBootId = bootId
+          }, nil
+        end,
+        renew = function() return true, nil end,
+        release = function() return true, nil end
+      }
+      local runtime = SynexCoreFactories.sagaRuntime({
+        foundation = foundation, platform = platform, sagas = store,
+        audit = { append = function() return { eventId = 'audit' }, nil end },
+        leases = leases, owners = registries.owners,
+        instances = { bootId = function() return 'boot-a', nil end },
+        instanceId = 'instance-a', enabled = true
+      })
+      assert(runtime:register('synex_fixture', epoch, {
+        name = 'fixture.backoff', steps = {{
+          name = 'commit', maxAttempts = 2, retryDelayMs = 100,
+          run = function()
+            runs = runs + 1
+            if runs == 1 then return nil, { code = 'FIXTURE_RETRY', retryable = true } end
+            return { context = {}, output = { ok = true } }, nil
+          end,
+          compensate = function() return { output = {} }, nil end
+        }}
+      }))
+
+      local first = assert(runtime:dispatchBatch(1))
+      assert(first.processed == 1 and runs == 1 and state == 'running')
+      ageMs = 50
+      local early = assert(runtime:dispatchBatch(1))
+      assert(early.deferred == 1 and runs == 1 and ageMs == 50)
+      ageMs = 99
+      local stillEarly = assert(runtime:dispatchBatch(1))
+      assert(stillEarly.deferred == 1 and runs == 1 and ageMs == 99)
+      ageMs = 100
+      local ready = assert(runtime:dispatchBatch(1))
+      assert(ready.processed == 1 and runs == 2 and state == 'completed')
+      return table.concat({early.deferred, stillEarly.deferred, runs, state, #history}, ':')
+    `);
+    assert.equal(result, '1:1:2:completed:4');
   } finally {
     engine.global.close();
   }

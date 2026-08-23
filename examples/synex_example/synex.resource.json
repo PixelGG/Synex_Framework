@@ -17,6 +17,14 @@
     "provide": ["synex.example.echo"],
     "consume": []
   },
+  "events": {
+    "publish": [],
+    "subscribe": []
+  },
+  "hooks": {
+    "register": [],
+    "run": []
+  },
   "dependencies": {
     "required": [
       { "name": "synex_core", "version": ">=0.1.0" }

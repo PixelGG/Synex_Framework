@@ -1,4 +1,4 @@
-export const GENERATED_SOURCE_HASH = "63fc97bec257cb54f15f7735448cd83fbde85834c33f2e9c98441f00c14375bb";
+export const GENERATED_SOURCE_HASH = "7d823d421d2db0bbbabb2e64171a14c45d0fbcab23a4fd9bc11458c708482795";
 
 export const GENERATED_CONTRACT_VERSIONS = {
   "synex.accounts.burn@1.0.0": { name: "synex.accounts.burn", version: "1.0.0", kind: "rpc", provider: "synex_accounts" },
@@ -273,7 +273,7 @@ export type SynexIdentitySessionBySourceOutput = { "found": boolean; "session"?:
 export type SynexIdentitySessionBySourceError = "CAPABILITY_DENIED" | "NOT_READY";
 
 export type SynexRuntimeStatusInput = Record<string, never>;
-export type SynexRuntimeStatusOutput = { "operational": boolean; "reasons": { [key: string]: unknown; }; "recentTransitions": Array<{ [key: string]: unknown; }>; "revision": number; "state": string; };
+export type SynexRuntimeStatusOutput = { "operational": boolean; "playerAdmission": boolean; "reasons": { [key: string]: unknown; }; "recentTransitions": Array<{ [key: string]: unknown; }>; "revision": number; "state": string; };
 export type SynexRuntimeStatusError = "CAPABILITY_DENIED" | "NOT_READY";
 
 export interface GeneratedVersionedContractMap {

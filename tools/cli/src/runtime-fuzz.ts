@@ -84,15 +84,64 @@ export async function runHeadlessRuntimeFuzz(repositoryRoot: string): Promise<Ru
       `
         local foundation = SynexCoreFactories.foundation({ platform = FuzzPlatform })
         foundation.configureIds('fuzz')
-        local records = {}
+        local records, owners, namespaces = {}, {}, {}
+        local globalCount = 0
         local database = {}
+        function database:withTransaction(handler)
+          local accepted = handler(function(statement, parameters)
+            if statement:find('FROM \`synex_idempotency_capacity\`', 1, true) then
+              return {{
+                entry_count = globalCount, global_limit = 1000,
+                owner_limit = 1000, namespace_limit = 1000
+              }}
+            end
+            if statement:find('INSERT IGNORE INTO \`synex_idempotency_owner_capacity\`', 1, true) then
+              if owners[parameters[1]] then return { affectedRows = 0 } end
+              owners[parameters[1]] = 0
+              return { affectedRows = 1 }
+            end
+            if statement:find('FROM \`synex_idempotency_owner_capacity\`', 1, true) then
+              local count = owners[parameters[1]]
+              return count ~= nil and {{ entry_count = count }} or {}
+            end
+            if statement:find('INSERT IGNORE INTO \`synex_idempotency_namespace_capacity\`', 1, true) then
+              if namespaces[parameters[1]] then return { affectedRows = 0 } end
+              namespaces[parameters[1]] = { owner_resource = parameters[2], entry_count = 0 }
+              return { affectedRows = 1 }
+            end
+            if statement:find('FROM \`synex_idempotency_namespace_capacity\`', 1, true) then
+              local row = namespaces[parameters[1]]
+              return row and {{ owner_resource = row.owner_resource, entry_count = row.entry_count }} or {}
+            end
+            if statement:find('FROM \`synex_idempotency_keys\`', 1, true) then
+              local record = records[parameters[1] .. ':' .. parameters[2]]
+              return record and { record } or {}
+            end
+            if statement:find('UPDATE \`synex_idempotency_capacity\`', 1, true) then
+              globalCount = globalCount + 1
+              return { affectedRows = 1 }
+            end
+            if statement:find('UPDATE \`synex_idempotency_owner_capacity\`', 1, true) then
+              owners[parameters[1]] = owners[parameters[1]] + 1
+              return { affectedRows = 1 }
+            end
+            if statement:find('UPDATE \`synex_idempotency_namespace_capacity\`', 1, true) then
+              namespaces[parameters[1]].entry_count = namespaces[parameters[1]].entry_count + 1
+              return { affectedRows = 1 }
+            end
+            if statement:find('INSERT INTO \`synex_idempotency_keys\`', 1, true) then
+              local key = parameters[1] .. ':' .. parameters[2]
+              records[key] = {
+                request_hash = parameters[3], state = 'pending', owner_token = parameters[4],
+                lock_expired = 0, record_expired = 0
+              }
+              return { affectedRows = 1 }
+            end
+            error('unexpected idempotency transaction query')
+          end)
+          return accepted == true and true or nil
+        end
         function database:update(statement, parameters)
-          if statement:find('INSERT IGNORE', 1, true) then
-            local key = parameters[1] .. ':' .. parameters[2]
-            if records[key] then return 0 end
-            records[key] = { request_hash = parameters[3], state = 'pending', owner_token = parameters[4], lock_expired = 0, record_expired = 0 }
-            return 1
-          end
           if statement:find("state", 1, true) and statement:find("completed", 1, true) then
             local key = parameters[2] .. ':' .. parameters[3]
             local record = records[key]
@@ -101,10 +150,6 @@ export async function runHeadlessRuntimeFuzz(repositoryRoot: string): Promise<Ru
             return 1
           end
           return 1
-        end
-        function database:query(_, parameters)
-          local record = records[parameters[1] .. ':' .. parameters[2]]
-          return record and { record } or {}
         end
         local reliability = SynexCoreFactories.reliability({
           foundation = foundation, platform = FuzzPlatform, database = database,

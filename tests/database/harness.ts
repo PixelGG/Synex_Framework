@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
-import mysql, { type Connection } from 'mysql2/promise';
+import mysql, { type Connection, type RowDataPacket } from 'mysql2/promise';
 
 export const repositoryRoot = process.cwd();
 
@@ -91,9 +91,21 @@ export async function openLiveDatabase(): Promise<LiveDatabase> {
 }
 
 export async function applyMigrations(connection: Connection, migrations: MigrationSource[]): Promise<void> {
-  for (const migration of migrations) {
-    for (const statement of migration.statements) {
-      await connection.query(statement);
+  const [lockRows] = await connection.query<RowDataPacket[]>(
+    "SELECT GET_LOCK(CONCAT('synex:test:migrations:', DATABASE()), 60) AS acquired",
+  );
+  if (Number(lockRows[0]?.acquired) !== 1) {
+    throw new Error('Timed out while serializing live-test migration application.');
+  }
+  try {
+    for (const migration of migrations) {
+      for (const statement of migration.statements) {
+        await connection.query(statement);
+      }
     }
+  } finally {
+    await connection.query(
+      "SELECT RELEASE_LOCK(CONCAT('synex:test:migrations:', DATABASE()))",
+    );
   }
 }

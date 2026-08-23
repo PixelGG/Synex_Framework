@@ -23,6 +23,9 @@ factories.bootstrapLifecycle = function(deps)
     local sagaRuntime = assert(deps.sagaRuntime, 'bootstrap lifecycle requires saga runtime')
     local retention = assert(deps.retention, 'bootstrap lifecycle requires retention')
     local security = assert(deps.security, 'bootstrap lifecycle requires security')
+    local stateService = deps.stateService or {
+        purgeAllPlayers = function() return { players = 0, cleared = 0, replicated = 0, skipped = 0, failures = {} }, nil end
+    }
     local runtimeGate = assert(deps.runtimeGate, 'bootstrap lifecycle requires runtime gate')
     local getAPIForCaller = assert(api.getAPIForCaller, 'bootstrap lifecycle requires API lookup')
     local invokeForCaller = assert(api.invokeForCaller, 'bootstrap lifecycle requires contract invocation')
@@ -30,6 +33,7 @@ factories.bootstrapLifecycle = function(deps)
     local registerCoreContracts = assert(api.registerCoreContracts, 'bootstrap lifecycle requires core contracts')
     local registerCoreServices = assert(api.registerCoreServices, 'bootstrap lifecycle requires core services')
     local discoverResource = assert(discovery.discoverResource, 'bootstrap lifecycle requires resource discovery')
+    local invalidateResource = assert(discovery.invalidateResource, 'bootstrap lifecycle requires resource invalidation')
     local discoverAll = assert(discovery.discoverAll, 'bootstrap lifecycle requires full discovery')
     local validateActive = assert(discovery.validateActive, 'bootstrap lifecycle requires live validation')
     local ensureOwner = assert(discovery.ensureOwner, 'bootstrap lifecycle requires owner discovery')
@@ -41,13 +45,11 @@ factories.bootstrapLifecycle = function(deps)
         registries = registries, identity = identity, persistence = persistence,
         reliability = reliability, messaging = messaging, security = security, coreResource = coreResource
     })
-    local bound = false
     local dependencyAffectedResources = {}
     local enforceCriticalResources = false
     local instanceStatusInitialized = false
     local instanceRegisteredDuringBoot = false
     local lastInstanceStatus = nil
-
     local function evictConnectedPlayers(reason)
         local listed, connectedPlayers = foundation.safeCall(platform.getPlayers)
         if not listed or type(connectedPlayers) ~= 'table' then
@@ -247,6 +249,7 @@ factories.bootstrapLifecycle = function(deps)
         registries = registries,
         facadeCache = facadeCache,
         coreResource = coreResource,
+        stateService = stateService,
         evictConnectedPlayers = evictConnectedPlayers,
         drainQuiescedTerminals = drainQuiescedTerminals,
         ownerDrainTimeoutMs = ownerDrainTimeoutMs,
@@ -257,168 +260,38 @@ factories.bootstrapLifecycle = function(deps)
         return restartController:prepare()
     end
 
+    local resourceEvents = factories.bootstrapResourceEvents({
+        platform = platform,
+        foundation = foundation,
+        coreResource = coreResource,
+        messaging = messaging,
+        identity = identity,
+        reloadSnapshots = reloadSnapshots,
+        registries = registries,
+        lifecycle = lifecycle,
+        ownerDrainTimeoutMs = ownerDrainTimeoutMs,
+        ownerDrainPollMs = ownerDrainPollMs,
+        ownerSnapshotMaximumBytes = deps.ownerSnapshotMaximumBytes,
+        facadeCache = facadeCache,
+        manifests = manifests,
+        stateService = stateService,
+        runtimeGate = runtimeGate,
+        getAPIForCaller = getAPIForCaller,
+        invokeForCaller = invokeForCaller,
+        guarded = guarded,
+        discoverResource = discoverResource,
+        invalidateResource = invalidateResource,
+        ensureOwner = ensureOwner,
+        supportsStateHandoff = supportsStateHandoff,
+        captureStateHandoff = captureStateHandoff,
+        restoreStateHandoff = restoreStateHandoff,
+        refreshDependencyHealth = refreshDependencyHealth,
+        restartController = restartController,
+        commands = commands
+    })
+
     function runtime:bind()
-        if bound then return true end
-        bound = true
-        platform.export('GetAPI', function(versionRange)
-            local caller = platform.invokingResource()
-            if type(caller) ~= 'string' or caller == '' then return nil, foundation.error('CALLER_REQUIRED', 'External Synex exports require an invoking resource.') end
-            return getAPIForCaller(caller, versionRange)
-        end)
-        platform.export('Invoke', function(name, version, request, options)
-            local caller = platform.invokingResource()
-            if type(caller) ~= 'string' or caller == '' then return nil, foundation.error('CALLER_REQUIRED', 'External Synex exports require an invoking resource.') end
-            return invokeForCaller(caller, name, version, request, options)
-        end)
-        platform.export('GetRuntimeStatus', function()
-            local caller = platform.invokingResource()
-            if type(caller) ~= 'string' or caller == '' then return nil, foundation.error('CALLER_REQUIRED', 'External Synex exports require an invoking resource.') end
-            local epoch, err = ensureOwner(caller)
-            if not epoch then return nil, err end
-            return guarded(caller, epoch, 'synex.runtime.read', 'GetRuntimeStatus', function() return lifecycle.core:snapshot(), nil end)
-        end)
-        messaging.network:bind()
-        platform.addEventHandler('playerConnecting', function(name, setKickReason, deferrals)
-            local tempSource = source
-            local connectionSnapshot = identity.connections:snapshot()
-            if connectionSnapshot.quiesced then
-                foundation.safeCall(setKickReason,
-                    'Synex [CORE_STOPPING]: The Synex runtime is stopping. Please reconnect shortly.')
-                foundation.safeCall(platform.cancelEvent)
-                return
-            end
-            local invoked, connected, connectionError = foundation.safeCall(
-                identity.connections.handleConnecting, identity.connections, tempSource, name, deferrals)
-            if not invoked or connected == nil then
-                logger:error('playerConnecting handler failed', {
-                    code = invoked and connectionError and connectionError.code or 'CONNECTION_HANDLER_FAILED'
-                })
-            end
-        end)
-        platform.addEventHandler('playerJoining', function(oldSource)
-            local finalSource = source
-            local invoked, joined = foundation.safeCall(
-                identity.connections.handleJoining, identity.connections, finalSource, oldSource)
-            if not invoked then
-                foundation.safeCall(logger.error, logger,
-                    'playerJoining handler failed', { code = 'JOIN_HANDLER_FAILED' })
-            elseif joined == nil then
-                logger:warn('playerJoining did not open a session', { code = 'SESSION_NOT_OPENED' })
-            end
-        end)
-        platform.addEventHandler('playerDropped', function(reason)
-            local playerSource = source
-            local invoked = foundation.safeCall(
-                identity.connections.handleDropped, identity.connections, playerSource, reason)
-            if not invoked then logger:error('playerDropped handler failed', { code = 'DROP_HANDLER_FAILED' }) end
-        end)
-        platform.addEventHandler('onResourceStart', function(resource)
-            if resource == coreResource then return end
-            local available = runtimeGate:requireAvailable()
-            if not available then return end
-            local manifest, err = discoverResource(resource)
-            if err then logger:error('resource discovery failed on start', { resource = resource, code = err.code, message = err.message }) return end
-            if manifest then
-                local epoch = registries.owners:epoch(resource)
-                if not registries.owners:isCurrent(resource, epoch) then
-                    epoch = registries.owners:activate(resource)
-                end
-                registries.resources:setState(resource, 'STARTED', { status = 'HEALTHY', reasons = {} })
-                refreshDependencyHealth()
-                local snapshot = reloadSnapshots[resource]
-                if snapshot then
-                    reloadSnapshots[resource] = nil
-                    platform.setTimeout(0, function()
-                        if not registries.owners:isCurrent(resource, epoch) then return end
-                        local restored, restoreError = lifecycle.reload:restore(resource, epoch, snapshot, restoreStateHandoff)
-                        if not restored then
-                            logger:error('resource state handoff rejected', {
-                                resource = resource,
-                                epoch = epoch,
-                                code = restoreError.code,
-                                message = restoreError.message
-                            })
-                            registries.resources:setState(resource, 'STARTED', {
-                                status = 'DEGRADED',
-                                reasons = { {
-                                    code = 'STATE_RESTORE_FAILED',
-                                    message = 'Reconstructable in-memory state could not be restored.'
-                                } }
-                            })
-                        elseif restored.restored > 0 then
-                            logger:info('resource state handoff restored', {
-                                resource = resource,
-                                fromEpoch = restored.fromEpoch,
-                                toEpoch = restored.toEpoch,
-                                values = restored.restored
-                            })
-                        end
-                    end)
-                end
-            end
-        end)
-        platform.addEventHandler('onResourceStop', function(resource)
-            if resource == coreResource then
-                restartController:handleRawStop()
-                return
-            end
-            reloadSnapshots[resource] = nil
-            local epoch = registries.owners:epoch(resource)
-            local report = { cleaned = 0, aborted = 0, errors = {} }
-            if registries.owners:isEpoch(resource, epoch) then
-                local options = {
-                    timeoutMs = ownerDrainTimeoutMs,
-                    pollMs = ownerDrainPollMs,
-                    reason = 'resource stop'
-                }
-                if supportsStateHandoff(resource) then options.capture = captureStateHandoff end
-                local quiesceReport, quiesceError = lifecycle.reload:quiesce(resource, epoch, options)
-                if quiesceReport then
-                    report = quiesceReport.cleanup
-                    for _, abortError in ipairs(quiesceReport.abortErrors) do
-                        report.errors[#report.errors + 1] = {
-                            kind = 'operation_abort',
-                            token = abortError.token,
-                            error = abortError.error
-                        }
-                    end
-                    if quiesceReport.snapshot then reloadSnapshots[resource] = quiesceReport.snapshot end
-                    if quiesceReport.timedOut then
-                        logger:warn('resource drain timed out; pending owner work was aborted', {
-                            resource = resource,
-                            epoch = epoch,
-                            aborted = quiesceReport.aborted,
-                            timeoutMs = ownerDrainTimeoutMs
-                        })
-                    end
-                    if quiesceReport.snapshotError then
-                        logger:error('resource state handoff capture failed', {
-                            resource = resource,
-                            epoch = epoch,
-                            code = quiesceReport.snapshotError.code,
-                            message = quiesceReport.snapshotError.message
-                        })
-                    end
-                else
-                    logger:error('resource quiesce failed', {
-                        resource = resource,
-                        epoch = epoch,
-                        code = quiesceError.code,
-                        message = quiesceError.message
-                    })
-                    report = registries.owners:purge(resource, epoch, 'resource stop fallback cleanup')
-                end
-            end
-            local cachePrefix = resource .. ':'
-            for key in pairs(facadeCache) do if key:sub(1, #cachePrefix) == cachePrefix then facadeCache[key] = nil end end
-            registries.resources:setState(resource, 'STOPPED', {
-                status = 'UNHEALTHY', reasons = { { code = 'RESOURCE_STOPPED', message = 'Resource is stopped.' } }
-            })
-            refreshDependencyHealth(resource)
-            if #report.errors > 0 then logger:error('resource cleanup completed with errors', { resource = resource, report = report }) end
-        end)
-        commands:bind()
-        return true
+        return resourceEvents:bind()
     end
 
     local function advance(target, operation)
@@ -526,8 +399,13 @@ factories.bootstrapLifecycle = function(deps)
             if defaultConfig.features.durableEvents then
                 scheduleEvery(1000, function()
                     local report, dispatchError = reliability.outbox:dispatchBatch(function(event)
+                        if type(event.producerResource) ~= 'string' then
+                            return nil, foundation.error('OUTBOX_PRODUCER_UNAVAILABLE',
+                                'The durable event has no attributable producer.')
+                        end
+                        local producerEpoch = registries.owners:epoch(event.producerResource)
                         local _, eventError = messaging.events:publishOutbox(
-                            coreResource, coreEpoch, event.eventType, event.payload, {
+                            event.producerResource, producerEpoch, event.eventType, event.payload, {
                                 traceId = event.headers and event.headers.traceId,
                                 eventId = event.eventId,
                                 aggregateId = event.aggregateId,
@@ -543,6 +421,57 @@ factories.bootstrapLifecycle = function(deps)
                 scheduleEvery(1000, function()
                     return sagaRuntime:dispatchBatch(10)
                 end, 'core.sagas.dispatch')
+            end
+            if reliability.idempotency
+                and type(reliability.idempotency.compactExpired) == 'function' then
+                scheduleEvery(defaultConfig.retention.workerIntervalMs, function()
+                    local report, compactionError = reliability.idempotency:compactExpired(
+                        defaultConfig.retention.batchSize or 250)
+                    if compactionError then return nil, compactionError end
+                    return report ~= nil, nil
+                end, 'core.idempotency.compact_expired')
+            end
+            local outboxRetention = defaultConfig.retention
+                and defaultConfig.retention.outbox or nil
+            if defaultConfig.features.durableEvents and outboxRetention
+                and reliability.outbox
+                and type(reliability.outbox.compactTerminal) == 'function' then
+                scheduleEvery(defaultConfig.retention.workerIntervalMs, function()
+                    local report, compactionError = reliability.outbox:compactTerminal(
+                        defaultConfig.retention.batchSize or 250, outboxRetention)
+                    if compactionError then return nil, compactionError end
+                    return report ~= nil, nil
+                end, 'core.outbox.compact_terminal')
+            end
+            if persistence.instances
+                and type(persistence.instances.compactTerminalControls) == 'function' then
+                scheduleEvery(defaultConfig.retention.workerIntervalMs, function()
+                    local report, compactionError = persistence.instances:compactTerminalControls(
+                        defaultConfig.retention.batchSize or 250)
+                    if compactionError then return nil, compactionError end
+                    return report ~= nil, nil
+                end, 'core.session_controls.compact_terminal')
+            end
+            if persistence.leases and type(persistence.leases.compactTerminal) == 'function' then
+                scheduleEvery(5000, function()
+                    if type(persistence.leases.retireExpiredAuthority) == 'function' then
+                        local retirement, retirementError = persistence.leases:retireExpiredAuthority(250)
+                        if retirementError then return nil, retirementError end
+                        if not retirement then return nil, foundation.error(
+                            'LEASE_RETIREMENT_FAILED',
+                            'Expired session authority retirement returned no report.') end
+                    end
+                    local report, compactionError = persistence.leases:compactTerminal(250)
+                    if compactionError then return nil, compactionError end
+                    return report ~= nil, nil
+                end, 'core.leases.compact_terminal')
+            end
+            if type(stateService.retryReplicationCleanup) == 'function' then
+                scheduleEvery(5000, function()
+                    local report, cleanupError = stateService:retryReplicationCleanup(64)
+                    if cleanupError then return nil, cleanupError end
+                    return report ~= nil, nil
+                end, 'core.state.replication_cleanup')
             end
             if defaultConfig.retention.audit.mode == 'archive' then
                 scheduleEvery(defaultConfig.retention.workerIntervalMs, function()
@@ -607,7 +536,9 @@ factories.bootstrapLifecycle = function(deps)
                 end
             end
             foundation.safeCall(synchronizeCoreResourceHealth)
-            foundation.safeCall(logger.fatal, logger, 'Synex core failed to start', { error = tostring(err) })
+            foundation.safeCall(logger.fatal, logger, 'Synex core failed to start', {
+                code = foundation.failureCode(err, 'CORE_BOOT_EXCEPTION')
+            })
             return nil, foundation.error('BOOT_FAILED', 'Synex core failed to start.')
         end
         return true, nil

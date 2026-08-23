@@ -7,6 +7,7 @@ factories.identityConnectionTerminals = function(deps)
         'connection terminals require acceptance validation')
     local logConnectionStage = assert(deps.logConnectionStage,
         'connection terminals require stage telemetry')
+    local onFinalized = deps.onFinalized or function() end
     local metrics = foundation.metrics
     local active = {}
     local quiesced = false
@@ -61,6 +62,7 @@ factories.identityConnectionTerminals = function(deps)
                 invoked = foundation.safeCall(deferrals.done,
                     ('Synex [%s]: %s'):format(safeCode, safeReason):sub(1, 256))
             end
+            foundation.safeCall(onFinalized, connection, terminal.acceptance, invoked == true)
             if not invoked then
                 terminal.state = 'failed'
                 logConnectionStage(connection, 'deferral_terminal_failed',

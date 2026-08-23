@@ -12,13 +12,19 @@ const identityModules = [
   'core/synex_core/server/foundation.lua',
   'core/synex_core/server/registries.lua',
   'core/synex_core/server/identity_common.lua',
+  'core/synex_core/server/identity_session_fencing.lua',
   'core/synex_core/server/identity_repository.lua',
+  'core/synex_core/server/identity_character_deletion_reconciliation.lua',
+  'core/synex_core/server/identity_character_unloads.lua',
   'core/synex_core/server/identity_characters.lua',
   'core/synex_core/server/identity_connection_replacement.lua',
   'core/synex_core/server/identity_connection_claims.lua',
   'core/synex_core/server/identity_connection_authority.lua',
+  'core/synex_core/server/identity_connection_ingress.lua',
   'core/synex_core/server/identity_connection_terminals.lua',
   'core/synex_core/server/identity_connection_join.lua',
+  'core/synex_core/server/identity_connection_connecting.lua',
+  'core/synex_core/server/identity_connection_heartbeat.lua',
   'core/synex_core/server/identity_connection_maintenance.lua',
   'core/synex_core/server/identity_connections.lua',
   'core/synex_core/server/identity.lua',
@@ -51,8 +57,13 @@ test('session persistence is atomically fenced by the current boot and cluster l
             if sql:find('synex_instance_boots', 1, true) then
               return parameters[2] == currentBoot and {{ boot_id = currentBoot }} or {}
             end
+            if sql:find('UPDATE \`synex_cluster_leases\`', 1, true) then
+              return { affectedRows = 1 }
+            end
             if sql:find('synex_cluster_leases', 1, true) then
-              return {{ owner_id = 'instance-a:session-a', fencing_token = 9, valid = 1 }}
+              local name = parameters[1]
+              return {{ owner_id = 'instance-a:session-a',
+                fencing_token = name == 'admission:user-a' and 4 or 9, valid = 1 }}
             end
             assert(sql:find('INSERT INTO', 1, true) and sql:find('synex_sessions', 1, true))
             writes = writes + 1
@@ -72,32 +83,41 @@ test('session persistence is atomically fenced by the current boot and cluster l
         clusterLease = {
           name = 'session:user-a', owner = 'instance-a:session-a', fencingToken = 9,
           requesterInstanceId = 'instance-a', requesterBootId = 'boot-a'
+        },
+        admissionGateLease = {
+          name = 'admission:user-a', owner = 'instance-a:session-a', fencingToken = 4,
+          requesterInstanceId = 'instance-a', requesterBootId = 'boot-a'
         }
       }
       local created, createError = repositories.sessions:create(session)
-      assert(created == nil and createError.code == 'LEASE_LOST')
+      assert(created == nil and createError.code == 'ADMISSION_GATE_LOST')
       assert(#calls == 2 and calls[1].sql:find("'ready'", 1, true)
         and calls[1].sql:find('FOR UPDATE', 1, true))
       assert(calls[2].sql:find('synex_instance_boots', 1, true)
         and calls[2].sql:find('FOR UPDATE', 1, true))
       session.clusterLease.requesterBootId = 'boot-b'
-      assert(repositories.sessions:create(session))
-      assert(#calls == 6 and calls[3].sql:find('synex_instances', 1, true)
+      session.admissionGateLease.requesterBootId = 'boot-b'
+      local persisted, persistenceError = repositories.sessions:create(session)
+      assert(persisted, persistenceError and persistenceError.code)
+      assert(#calls == 10 and calls[3].sql:find('synex_instances', 1, true)
         and calls[4].sql:find('synex_instance_boots', 1, true)
         and calls[5].sql:find('synex_cluster_leases', 1, true)
         and calls[5].sql:find('FOR UPDATE', 1, true)
-        and calls[6].sql:find('INSERT INTO', 1, true)
-        and calls[6].sql:find('synex_sessions', 1, true))
-      assert(calls[5].parameters[1] == session.clusterLease.name
-        and calls[6].parameters[1] == session.id and calls[6].parameters[3] == 'instance-a')
+        and calls[8].parameters[1] == session.clusterLease.name
+        and calls[9].sql:find('INSERT INTO', 1, true)
+        and calls[9].sql:find('synex_sessions', 1, true)
+        and calls[10].sql:find('UPDATE', 1, true)
+        and calls[10].parameters[1] == session.admissionGateLease.name)
+      assert(calls[5].parameters[1] == session.admissionGateLease.name
+        and calls[9].parameters[1] == session.id and calls[9].parameters[3] == 'instance-a')
       local missing = foundation.copy(session)
       missing.clusterLease.requesterBootId = nil
       local rejected, missingError = repositories.sessions:create(missing)
-      assert(rejected == nil and missingError.code == 'LEASE_LOST' and writes == 1 and #calls == 6)
+      assert(rejected == nil and missingError.code == 'LEASE_LOST' and writes == 1 and #calls == 10)
       return table.concat({calls[4].parameters[2], calls[5].parameters[1],
-        calls[6].parameters[1], writes}, ':')
+        calls[9].parameters[1], writes}, ':')
     `);
-    assert.equal(result, 'boot-b:session:user-a:session-a:1');
+    assert.equal(result, 'boot-b:admission:user-a:session-a:1');
   } finally {
     engine.global.close();
   }
@@ -292,8 +312,10 @@ test('replace_old fences a reused player source before dropping the previous aut
       assert(players:createPending(-1, { sessionId = 'old-session' }))
       assert(players:bindJoined(-1, 41, {
         id = 'old-session', userId = 'user-fixture', state = 'SELECTING_CHARACTER',
-        version = 2, persistedVersion = 2,
-        clusterLease = { leaseName = 'session:user-fixture', owner = 'old-owner', fencingToken = 1 }
+        version = 2, persistedVersion = 2, persistedSource = 41,
+        persistedSourceGeneration = 1,
+        clusterLease = { leaseName = 'session:user-fixture', owner = 'old-owner', fencingToken = 1 },
+        clusterLeaseDeadlineAt = 26000, authorityDeadlineAt = 26000
       }))
 
       local identity, currentLease = nil, nil
@@ -329,8 +351,16 @@ test('replace_old fences a reused player source before dropping the previous aut
         local committed = handler(function(sql, parameters)
           if sql:find('synex_instances', 1, true) then return {{ status = 'ready' }} end
           if sql:find('synex_instance_boots', 1, true) then return {{ boot_id = 'boot-a' }} end
+          if sql:find('UPDATE \`synex_cluster_leases\`', 1, true) then
+            return { affectedRows = 1 }
+          end
           if sql:find('synex_cluster_leases', 1, true) then
             return {{ owner_id = currentLease.owner, fencing_token = currentLease.fencingToken, valid = 1 }}
+          end
+          if sql:find('SELECT', 1, true) and sql:find('synex_sessions', 1, true) then
+            return {{ id = 'old-session', user_id = 'user-fixture',
+              server_instance_id = 'instance-a', source_value = 41,
+              source_generation = 1, closed_at = nil }}
           end
           return assert(database:update(sql, parameters))
         end)
@@ -353,6 +383,7 @@ test('replace_old fences a reused player source before dropping the previous aut
       local instances = {}
       function instances:bootId() return 'boot-a', nil end
       function instances:requestRemoteKicks() return 0, nil end
+      function instances:hasOpenUserSessions() return false, nil end
       function instances:touchSessions() return true, nil end
       function instances:heartbeat() return {}, nil end
       function instances:pendingLocalControls() return {}, nil end
@@ -393,7 +424,11 @@ test('replace_old fences a reused player source before dropping the previous aut
         leases = leases,
         instances = instances,
         rateLimiter = rateLimiter,
-        sha256 = function(value) return value end
+        sha256 = function(value)
+          local hash = 2166136261
+          for index = 1, #value do hash = ((hash ~ value:byte(index)) * 16777619) & 0xffffffff end
+          return string.rep(('%08x'):format(hash), 8)
+        end
       })
       identity.connections:handleConnecting(-2, 'Fixture', {
         defer = function() end,
@@ -406,14 +441,19 @@ test('replace_old fences a reused player source before dropping the previous aut
         end
       })
 
-      assert(completed == '<accepted>')
-      assert(completionCalls == 1 and completionArity == 0)
-      assert(players:getSession('old-session') == nil)
-      assert(type(dropped[41]) == 'string' and players:getBySource(41).userId == 'replacement-user')
-      assert(released == 1 and acquired == 1 and purged == 1)
+      if completed ~= '<accepted>' then error('completed:' .. tostring(completed)) end
+      if completionCalls ~= 1 or completionArity ~= 0 then
+        error('completion:' .. tostring(completionCalls) .. ':' .. tostring(completionArity))
+      end
+      assert(players:getSession('old-session') == nil, 'old-session-retained')
+      assert(type(dropped[41]) == 'string' and players:getBySource(41).userId == 'replacement-user',
+        'replacement-source-invalid')
+      assert(released == 1 and acquired == 2 and purged == 1,
+        ('counts:%s:%s:%s'):format(released, acquired, purged))
       local pending = assert(players:getPending(-2))
-      assert(pending.state == 'AUTHENTICATED')
-      assert(pending.clusterLease.fencingToken == 2)
+      assert(pending.state == 'AUTHENTICATED', 'pending-state:' .. tostring(pending.state))
+      assert(pending.clusterLease.fencingToken == 2,
+        'pending-token:' .. tostring(pending.clusterLease.fencingToken))
       local joined = assert(identity.connections:handleJoining(42, -2))
       assert(joined.persistencePending == nil)
       assert(players:getBySource(42).state == 'SELECTING_CHARACTER')
@@ -438,11 +478,11 @@ test('replace_old fences a reused player source before dropping the previous aut
       assert(secondArity == 0 and players:getPending(-3) ~= nil)
       now = now + config.pendingTtlMs + 1
       assert(identity.connections:purgeExpired(1) == 1)
-      assert(players:getPending(-3) == nil and released == 2 and acquired == 2)
+      assert(players:getPending(-3) == nil and released == 3 and acquired == 4)
       return table.concat({completed, released, acquired, purged,
         blockedCharacterMutations, tostring(joinFlagObserved)}, ':')
     `);
-    assert.equal(result, '<accepted>:2:2:1:3:true');
+    assert.equal(result, '<accepted>:3:4:1:3:true');
   } finally {
     engine.global.close();
   }
@@ -476,7 +516,8 @@ test('replace_old retains failed durable closes for bounded heartbeat reconcilia
           id = 'old-' .. kind, userId = 'user-fixture', state = 'ACTIVE',
           characterId = 'character-' .. kind, version = 2, persistedVersion = 2,
           clusterLease = { name = 'session:user-fixture', owner = 'old-owner',
-            fencingToken = 1, ttlSeconds = 45 }
+            fencingToken = 1, ttlSeconds = 45 },
+          clusterLeaseDeadlineAt = now + 25000, authorityDeadlineAt = now + 25000
         }))
         local characters = {}
         function characters:unload(sessionId)
@@ -504,7 +545,12 @@ test('replace_old retains failed durable closes for bounded heartbeat reconcilia
             pendingTtlMs = 120000, clusterSessionLeaseSeconds = 45 },
           instanceId = 'instance-a',
           leases = {
-            acquire = function() acquired = acquired + 1 return nil, foundation.error('UNEXPECTED', 'unexpected') end,
+            acquire = function(_, name, owner, ttl, requesterInstanceId, requesterBootId)
+              acquired = acquired + 1
+              return { name = name, owner = owner, fencingToken = acquired,
+                ttlSeconds = ttl, requesterInstanceId = requesterInstanceId,
+                requesterBootId = requesterBootId }, nil
+            end,
             release = function()
               released = released + 1
               if releaseHook then local hook = releaseHook; releaseHook = nil; hook() end
@@ -518,6 +564,7 @@ test('replace_old retains failed durable closes for bounded heartbeat reconcilia
           instances = {
             bootId = function() workerCalls = workerCalls + 1 return 'boot-a', nil end,
             requestRemoteKicks = function() workerCalls = workerCalls + 1 return 0, nil end,
+            hasOpenUserSessions = function() workerCalls = workerCalls + 1 return false, nil end,
             touchSessions = function() workerCalls = workerCalls + 1 return true, nil end,
             heartbeat = function() workerCalls = workerCalls + 1 return {}, nil end,
             pendingLocalControls = function() workerCalls = workerCalls + 1 return {}, nil end,
@@ -549,7 +596,11 @@ test('replace_old retains failed durable closes for bounded heartbeat reconcilia
           normalizeIdentifiers = function()
             return {{ type = 'license', value = 'fixture', normalized = 'license:fixture' }}
           end,
-          sha256 = function(value) return value end,
+          sha256 = function(value)
+            local hash = 2166136261
+            for index = 1, #value do hash = ((hash ~ value:byte(index)) * 16777619) & 0xffffffff end
+            return string.rep(('%08x'):format(hash), 8)
+          end,
           sessionTransitions = { ACTIVE = { DISCONNECTING = true } },
           transition = function(session, target) session.state = target return session, nil end
         })
@@ -561,47 +612,52 @@ test('replace_old retains failed durable closes for bounded heartbeat reconcilia
           and completion:find('[SESSION_REPLACE_FAILED]', 1, true))
         assert(players:getBySource(41).id == 'replacement-' .. kind)
         assert(players:getPending(-2) == nil)
-        assert(acquired == 0 and unloads == 1 and closes == 1)
+        assert(acquired == 1 and unloads == 1 and closes == 1)
         if kind == 'unload' then
-          assert(players:getSession('old-' .. kind) == nil and released == 1)
+          assert(players:getSession('old-' .. kind) == nil and released == 2)
           return kind .. ':' .. released .. ':' .. players:getBySource(41).userId
         end
 
         local tombstone = assert(players:getSession('old-' .. kind))
         assert(tombstone.source == nil and tombstone.replacementClosePending == true)
-        assert(tombstone.clusterLease.owner == 'old-owner' and released == 0)
+        assert(tombstone.clusterLease.owner == 'old-owner' and released == 1)
         if kind == 'quiesce' then
           local dropsBeforeHeartbeat = dropCalls
+          local heartbeatHealthy, heartbeatError = connection:heartbeat()
+          assert(heartbeatHealthy, heartbeatError and heartbeatError.code)
+          assert(connection:snapshot().quiesced == true and closes == 2,
+            table.concat({tostring(connection:snapshot().quiesced), closes}, ':'))
+          assert(players:getSession('old-quiesce').replacementClosePending == true,
+            'quiesce tombstone missing')
+          assert(released == 1 and renewals == 0 and workerCalls == 1
+            and dropCalls == dropsBeforeHeartbeat,
+            table.concat({released, renewals, workerCalls, dropCalls, dropsBeforeHeartbeat}, ':'))
           assert(connection:heartbeat())
-          assert(connection:snapshot().quiesced == true and closes == 2)
-          assert(players:getSession('old-quiesce').replacementClosePending == true)
-          assert(released == 0 and renewals == 0 and workerCalls == 0
-            and dropCalls == dropsBeforeHeartbeat)
-          assert(connection:heartbeat())
-          assert(closes == 2 and released == 0 and renewals == 0 and workerCalls == 0)
+          assert(closes == 2 and released == 1 and renewals == 0 and workerCalls == 1)
           return kind .. ':' .. closes .. ':' .. renewals .. ':' .. workerCalls
         end
-        assert(connection:heartbeat())
+        local heartbeatHealthy, heartbeatError = connection:heartbeat()
+        assert(heartbeatHealthy, heartbeatError and heartbeatError.code)
         tombstone = assert(players:getSession('old-close'))
         assert(tombstone.source == nil and tombstone.replacementClosePending == true)
-        assert(closes == 2 and renewals == 1 and released == 0)
+        assert(closes == 2 and renewals == 1 and released == 1)
         assert(players:getBySource(41).id == 'replacement-close')
 
         closeFails = false
         releaseHook = function() assert(connection:heartbeat()) end
         assert(connection:heartbeat())
-        assert(players:getSession('old-close') == nil and released == 1)
+        assert(players:getSession('old-close') == nil and released == 2)
         assert(players:getBySource(41).id == 'replacement-close')
         assert(closes == 3 and renewals == 1)
         assert(connection:heartbeat())
-        assert(closes == 3 and renewals == 1 and released == 1)
+        assert(closes == 3 and renewals == 1 and released == 2)
         return kind .. ':' .. released .. ':' .. closes .. ':' .. renewals .. ':'
           .. players:getBySource(41).userId
       end
       return runCase('unload') .. '|' .. runCase('close') .. '|' .. runCase('quiesce')
     `);
     assert.equal(result,
-      'unload:1:replacement-user|close:1:3:1:replacement-user|quiesce:2:0:0');
+      'unload:2:replacement-user|close:2:3:1:replacement-user|quiesce:2:0:1');
   } finally {
     engine.global.close();
   }
@@ -624,7 +680,8 @@ test('replacement cleanup treats an absent durable session row as already closed
         id = 'old-missing', userId = 'user-missing', state = 'SELECTING_CHARACTER',
         version = 2, persistedVersion = 2,
         clusterLease = { name = 'session:user-missing', owner = 'old-owner',
-          fencingToken = 4, ttlSeconds = 45 }
+          fencingToken = 4, ttlSeconds = 45 },
+        clusterLeaseDeadlineAt = 26000, authorityDeadlineAt = 26000
       }))
       local replacement = SynexCoreFactories.identityConnectionReplacement({
         platform = platform, foundation = foundation, players = players,
@@ -686,7 +743,8 @@ test('replacement cleanup stops every local side effect when quiesce wins a yiel
           assert(players:bindJoined(tempSource, source, {
             id = id, userId = 'user-old', state = 'ACTIVE', version = 1, persistedVersion = 1,
             clusterLease = { name = 'session:user-old:' .. id, owner = id,
-              fencingToken = 1, ttlSeconds = 45 }
+              fencingToken = 1, ttlSeconds = 45 },
+            clusterLeaseDeadlineAt = 26000, authorityDeadlineAt = 26000
           }))
         end
         bind(-1, 41, 'a-old')
@@ -835,10 +893,15 @@ test('connection exceptions reject once with a stable code and release pending a
           gateTimeoutMs = 10000, clusterSessionLeaseSeconds = 45 },
         leases = leases, instanceId = 'instance-a', characters = {},
         rateLimiter = { consume = function() return true, nil end, purge = function() end },
-        sha256 = function(value) return value end,
+        sha256 = function(value)
+          local hash = 2166136261
+          for index = 1, #value do hash = ((hash ~ value:byte(index)) * 16777619) & 0xffffffff end
+          return string.rep(('%08x'):format(hash), 8)
+        end,
         instances = {
           bootId = function() return 'boot-a', nil end,
-          requestRemoteKicks = function() return 0, nil end
+          requestRemoteKicks = function() return 0, nil end,
+          hasOpenUserSessions = function() return false, nil end
         },
         userRepository = { authenticate = function() return { id = 'user-fixture' }, nil end },
         sessionRepository = {}, accessRepository = { check = function() return true, nil end },
@@ -861,7 +924,7 @@ test('connection exceptions reject once with a stable code and release pending a
       assert(completionCalls == 1 and completionArity == 1)
       assert(completionReason:find('[CONNECTION_PIPELINE_FAILED]', 1, true))
       assert(not completionReason:find('fixture-private', 1, true))
-      assert(players:getPending(-2) == nil and released == 1)
+      assert(players:getPending(-2) == nil and released == 0)
       assert(connection:snapshot().admissionReservations == 0)
 
       local beforeUpdateFailure = deferCalls
@@ -880,7 +943,7 @@ test('connection exceptions reject once with a stable code and release pending a
       assert(completionReason:find('[CONNECTION_PIPELINE_FAILED]', 1, true))
       assert(not completionReason:find('fixture-private', 1, true))
       assert(deferCalls - beforeUpdateFailure == 2)
-      assert(players:getPending(-3) == nil and released == 1)
+      assert(players:getPending(-3) == nil and released == 0)
       assert(connection:snapshot().openDeferrals == 0
         and connection:snapshot().admissionReservations == 0)
 
@@ -923,13 +986,19 @@ test('a failed accepted deferral terminal is attempted once and retained only un
             return { name = name, owner = owner, fencingToken = 1, ttlSeconds = ttl,
               requesterInstanceId = requesterInstanceId, requesterBootId = requesterBootId }, nil
           end,
-          release = function() released = released + 1 return true, nil end
+          release = function() released = released + 1 return true, nil end,
+          renew = function() return true, nil end
         },
         rateLimiter = { consume = function() return true, nil end, purge = function() end },
-        sha256 = function(value) return value end,
+        sha256 = function(value)
+          local hash = 2166136261
+          for index = 1, #value do hash = ((hash ~ value:byte(index)) * 16777619) & 0xffffffff end
+          return string.rep(('%08x'):format(hash), 8)
+        end,
         instances = {
           bootId = function() return 'boot-a', nil end,
-          requestRemoteKicks = function() return 0, nil end
+          requestRemoteKicks = function() return 0, nil end,
+          hasOpenUserSessions = function() return false, nil end
         }, characters = {},
         userRepository = { authenticate = function() return { id = 'user-fixture', status = 'active' }, nil end },
         sessionRepository = {}, accessRepository = { check = function() return true, nil end },
@@ -949,10 +1018,10 @@ test('a failed accepted deferral terminal is attempted once and retained only un
       assert(doneCalls == 1 and players:getPending(-2) ~= nil and released == 0)
       now = now + 120001
       assert(connection:purgeExpired(1) == 1)
-      assert(players:getPending(-2) == nil and released == 1)
+      assert(players:getPending(-2) == nil and released == 2)
       return table.concat({doneCalls, released, connectionError.code}, ':')
     `);
-    assert.equal(result, '1:1:DEFERRAL_TERMINATION_FAILED');
+    assert.equal(result, '1:2:DEFERRAL_TERMINATION_FAILED');
   } finally {
     engine.global.close();
   }
@@ -1047,10 +1116,15 @@ test('playerJoining rejects cross-pending hijack, replay, and source-local flood
           end
         },
         rateLimiter = rateLimiter,
-        sha256 = function(value) return value end,
+        sha256 = function(value)
+          local hash = 2166136261
+          for index = 1, #value do hash = ((hash ~ value:byte(index)) * 16777619) & 0xffffffff end
+          return string.rep(('%08x'):format(hash), 8)
+        end,
         instances = {
           bootId = function() return 'boot-a', nil end,
-          requestRemoteKicks = function() return 0, nil end
+          requestRemoteKicks = function() return 0, nil end,
+          hasOpenUserSessions = function() return false, nil end
         }, characters = {},
         userRepository = userRepository,
         sessionRepository = {
@@ -1130,7 +1204,8 @@ test('playerJoining rejects cross-pending hijack, replay, and source-local flood
         id = 'expired-connection', sessionId = 'expired-session', tempSource = -5,
         state = 'AUTHENTICATED', userId = 'user-victim', receivedAt = now - 1,
         expiresAt = now, identityFingerprint = 'unused',
-        clusterLease = { owner = 'expired-owner', fencingToken = 8, ttlSeconds = 45 }
+        clusterLease = { owner = 'expired-owner', fencingToken = 8, ttlSeconds = 45 },
+        clusterLeaseDeadlineAt = now + 25000, authorityDeadlineAt = now + 25000
       }))
       local expired, expiredError = connection:handleJoining(77, -5)
       assert(expired == nil and expiredError.code == 'PENDING_CONNECTION_EXPIRED')
@@ -1172,7 +1247,12 @@ test('playerJoining compensates transition, bind, persistence, and disconnect ra
           state = 'AUTHENTICATED', userId = 'user-victim',
           identityFingerprint = 'fixture-hash',
           clusterLease = { name = 'session:user-victim', owner = 'instance-a:session-' .. kind,
-            fencingToken = 9, ttlSeconds = 45 }
+            fencingToken = 9, ttlSeconds = 45 },
+          admissionGateLease = { name = 'admission:user-victim',
+            owner = 'instance-a:session-' .. kind, fencingToken = 4, ttlSeconds = 45 },
+          clusterLeaseDeadlineAt = now + 25000,
+          admissionGateDeadlineAt = now + 25000,
+          authorityDeadlineAt = now + 25000
         }))
         local originalBind = players.bindJoined
         if kind == 'bind' then
@@ -1258,14 +1338,15 @@ test('playerJoining compensates transition, bind, persistence, and disconnect ra
         else
           assert(players:getBySource(42) == nil)
         end
-        assert(released == 1)
+        assert(released == (kind == 'lease_after_create' and 1 or 2),
+          kind .. ':' .. tostring(released))
         if kind == 'persistence' or kind == 'cancelled' or kind == 'reused'
           or kind == 'lease_after_create' then
           assert(closeCalls == 1)
         else
           assert(closeCalls == 0)
         end
-        if kind == 'lease_after_create' then assert(renewCalls == 2 and leaseTaken) end
+        if kind == 'lease_after_create' then assert(renewCalls == 3 and leaseTaken) end
         assert(opened == 0)
         return kind .. ':' .. tostring(closeCalls)
       end
@@ -1276,6 +1357,85 @@ test('playerJoining compensates transition, bind, persistence, and disconnect ra
     `);
     assert.equal(result,
       'transition:0|bind:0|persistence:1|cancelled:1|reused:1|lease_after_create:1');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('remote kick controls remain pending until the exact player drop is accepted', async () => {
+  const engine = await createIdentityEngine();
+  try {
+    const result = await engine.doString(`
+      local dropCalls, completionCalls, completed = 0, 0, false
+      local health = nil
+      local platform = {
+        nowGame = function() return 1000 end, random = function() return 33 end,
+        print = function() end, wait = function() end,
+        dropPlayer = function(source)
+          assert(source == 42)
+          dropCalls = dropCalls + 1
+          if dropCalls == 1 then return false end
+          if dropCalls == 2 then error('fixture drop failure') end
+        end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      foundation.configureIds('remote-control-dispatch')
+      local registries = SynexCoreFactories.registries({ foundation = foundation })
+      local players = registries.players
+      assert(players:createPending(-1, { sessionId = 'target-session' }))
+      assert(players:bindJoined(-1, 42, {
+        id = 'target-session', userId = 'target-user', state = 'ACTIVE',
+        version = 1, persistedVersion = 1
+      }))
+      local control = {
+        request_id = 'control-a', target_session_id = 'target-session',
+        target_instance_id = 'instance-a', action = 'kick', reason = 'replacement'
+      }
+      local maintenance = SynexCoreFactories.identityConnectionMaintenance({
+        platform = platform, foundation = foundation, players = players,
+        lifecycle = { core = { setHealth = function(_, _, status) health = status end } },
+        messaging = { network = { purgeSource = function() end } },
+        config = { clusterSessionLeaseSeconds = 45, clusterHeartbeatMs = 10000 },
+        leases = { renew = function() return true, nil end },
+        instances = {
+          touchSessions = function() return true, nil end,
+          heartbeat = function() return {}, nil end,
+          pendingLocalControls = function()
+            return completed and {} or { control }, nil
+          end,
+          completeControl = function(_, candidate, dropAccepted)
+            assert(candidate == control and dropAccepted == true)
+            completionCalls = completionCalls + 1
+            completed = true
+            return true, nil
+          end
+        },
+        characters = {}, sessionRepository = {}, sessionTransitions = {},
+        transition = function() return true, nil end,
+        rateLimiter = { purge = function() end },
+        joinClaims = { invalidate = function() end },
+        logConnectionStage = function() end,
+        releaseAdmission = function() end,
+        releaseConnectionLease = function() end,
+        refreshLeaseDeadline = function() return 26000 end,
+        clearQueueEntry = function() end,
+        recordReconnectGrace = function() end,
+        purgeReconnectGrace = function() end,
+        isQuiesced = function() return false end
+      })
+      local first, firstError = maintenance:heartbeat()
+      assert(first == false and firstError.code == 'PLAYER_DROP_FAILED')
+      assert(dropCalls == 1 and completionCalls == 0 and health == 'DEGRADED')
+      local second, secondError = maintenance:heartbeat()
+      assert(second == false and secondError.code == 'PLAYER_DROP_FAILED')
+      assert(dropCalls == 2 and completionCalls == 0 and health == 'DEGRADED')
+      local third, thirdError = maintenance:heartbeat()
+      assert(third == true and thirdError == nil)
+      assert(dropCalls == 3 and completionCalls == 1 and health == 'HEALTHY')
+      assert(maintenance:heartbeat() == true and dropCalls == 3 and completionCalls == 1)
+      return table.concat({dropCalls, completionCalls, tostring(completed), health}, ':')
+    `);
+    assert.equal(result, '3:1:true:HEALTHY');
   } finally {
     engine.global.close();
   }
@@ -1302,7 +1462,8 @@ test('playerDropped detaches and purges before yielded cleanup can observe a reu
       local old = assert(players:bindJoined(-2, 42, {
         id = 'old-session', userId = 'old-user', state = 'ACTIVE', characterId = 'old-character',
         version = 2, persistedVersion = 2,
-        clusterLease = { owner = 'old-owner', fencingToken = 1, ttlSeconds = 45 }
+        clusterLease = { owner = 'old-owner', fencingToken = 1, ttlSeconds = 45 },
+        clusterLeaseDeadlineAt = now + 25000, authorityDeadlineAt = now + 25000
       }))
       local connection = nil
       local characters = {}
@@ -1334,16 +1495,21 @@ test('playerDropped detaches and purges before yielded cleanup can observe a reu
           renew = function() return nil, { code = 'LEASE_LOST' } end
         },
         rateLimiter = { consume = function() return true, nil end, purge = function() end },
-        sha256 = function(value) return value end,
+        sha256 = function(value)
+          local hash = 2166136261
+          for index = 1, #value do hash = ((hash ~ value:byte(index)) * 16777619) & 0xffffffff end
+          return string.rep(('%08x'):format(hash), 8)
+        end,
         instances = {
           bootId = function() return 'boot-a', nil end,
           touchSessions = function() return true, nil end,
           heartbeat = function() return {}, nil end,
           pendingLocalControls = function() return {{
-            target_session_id = old.id, action = 'kick', request_id = 'stale-control', reason = 'stale'
+            target_session_id = old.id, target_instance_id = 'instance-a',
+            action = 'kick', request_id = 'stale-control', reason = 'stale'
           }}, nil end,
-          completeControl = function(_, requestId)
-            assert(requestId == 'stale-control')
+          completeControl = function(_, control, dropAccepted)
+            assert(control.request_id == 'stale-control' and dropAccepted == false)
             completedControls = completedControls + 1
             return true, nil
           end
@@ -1375,7 +1541,7 @@ test('pending lease heartbeat preserves delayed join authority and fails closed 
   try {
     const result = await engine.doString(`
       local function fixture(label)
-        local now, authority, renewCalls, releaseCalls, renewFails = 1000, nil, 0, 0, false
+        local now, authorities, renewCalls, releaseCalls, renewFails = 1000, {}, 0, 0, false
         local renewHook, releaseHook = nil, nil
         local drops, health = {}, nil
         local platform = {
@@ -1391,12 +1557,14 @@ test('pending lease heartbeat preserves delayed join authority and fails closed 
         registries.owners:activate('synex_core')
         local leases = {}
         function leases:acquire(name, owner, ttl, requesterInstanceId, requesterBootId)
+          local authority = authorities[name]
           if authority and authority.expiresAt > now and authority.owner ~= owner then
             return nil, { code = 'LEASE_BUSY' }
           end
           local token = authority and authority.fencingToken + 1 or 1
           authority = { name = name, owner = owner, fencingToken = token,
             ttlSeconds = ttl, expiresAt = now + ttl * 1000 }
+          authorities[name] = authority
           return { name = name, owner = owner, fencingToken = token, ttlSeconds = ttl,
             requesterInstanceId = requesterInstanceId, requesterBootId = requesterBootId }, nil
         end
@@ -1407,6 +1575,7 @@ test('pending lease heartbeat preserves delayed join authority and fails closed 
             renewHook = nil
             callback()
           end
+          local authority = authorities[lease.name]
           if renewFails or not authority or authority.expiresAt <= now
             or authority.owner ~= lease.owner or authority.fencingToken ~= lease.fencingToken then
             return nil, { code = 'LEASE_LOST' }
@@ -1421,6 +1590,7 @@ test('pending lease heartbeat preserves delayed join authority and fails closed 
             releaseHook = nil
             callback()
           end
+          local authority = authorities[lease.name]
           if authority and authority.owner == lease.owner and authority.fencingToken == lease.fencingToken then
             authority.expiresAt = now
           end
@@ -1442,17 +1612,29 @@ test('pending lease heartbeat preserves delayed join authority and fails closed 
             clusterSessionLeaseSeconds = 45, clusterHeartbeatMs = 10000 },
           leases = leases,
           rateLimiter = { consume = function() return true, nil end, purge = function() end },
-          sha256 = function(value) return value end,
+          sha256 = function(value)
+            local hash = 2166136261
+            for index = 1, #value do hash = ((hash ~ value:byte(index)) * 16777619) & 0xffffffff end
+            return string.rep(('%08x'):format(hash), 8)
+          end,
           instances = {
             bootId = function() return 'boot-a', nil end,
             requestRemoteKicks = function() return 0, nil end,
+            hasOpenUserSessions = function() return false, nil end,
             touchSessions = function() return true, nil end,
             heartbeat = function() return {}, nil end,
             pendingLocalControls = function() return {}, nil end,
             completeControl = function() return true, nil end
           },
           characters = {}, userRepository = userRepository,
-          sessionRepository = { create = function() return true, nil end, close = function() return true, nil end },
+          sessionRepository = {
+            create = function(_, session)
+              local gate = authorities[session.admissionGateLease.name]
+              if gate then gate.expiresAt = now end
+              return true, nil
+            end,
+            close = function() return true, nil end
+          },
           accessRepository = { check = function() return true, nil end },
           invokeOwned = function() return true, true, nil end,
           normalizeIdentifiers = function()
@@ -1489,7 +1671,9 @@ test('pending lease heartbeat preserves delayed join authority and fails closed 
               }))
             end
           end,
-          stats = function() return now, authority, renewCalls, releaseCalls, health end
+          stats = function()
+            return now, authorities['session:user-victim'], renewCalls, releaseCalls, health
+          end
         }
       end
 
@@ -1498,13 +1682,13 @@ test('pending lease heartbeat preserves delayed join authority and fails closed 
       assert(delayedCompletion == '<accepted>' and delayedConnected,
         delayedError and delayedError.code)
       for _ = 1, 6 do delayed.advance(10000); assert(delayed.connection:heartbeat()) end
+      assert(delayed.connection:handleJoining(42, -2))
+      assert(delayed.players:getBySource(42).userId == 'user-victim')
       local duplicate = delayed.connect(-3)
       assert(duplicate:find('[DUPLICATE_SESSION]', 1, true))
       for _ = 1, 3 do delayed.advance(10000); assert(delayed.connection:heartbeat()) end
       local delayedNow, authority, renewed = delayed.stats()
       assert(delayedNow >= 91000 and authority.expiresAt > delayedNow and renewed >= 9)
-      assert(delayed.connection:handleJoining(42, -2))
-      assert(delayed.players:getBySource(42).userId == 'user-victim')
       delayed.setRenewFailure(true)
       delayed.advance(10000)
       local sessionHealthy, sessionHeartbeatError = delayed.connection:heartbeat()
@@ -1531,12 +1715,16 @@ test('pending lease heartbeat preserves delayed join authority and fails closed 
       assert(cleanup.players:createPending(-2, {
         id = 'expired-a', sessionId = 'expired-session-a', tempSource = -2,
         state = 'AUTHENTICATED', receivedAt = cleanupNow - 1, expiresAt = cleanupNow,
-        clusterLease = { owner = 'a', fencingToken = 1, ttlSeconds = 45 }
+        clusterLease = { owner = 'a', fencingToken = 1, ttlSeconds = 45 },
+        clusterLeaseDeadlineAt = cleanupNow + 25000,
+        authorityDeadlineAt = cleanupNow + 25000
       }))
       assert(cleanup.players:createPending(-3, {
         id = 'expired-b', sessionId = 'expired-session-b', tempSource = -3,
         state = 'AUTHENTICATED', receivedAt = cleanupNow - 1, expiresAt = cleanupNow,
-        clusterLease = { owner = 'b', fencingToken = 1, ttlSeconds = 45 }
+        clusterLease = { owner = 'b', fencingToken = 1, ttlSeconds = 45 },
+        clusterLeaseDeadlineAt = cleanupNow + 25000,
+        authorityDeadlineAt = cleanupNow + 25000
       }))
       cleanup.setReleaseHook(function()
         assert(cleanup.players:removePending(-3).id == 'expired-b')
@@ -1559,13 +1747,13 @@ test('pending lease heartbeat preserves delayed join authority and fails closed 
       local _, _, _, failedReleases, failedHealth = failed.stats()
       assert(healthy == false and heartbeatError.code == 'PENDING_LEASE_RENEW_FAILED')
       assert(failed.players:getPending(-2) == nil and failed.connection:snapshot().admissionReservations == 0)
-      assert(failedReleases == 1 and failedHealth == 'DEGRADED')
+      assert(failedReleases == 2 and failedHealth == 'DEGRADED')
       local joined, joinError = failed.connection:handleJoining(42, -2)
       assert(joined == nil and joinError.code == 'PENDING_CONNECTION_NOT_FOUND')
       assert(failed.drops[42]:find('[PENDING_CONNECTION_NOT_FOUND]', 1, true))
       return table.concat({renewed, failedReleases, failedHealth, joinError.code}, ':')
     `);
-    assert.match(result, /^\d+:1:DEGRADED:PENDING_CONNECTION_NOT_FOUND$/u);
+    assert.match(result, /^\d+:2:DEGRADED:PENDING_CONNECTION_NOT_FOUND$/u);
   } finally {
     engine.global.close();
   }
@@ -1619,6 +1807,7 @@ test('connection quiesce rejects pending acceptance and invalidates an in-flight
         local instances = {
           bootId = function() return 'boot-a', nil end,
           requestRemoteKicks = function() workerCalls = workerCalls + 1 return 0, nil end,
+          hasOpenUserSessions = function() return false, nil end,
           touchSessions = function() workerCalls = workerCalls + 1 return true, nil end,
           heartbeat = function() workerCalls = workerCalls + 1 return {}, nil end,
           pendingLocalControls = function() workerCalls = workerCalls + 1 return {}, nil end,
@@ -1673,7 +1862,7 @@ test('connection quiesce rejects pending acceptance and invalidates an in-flight
           normalizeIdentifiers = function()
             return {{ type = 'license', value = 'victim', normalized = 'license:victim' }}
           end,
-          sha256 = function() return 'fingerprint' end,
+          sha256 = function() return string.rep('f', 64) end,
           sessionTransitions = {},
           transition = function(session, target)
             session.state = target
@@ -1701,9 +1890,14 @@ test('connection quiesce rejects pending acceptance and invalidates an in-flight
             return registries.players:createPending(-2, {
               id = 'pending-a', sessionId = 'session-a', userId = 'user-victim',
               tempSource = -2, state = 'AUTHENTICATED', receivedAt = now,
-              expiresAt = now + 120000, identityFingerprint = 'fingerprint',
+              expiresAt = now + 120000, identityFingerprint = string.rep('f', 64),
               clusterLease = { name = 'session:user-victim', owner = 'instance-a:session-a',
-                fencingToken = 1, ttlSeconds = 45 }
+                fencingToken = 1, ttlSeconds = 45 },
+              admissionGateLease = { name = 'admission:user-victim',
+                owner = 'instance-a:session-a', fencingToken = 1, ttlSeconds = 45 },
+              clusterLeaseDeadlineAt = now + 25000,
+              admissionGateDeadlineAt = now + 25000,
+              authorityDeadlineAt = now + 25000
             })
           end,
           closeAdmission = function() admitting = false end,
@@ -1729,7 +1923,7 @@ test('connection quiesce rejects pending acceptance and invalidates an in-flight
       assert(acceptance.players:getPending(-2) == nil)
       assert(acceptance.connection:snapshot().quiesced == true)
       assert(acceptance.connection:snapshot().admissionReservations == 0)
-      assert(releases == 1)
+      assert(releases == 2)
       assert(select(10, acceptance.state()) == false)
       assert(select(5, acceptance.state()) == 'instance-a')
       assert(select(6, acceptance.state()) == 'boot-a')
@@ -1785,7 +1979,7 @@ test('connection quiesce rejects pending acceptance and invalidates an in-flight
       assert(joining.connection:releaseQuiescedLeases())
       local _, joinDrops, joinReleases = joining.state()
       assert(joinDrops[43] == nil)
-      assert(joinReleases == 1 and joining.players:getPending(-2) == nil)
+      assert(joinReleases == 2 and joining.players:getPending(-2) == nil)
       assert(joining.players:getBySource(43) == nil)
 
       local captured = fixture(false)
@@ -1798,8 +1992,8 @@ test('connection quiesce rejects pending acceptance and invalidates an in-flight
       assert(capturedReleases == 0)
       local capturedReport = assert(captured.connection:releaseQuiescedLeases())
       capturedReleases = select(3, captured.state())
-      assert(capturedReport.removedPending == 1 and capturedReport.releasedLeases == 1)
-      assert(capturedReleases == 1)
+      assert(capturedReport.removedPending == 1 and capturedReport.releasedLeases == 0)
+      assert(capturedReleases == 0)
 
       local unavailable = fixture(false)
       assert(unavailable.seedPending())
@@ -1808,7 +2002,7 @@ test('connection quiesce rejects pending acceptance and invalidates an in-flight
       assert(unavailableJoin == nil and unavailableError.code == 'CORE_NOT_READY')
       local _, unavailableDrops, unavailableReleases = unavailable.state()
       assert(unavailableDrops[44]:find('[CORE_NOT_READY]', 1, true))
-      assert(unavailableReleases == 1 and unavailable.players:getPending(-2) == nil)
+      assert(unavailableReleases == 2 and unavailable.players:getPending(-2) == nil)
       assert(unavailable.connection:snapshot().admissionReservations == 0)
 
       local degraded = fixture(false, true)
@@ -1817,7 +2011,7 @@ test('connection quiesce rejects pending acceptance and invalidates an in-flight
       assert(degradedJoin == nil and degradedError.code == 'CORE_NOT_READY')
       local _, degradedDrops, degradedReleases = degraded.state()
       assert(degradedDrops[45]:find('[CORE_NOT_READY]', 1, true))
-      assert(degradedReleases == 1 and degraded.players:getPending(-2) == nil)
+      assert(degradedReleases == 2 and degraded.players:getPending(-2) == nil)
       assert(degraded.players:getBySource(45) == nil)
 
       local lateDegraded = fixture(false, false, true)
@@ -1825,21 +2019,21 @@ test('connection quiesce rejects pending acceptance and invalidates an in-flight
       local lateCompletions, _, lateReleases = lateDegraded.state()
       assert(#lateCompletions == 1 and lateCompletions[1].arity == 1)
       assert(lateCompletions[1].reason:find('[CORE_NOT_READY]', 1, true))
-      assert(lateReleases == 1 and lateDegraded.players:getPending(-2) == nil)
+      assert(lateReleases == 2 and lateDegraded.players:getPending(-2) == nil)
       assert(lateDegraded.connection:snapshot().quiesced == false)
       assert(lateDegraded.connection:snapshot().admissionReservations == 0)
       return table.concat({stoppedError.code, joinError.code, unavailableError.code,
         degradedError.code, releases, joinReleases, capturedReleases,
         unavailableReleases, degradedReleases, lateReleases}, ':')
     `);
-    assert.equal(result, 'CORE_STOPPING:CORE_STOPPING:CORE_NOT_READY:CORE_NOT_READY:1:1:1:1:1:1');
+    assert.equal(result, 'CORE_STOPPING:CORE_STOPPING:CORE_NOT_READY:CORE_NOT_READY:2:2:0:2:2:2');
   } finally {
     engine.global.close();
   }
 });
 
 test('bootstrap subscribes to the built-in playerJoining event without exposing it to clients', async () => {
-  const source = await readFile(path.join(root, 'core/synex_core/server/bootstrap_lifecycle.lua'), 'utf8');
+  const source = await readFile(path.join(root, 'core/synex_core/server/bootstrap_resource_events.lua'), 'utf8');
   const subscription = source.indexOf("platform.addEventHandler('playerJoining'");
   assert.doesNotMatch(source, /(?:platform\.(?:registerNetEvent|onNet)|\bRegisterNetEvent)\s*\(\s*['"]playerJoining['"]/u,
     'the built-in server event must not be network registered');

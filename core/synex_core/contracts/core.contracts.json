@@ -19,11 +19,12 @@
       "output": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["state", "revision", "operational", "reasons", "recentTransitions"],
+        "required": ["state", "revision", "operational", "playerAdmission", "reasons", "recentTransitions"],
         "properties": {
           "state": { "type": "string", "maxLength": 32 },
           "revision": { "type": "integer", "minimum": 0 },
           "operational": { "type": "boolean" },
+          "playerAdmission": { "type": "boolean" },
           "reasons": { "type": "object" },
           "recentTransitions": { "type": "array", "maxItems": 64, "items": { "type": "object" } }
         }

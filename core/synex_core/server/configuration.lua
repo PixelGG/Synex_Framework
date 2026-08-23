@@ -100,6 +100,7 @@ factories.configuration = function(deps)
                 'pendingTtlMs', 'gateTimeoutMs', 'duplicatePolicy', 'allowlistRequired',
                 'clusterSessionLeaseSeconds', 'clusterHeartbeatMs', 'queueEnabled', 'queueUpdateMs',
                 'queueTimeoutMs', 'maximumQueued', 'maximumActiveSessions', 'queueReservedSlots',
+                'maximumConcurrentConnections', 'connectionRate', 'connectionBurst',
                 'queueStaffPriority', 'queueReconnectPriority', 'queueReconnectGraceMs', 'queueStaffAce',
                 'maintenanceMode', 'maintenanceMessage', 'maintenanceBypassAce'
             }) end,
@@ -114,6 +115,12 @@ factories.configuration = function(deps)
             function() return integer(config.connections.queueTimeoutMs, 1000, 1800000, '$.connections.queueTimeoutMs') end,
             function() return integer(config.connections.maximumQueued, 1, 10000, '$.connections.maximumQueued') end,
             function() return integer(config.connections.maximumActiveSessions, 1, 10000, '$.connections.maximumActiveSessions') end,
+            function() return integer(config.connections.maximumConcurrentConnections, 1, 10000,
+                '$.connections.maximumConcurrentConnections') end,
+            function() return number(config.connections.connectionRate, 0, 1000,
+                '$.connections.connectionRate') end,
+            function() return integer(config.connections.connectionBurst, 1, 1000,
+                '$.connections.connectionBurst') end,
             function() return integer(config.connections.queueReservedSlots, 0, 9999, '$.connections.queueReservedSlots') end,
             function() return integer(config.connections.queueStaffPriority, 1, 100000, '$.connections.queueStaffPriority') end,
             function() return integer(config.connections.queueReconnectPriority, 1, 100000, '$.connections.queueReconnectPriority') end,
@@ -146,16 +153,26 @@ factories.configuration = function(deps)
             function() return boundedString(config.privacy.identifierSaltConvar, 1, 64, '$.privacy.identifierSaltConvar', '^[A-Za-z][A-Za-z0-9_]*$') end,
             function() return integer(config.privacy.diagnosticIdentifierPrefix, 4, 16, '$.privacy.diagnosticIdentifierPrefix') end,
             function() return exactObject(config.retention, '$.retention', {
-                'workerIntervalMs', 'batchSize', 'audit', 'financial'
+                'workerIntervalMs', 'batchSize', 'sessionControlAfterDays',
+                'audit', 'financial', 'outbox'
             }) end,
             function() return integer(config.retention.workerIntervalMs, 60000, 86400000, '$.retention.workerIntervalMs') end,
             function() return integer(config.retention.batchSize, 1, 1000, '$.retention.batchSize') end,
+            function() return integer(config.retention.sessionControlAfterDays,
+                1, 36500, '$.retention.sessionControlAfterDays') end,
             function() return exactObject(config.retention.audit, '$.retention.audit', { 'mode', 'archiveAfterDays' }) end,
             function() return oneOf(config.retention.audit.mode, { 'retain_forever', 'archive' }, '$.retention.audit.mode') end,
             function() return integer(config.retention.audit.archiveAfterDays, 1, 36500, '$.retention.audit.archiveAfterDays') end,
             function() return exactObject(config.retention.financial, '$.retention.financial', { 'mode', 'archiveAfterDays' }) end,
             function() return oneOf(config.retention.financial.mode, { 'retain_forever', 'archive' }, '$.retention.financial.mode') end,
             function() return integer(config.retention.financial.archiveAfterDays, 1, 36500, '$.retention.financial.archiveAfterDays') end,
+            function() return exactObject(config.retention.outbox, '$.retention.outbox', {
+                'publishedPayloadAfterDays', 'deadPayloadAfterDays'
+            }) end,
+            function() return integer(config.retention.outbox.publishedPayloadAfterDays,
+                1, 36500, '$.retention.outbox.publishedPayloadAfterDays') end,
+            function() return integer(config.retention.outbox.deadPayloadAfterDays,
+                1, 36500, '$.retention.outbox.deadPayloadAfterDays') end,
             function() return exactObject(config.features, '$.features', { 'durableEvents', 'sagas', 'stateReplication' }) end,
             function() return boolean(config.features.durableEvents, '$.features.durableEvents') end,
             function() return boolean(config.features.sagas, '$.features.sagas') end,
@@ -168,8 +185,10 @@ factories.configuration = function(deps)
         if config.rpc.timeoutMs > config.rpc.maximumTimeoutMs then
             return invalid('$.rpc.timeoutMs', 'Default RPC timeout cannot exceed the maximum timeout.')
         end
-        if config.connections.clusterHeartbeatMs >= config.connections.clusterSessionLeaseSeconds * 1000 then
-            return invalid('$.connections.clusterHeartbeatMs', 'Cluster heartbeat must be shorter than the session lease.')
+        if config.connections.clusterHeartbeatMs * 3
+            > config.connections.clusterSessionLeaseSeconds * 1000 then
+            return invalid('$.connections.clusterHeartbeatMs',
+                'Cluster heartbeat must not exceed one third of the session lease.')
         end
         if config.connections.queueUpdateMs > config.connections.queueTimeoutMs then
             return invalid('$.connections.queueUpdateMs', 'Queue update interval cannot exceed the queue timeout.')

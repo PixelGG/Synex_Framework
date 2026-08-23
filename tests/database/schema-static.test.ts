@@ -70,6 +70,56 @@ test('migrations are deterministic, forward ordered, and split exactly as the co
     const tables = createdTables(migration.contents);
     const createStatements = migration.statements.filter((statement) => statement.startsWith('CREATE TABLE IF NOT EXISTS'));
     assert.equal(createStatements.length, tables.length, `${migration.relativePath} requires one split statement per table`);
+    if (migration.file === '022_idempotency_capacity.sql') {
+      assert.equal(migration.statements.length, 7);
+      assert.ok(migration.statements.slice(0, 3).every(
+        (statement) => statement.startsWith('CREATE TABLE IF NOT EXISTS'),
+      ));
+      assert.match(migration.statements[3] ?? '', /^DROP PROCEDURE IF EXISTS/u);
+      assert.match(migration.statements[4] ?? '', /^CREATE PROCEDURE/u);
+      assert.match(migration.statements[5] ?? '', /^CALL /u);
+      assert.match(migration.statements[6] ?? '', /^DROP PROCEDURE IF EXISTS/u);
+      continue;
+    }
+    if (migration.file === '024_session_control_capacity.sql') {
+      assert.equal(migration.statements.length, 6);
+      assert.ok(migration.statements.slice(0, 2).every(
+        (statement) => statement.startsWith('CREATE TABLE IF NOT EXISTS'),
+      ));
+      assert.match(migration.statements[2] ?? '', /^DROP PROCEDURE IF EXISTS/u);
+      assert.match(migration.statements[3] ?? '', /^CREATE PROCEDURE/u);
+      assert.match(migration.statements[4] ?? '', /^CALL /u);
+      assert.match(migration.statements[5] ?? '', /^DROP PROCEDURE IF EXISTS/u);
+      continue;
+    }
+    if (migration.file === '025_cluster_lease_capacity.sql') {
+      assert.equal(migration.statements.length, 6);
+      assert.ok(migration.statements.slice(0, 2).every(
+        (statement) => statement.startsWith('CREATE TABLE IF NOT EXISTS'),
+      ));
+      assert.match(migration.statements[2] ?? '', /^DROP PROCEDURE IF EXISTS/u);
+      assert.match(migration.statements[3] ?? '', /^CREATE PROCEDURE/u);
+      assert.match(migration.statements[4] ?? '', /^CALL /u);
+      assert.match(migration.statements[5] ?? '', /^DROP PROCEDURE IF EXISTS/u);
+      continue;
+    }
+    if (new Set([
+      '014_runtime_owner_attribution.sql',
+      '015_character_reconciliation_fencing.sql',
+      '017_runtime_scalability.sql',
+      '018_character_slot_reuse.sql',
+      '019_session_control_target_authority.sql',
+      '020_terminal_lease_eligibility.sql',
+      '021_worker_queue_scalability.sql',
+      '023_lease_authority_recovery.sql',
+    ]).has(migration.file)) {
+      assert.equal(migration.statements.length, 4);
+      assert.match(migration.statements[0] ?? '', /^DROP PROCEDURE IF EXISTS/u);
+      assert.match(migration.statements[1] ?? '', /^CREATE PROCEDURE/u);
+      assert.match(migration.statements[2] ?? '', /^CALL /u);
+      assert.match(migration.statements[3] ?? '', /^DROP PROCEDURE IF EXISTS/u);
+      continue;
+    }
     for (const statement of migration.statements) {
       assert.match(statement, /^(?:CREATE TABLE IF NOT EXISTS `[a-z0-9_]+`|INSERT INTO `[a-z0-9_]+`)/u, migration.relativePath);
       if (statement.startsWith('CREATE TABLE IF NOT EXISTS')) assert.match(statement, /ENGINE=InnoDB/u, migration.relativePath);
@@ -418,6 +468,159 @@ test('core identity schema accepts the runtime initial source generation', async
   assert.doesNotMatch(identity, /CHECK\s*\(`source_generation`\s*>\s*0\)/u);
 });
 
+test('character deletion reconciliation migration adds bounded due-ordering and fencing state idempotently', async () => {
+  const migration = await readFile(
+    path.join(
+      repositoryRoot,
+      'core',
+      'synex_core',
+      'migrations',
+      '015_character_reconciliation_fencing.sql',
+    ),
+    'utf8',
+  );
+  for (const column of [
+    'attempt_count',
+    'last_attempt_at',
+    'next_attempt_at',
+    'lease_fencing_token',
+  ]) {
+    assert.match(migration, new RegExp(`\\x60COLUMN_NAME\\x60\\s*=\\s*'${column}'`, 'u'));
+  }
+  assert.match(migration, /`next_attempt_at` DATETIME\(6\) NOT NULL DEFAULT CURRENT_TIMESTAMP\(6\)/u);
+  assert.match(migration, /`lease_fencing_token` BIGINT UNSIGNED NULL/u);
+  assert.match(
+    migration,
+    /ADD KEY `idx_character_deletion_plans_due`\s*\(`state`, `next_attempt_at`, `created_at`, `id`\)/u,
+  );
+  assert.equal((migration.match(/DROP PROCEDURE IF EXISTS/gu) ?? []).length, 2);
+  assert.equal((migration.match(/CREATE PROCEDURE/gu) ?? []).length, 1);
+  assert.equal((migration.match(/CALL `synex_migrate_015_character_reconciliation_fencing`\(\)/gu) ?? []).length, 1);
+});
+
+test('runtime scalability migration adds indexed boot, lease, and audit work queues idempotently', async () => {
+  const migration = await readFile(
+    path.join(repositoryRoot, 'core', 'synex_core', 'migrations', '017_runtime_scalability.sql'),
+    'utf8',
+  );
+  assert.match(
+    migration,
+    /ADD KEY `idx_sessions_instance_generation`\s*\(`server_instance_id`, `source_generation`\)/u,
+  );
+  assert.match(
+    migration,
+    /ADD KEY `idx_sessions_instance_open`\s*\(`server_instance_id`, `closed_at`, `id`\)/u,
+  );
+  assert.match(
+    migration,
+    /ADD KEY `idx_session_control_requester_pending`\s*\(`requested_by_instance_id`, `state`, `created_at`, `request_id`\)/u,
+  );
+  assert.match(
+    migration,
+    /ADD KEY `idx_cluster_leases_owner_expiry`\s*\(`owner_id`, `expires_at`, `lease_name`\)/u,
+  );
+  assert.match(migration, /`lease_domain_kind` VARCHAR\(20\)[\s\S]*?GENERATED ALWAYS AS/u);
+  assert.match(
+    migration,
+    /ADD KEY `idx_cluster_leases_domain_expiry`\s*\(`lease_domain_kind`, `expires_at`, `lease_name`\)/u,
+  );
+  assert.match(migration, /ADD COLUMN `archive_recorded_at` DATETIME\(6\) NULL/u);
+  assert.match(
+    migration,
+    /ADD KEY `idx_audit_log_archive_queue`\s*\(`archive_recorded_at`, `occurred_at`, `id`\)/u,
+  );
+  assert.equal((migration.match(/DROP PROCEDURE IF EXISTS/gu) ?? []).length, 2);
+  assert.equal((migration.match(/CREATE PROCEDURE/gu) ?? []).length, 1);
+  assert.equal((migration.match(/CALL `synex_migrate_017_runtime_scalability`\(\)/gu) ?? []).length, 1);
+});
+
+test('character slot reuse keeps uniqueness only for active characters', async () => {
+  const migration = await readFile(
+    path.join(repositoryRoot, 'core', 'synex_core', 'migrations', '018_character_slot_reuse.sql'),
+    'utf8',
+  );
+  assert.match(
+    migration,
+    /ADD COLUMN `active_slot_marker` TINYINT UNSIGNED\s+GENERATED ALWAYS AS\s*\(\s*CASE WHEN `deleted_at` IS NULL THEN 1 ELSE NULL END\s*\) STORED/u,
+  );
+  assert.match(migration, /`DATA_TYPE`\) = 'tinyint'/u);
+  assert.match(migration, /LOCATE\('unsigned', LOWER\(`COLUMN_TYPE`\)\) > 0/u);
+  assert.match(migration, /`IS_NULLABLE` = 'YES'/u);
+  assert.match(migration, /UPPER\(`EXTRA`\) LIKE '%STORED GENERATED%'/u);
+  assert.match(migration, /`GENERATION_EXPRESSION`[\s\S]*?'casewhendeleted_atisnullthen1elsenullend'/u);
+  assert.match(
+    migration,
+    /MESSAGE_TEXT = 'synex migration 018 active slot marker definition verification failed'/u,
+  );
+  assert.match(
+    migration,
+    /ADD UNIQUE KEY `uq_characters_user_slot_active`\s*\(`user_id`, `slot`, `active_slot_marker`\)/u,
+  );
+  assert.match(migration, /DROP INDEX `uq_characters_user_slot`/u);
+  assert.ok(
+    migration.indexOf('ADD UNIQUE KEY `uq_characters_user_slot_active`')
+      < migration.indexOf('DROP INDEX `uq_characters_user_slot`'),
+    'the replacement unique key must exist before the legacy key is removed',
+  );
+  assert.ok(
+    migration.indexOf('active slot marker definition verification failed')
+      < migration.indexOf('ADD UNIQUE KEY `uq_characters_user_slot_active`'),
+    'the generated marker definition must be verified before the replacement key is created',
+  );
+  assert.ok(
+    migration.indexOf('active character slot uniqueness verification failed')
+      < migration.indexOf('DROP INDEX `uq_characters_user_slot`'),
+    'the exact replacement key must be verified before the legacy key is removed',
+  );
+  assert.equal((migration.match(/DROP PROCEDURE IF EXISTS/gu) ?? []).length, 2);
+  assert.equal((migration.match(/CREATE PROCEDURE/gu) ?? []).length, 1);
+  assert.equal((migration.match(/CALL `synex_migrate_018_character_slot_reuse`\(\)/gu) ?? []).length, 1);
+});
+
+test('session control target authority is backfilled and exposes bounded target and cursor indexes', async () => {
+  const migration = await readFile(
+    path.join(
+      repositoryRoot,
+      'core',
+      'synex_core',
+      'migrations',
+      '019_session_control_target_authority.sql',
+    ),
+    'utf8',
+  );
+  assert.match(
+    migration,
+    /ADD COLUMN `target_instance_id` CHAR\(36\)[\s\S]*?CHARACTER SET ascii COLLATE ascii_bin NULL/u,
+  );
+  assert.match(
+    migration,
+    /UPDATE `synex_session_control_requests` AS `request`[\s\S]*?INNER JOIN `synex_sessions` AS `session`[\s\S]*?SET `request`.`target_instance_id` = `session`.`server_instance_id`/u,
+  );
+  assert.match(migration, /WHERE `target_instance_id` IS NULL[\s\S]*?SIGNAL SQLSTATE '45000'/u);
+  assert.match(
+    migration,
+    /MODIFY COLUMN `target_instance_id` CHAR\(36\)[\s\S]*?CHARACTER SET ascii COLLATE ascii_bin NOT NULL/u,
+  );
+  assert.match(
+    migration,
+    /ADD KEY `idx_session_control_target_pending`\s*\(`target_instance_id`, `state`, `expires_at`, `created_at`, `request_id`\)/u,
+  );
+  assert.match(
+    migration,
+    /ADD KEY `idx_session_control_state_scan`\s*\(`state`, `request_id`\)/u,
+  );
+  assert.ok(
+    migration.indexOf('could not backfill target instance authority')
+      < migration.indexOf('MODIFY COLUMN `target_instance_id`'),
+    'the backfill must be complete before target authority becomes mandatory',
+  );
+  assert.equal((migration.match(/DROP PROCEDURE IF EXISTS/gu) ?? []).length, 2);
+  assert.equal((migration.match(/CREATE PROCEDURE/gu) ?? []).length, 1);
+  assert.equal((migration.match(
+    /CALL `synex_migrate_019_session_control_target_authority`\(\)/gu,
+  ) ?? []).length, 1);
+});
+
 test('core cluster and RBAC migrations are manifest-owned and encode bounded authority', async () => {
   const coreDirectory = path.join(repositoryRoot, 'core', 'synex_core');
   const manifest = JSON.parse(await readFile(path.join(coreDirectory, 'synex.resource.json'), 'utf8')) as ResourceManifest;
@@ -467,4 +670,19 @@ test('core cluster and RBAC migrations are manifest-owned and encode bounded aut
   ]) assert.match(rbac, new RegExp('CREATE TABLE IF NOT EXISTS `' + table + '`', 'u'));
   assert.match(rbac, /CHECK \(`effect` IN \('allow', 'deny'\)\)/u);
   assert.match(rbac, /ON DELETE RESTRICT/u);
+
+  const policyRevision = await readFile(
+    path.join(coreDirectory, 'migrations', '016_rbac_policy_revision.sql'),
+    'utf8',
+  );
+  assert.match(policyRevision, /CREATE TABLE IF NOT EXISTS `synex_rbac_policy_revisions`/u);
+  assert.match(policyRevision, /PRIMARY KEY \(`singleton_id`\)/u);
+  assert.match(policyRevision, /CHECK \(`singleton_id` = 1\)/u);
+  assert.match(policyRevision, /CHECK \(`revision` > 0\)/u);
+  assert.match(policyRevision, /VALUES \(1, 1\)/u);
+  assert.match(
+    policyRevision,
+    /ON DUPLICATE KEY UPDATE `singleton_id` = VALUES\(`singleton_id`\)/u,
+  );
+  assert.doesNotMatch(policyRevision, /UPDATE `synex_rbac_policy_revisions` SET `revision` = 1/u);
 });

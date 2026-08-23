@@ -55,6 +55,19 @@ factories.resourceManifest = function(deps)
             and name:match('[%._%-][%._%-]') == nil
     end
 
+    local function validEventPattern(value)
+        if type(value) ~= 'string' or #value < 3 or #value > 128
+            or value:find('[%z\1-\31\127]') then return false end
+        local base = value
+        if value:sub(-2) == '.*' then base = value:sub(1, -3) end
+        if base:find('*', 1, true) or base:sub(-1) == '.' or base:find('..', 1, true)
+            or not base:match('^[a-z][a-z0-9_]*%.[a-z][a-z0-9_.]*$') then return false end
+        for segment in base:gmatch('[^.]+') do
+            if not segment:match('^[a-z][a-z0-9_]*$') then return false end
+        end
+        return true
+    end
+
     local function validateArray(value, path, validator, identity, maximum)
         if type(value) ~= 'table' then return invalid(path, 'Value must be an array.') end
         local count = 0
@@ -111,7 +124,7 @@ factories.resourceManifest = function(deps)
     function validator:validate(resourceName, manifest)
         local ok, err = exactObject(manifest, '$', {
             'schema', 'name', 'version', 'synex', 'critical', 'capabilities', 'services',
-            'contracts', 'dependencies', 'migrations', 'dataOwnership', 'stateSnapshot'
+            'contracts', 'events', 'hooks', 'dependencies', 'migrations', 'dataOwnership', 'stateSnapshot'
         }, { '$schema' })
         if not ok then return nil, err end
         if manifest['$schema'] ~= nil and (type(manifest['$schema']) ~= 'string' or #manifest['$schema'] > 256) then
@@ -146,6 +159,38 @@ factories.resourceManifest = function(deps)
         for _, key in ipairs({ 'provide', 'consume' }) do
             ok, err = validateArray(manifest.contracts[key], '$.contracts.' .. key, validCapability)
             if not ok then return nil, err end
+        end
+
+        ok, err = exactObject(manifest.events, '$.events', { 'publish', 'subscribe' })
+        if not ok then return nil, err end
+        for _, key in ipairs({ 'publish', 'subscribe' }) do
+            ok, err = validateArray(manifest.events[key], '$.events.' .. key, validEventPattern, nil, 256)
+            if not ok then return nil, err end
+        end
+        if resourceName ~= 'synex_core' then
+            local ownedPrefix = 'synex.' .. resourceName:sub(7) .. '.'
+            for index, pattern in ipairs(manifest.events.publish) do
+                if pattern:sub(1, #ownedPrefix) ~= ownedPrefix then
+                    return invalid(('$.events.publish[%d]'):format(index),
+                        'Published event topics must stay within the resource-owned namespace.')
+                end
+            end
+        end
+
+        ok, err = exactObject(manifest.hooks, '$.hooks', { 'register', 'run' })
+        if not ok then return nil, err end
+        for _, key in ipairs({ 'register', 'run' }) do
+            ok, err = validateArray(manifest.hooks[key], '$.hooks.' .. key, validEventPattern, nil, 256)
+            if not ok then return nil, err end
+        end
+        if resourceName ~= 'synex_core' then
+            local ownedPrefix = 'synex.' .. resourceName:sub(7) .. '.'
+            for index, pattern in ipairs(manifest.hooks.run) do
+                if pattern:sub(1, #ownedPrefix) ~= ownedPrefix then
+                    return invalid(('$.hooks.run[%d]'):format(index),
+                        'Executed hooks must stay within the resource-owned namespace.')
+                end
+            end
         end
 
         ok, err = exactObject(manifest.dependencies, '$.dependencies', { 'required', 'optional', 'development' })

@@ -62,7 +62,11 @@ factories.bootstrap = function(deps)
         foundation = foundation,
         platform = platform,
         database = persistence.database,
-        instanceId = defaultConfig.instanceId
+        instanceId = defaultConfig.instanceId,
+        maintenanceBatchMaximum = defaultConfig.retention.batchSize,
+        sessionControlRetentionDays = defaultConfig.retention.sessionControlAfterDays,
+        maximumLocalSessions = defaultConfig.connections.maximumActiveSessions
+            + defaultConfig.connections.maximumConcurrentConnections
     })
     persistence.instances = runtimePersistence.instances
     persistence.rbac = runtimePersistence.rbac
@@ -98,6 +102,17 @@ factories.bootstrap = function(deps)
         config = defaultConfig.rpc,
         coreResource = coreResource
     })
+    local stateService = factories.state({
+        platform = platform,
+        foundation = foundation,
+        contracts = contractSystem,
+        owners = registries.owners,
+        players = registries.players,
+        security = security,
+        coreResource = coreResource,
+        replicate = deps.replicateState,
+        replicationEnabled = defaultConfig.features.stateReplication
+    })
     local identity = factories.identity({
         platform = platform,
         foundation = foundation,
@@ -106,6 +121,7 @@ factories.bootstrap = function(deps)
         owners = registries.owners,
         lifecycle = lifecycle,
         messaging = messaging,
+        stateService = stateService,
         config = defaultConfig.connections,
         instanceId = defaultConfig.instanceId,
         coreResource = coreResource,
@@ -114,22 +130,13 @@ factories.bootstrap = function(deps)
         rateLimiter = security.rateLimiter,
         sha256 = persistence.sha256
     })
-    local stateService = factories.state({
-        platform = platform,
-        foundation = foundation,
-        contracts = contractSystem,
-        owners = registries.owners,
-        security = security,
-        coreResource = coreResource,
-        replicate = deps.replicateState,
-        replicationEnabled = defaultConfig.features.stateReplication
-    })
     local reliability = factories.reliability({
         platform = platform,
         foundation = foundation,
         database = persistence.database,
         sha256 = persistence.sha256,
         instanceId = defaultConfig.instanceId,
+        diagnosticBatchMaximum = defaultConfig.retention.batchSize,
         features = defaultConfig.features
     })
     local retention = factories.retention({
@@ -218,6 +225,7 @@ factories.bootstrap = function(deps)
         lifecycle = lifecycle,
         ownerDrainTimeoutMs = ownerDrainTimeoutMs,
         ownerDrainPollMs = ownerDrainPollMs,
+        ownerSnapshotMaximumBytes = ownerSnapshotMaximumBytes,
         facadeCache = facadeCache,
         defaultConfig = defaultConfig,
         persistence = persistence,
@@ -226,22 +234,16 @@ factories.bootstrap = function(deps)
         sagaRuntime = sagaRuntime,
         retention = retention,
         security = security,
+        stateService = stateService,
         runtimeGate = runtimeGate
     })
 
-    runtime.foundation = foundation
-    runtime.persistence = persistence
-    runtime.registries = registries
-    runtime.lifecycle = lifecycle
-    runtime.contracts = contractSystem
-    runtime.security = security
-    runtime.messaging = messaging
-    runtime.identity = identity
-    runtime.state = stateService
-    runtime.reliability = reliability
-    runtime.sagas = sagaRuntime
-    runtime.retention = retention
+    runtime.foundation, runtime.persistence = foundation, persistence
+    runtime.registries, runtime.lifecycle = registries, lifecycle
+    runtime.contracts, runtime.security = contractSystem, security
+    runtime.messaging, runtime.identity = messaging, identity
+    runtime.state, runtime.reliability = stateService, reliability
+    runtime.sagas, runtime.retention = sagaRuntime, retention
     runtime.config = defaultConfig
-
     return runtime
 end

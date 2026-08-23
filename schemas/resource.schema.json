@@ -13,6 +13,8 @@
     "capabilities",
     "services",
     "contracts",
+    "events",
+    "hooks",
     "dependencies",
     "migrations",
     "dataOwnership",
@@ -58,6 +60,24 @@
       "properties": {
         "provide": { "$ref": "#/$defs/nameList" },
         "consume": { "$ref": "#/$defs/nameList" }
+      }
+    },
+    "events": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["publish", "subscribe"],
+      "properties": {
+        "publish": { "$ref": "#/$defs/eventPatternList" },
+        "subscribe": { "$ref": "#/$defs/eventPatternList" }
+      }
+    },
+    "hooks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["register", "run"],
+      "properties": {
+        "register": { "$ref": "#/$defs/eventPatternList" },
+        "run": { "$ref": "#/$defs/eventPatternList" }
       }
     },
     "dependencies": {
@@ -141,8 +161,20 @@
     },
     "nameList": {
       "type": "array",
+      "maxItems": 512,
       "uniqueItems": true,
       "items": { "$ref": "#/$defs/capability" }
+    },
+    "eventPattern": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(?:\\.[a-z][a-z0-9_]*)+(?:\\.\\*)?$",
+      "maxLength": 128
+    },
+    "eventPatternList": {
+      "type": "array",
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/eventPattern" }
     },
     "serviceList": {
       "type": "array",

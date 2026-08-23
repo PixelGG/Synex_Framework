@@ -37,6 +37,14 @@
     ],
     "consume": []
   },
+  "events": {
+    "publish": ["synex.accounts.*"],
+    "subscribe": []
+  },
+  "hooks": {
+    "register": [],
+    "run": []
+  },
   "dependencies": {
     "required": [
       {

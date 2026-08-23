@@ -17,6 +17,12 @@ factories.identityConnectionJoin = function(deps)
     local logConnectionStage = assert(deps.logConnectionStage, 'connection join requires stage telemetry')
     local releaseAdmission = assert(deps.releaseAdmission, 'connection join requires admission release')
     local releaseConnectionLease = assert(deps.releaseConnectionLease, 'connection join requires lease release')
+    local refreshLeaseDeadline = assert(deps.refreshLeaseDeadline,
+        'connection join requires local lease deadlines')
+    local clearLeaseDeadline = assert(deps.clearLeaseDeadline,
+        'connection join requires local lease deadline cleanup')
+    local closeOrDeferSession = assert(deps.closeOrDeferSession,
+        'connection join requires durable close reconciliation')
     local clearQueueEntry = assert(deps.clearQueueEntry, 'connection join requires queue cleanup')
     local logger = foundation.logger
 
@@ -139,10 +145,30 @@ factories.identityConnectionJoin = function(deps)
         local function continuationIsCurrent()
             return admissionIsCurrent() and sourceAuthorityIsCurrent()
         end
+        local function sameLease(left, right)
+            return type(left) == 'table' and type(right) == 'table'
+                and (left.name or left.leaseName) == (right.name or right.leaseName)
+                and left.owner == right.owner
+                and left.fencingToken == right.fencingToken
+        end
+        local function publishPendingDeadlines()
+            return players:updatePending(oldSource, function(candidate)
+                if candidate.id ~= pending.id or candidate.sessionId ~= pending.sessionId
+                    or candidate.userId ~= pending.userId
+                    or not sameLease(candidate.admissionGateLease, pending.admissionGateLease)
+                    or not sameLease(candidate.clusterLease, pending.clusterLease) then
+                    error('pending lease authority changed during renewal')
+                end
+                candidate.admissionGateDeadlineAt = pending.admissionGateDeadlineAt
+                candidate.clusterLeaseDeadlineAt = pending.clusterLeaseDeadlineAt
+                candidate.authorityDeadlineAt = pending.authorityDeadlineAt
+            end)
+        end
         local function releaseOwnedLease(candidate)
             if leaseReleased then return end
-            local authority = candidate and candidate.clusterLease and candidate or pending
-            if not authority or not authority.clusterLease then return end
+            local authority = candidate and (candidate.clusterLease or candidate.admissionGateLease)
+                and candidate or pending
+            if not authority or (not authority.clusterLease and not authority.admissionGateLease) then return end
             leaseReleased = true
             foundation.safeCall(releaseConnectionLease, authority)
         end
@@ -167,15 +193,33 @@ factories.identityConnectionJoin = function(deps)
             if not authority and boundSession and boundSession.id == pending.sessionId
                 and boundSession.userId == pending.userId then authority = boundSession end
             if closePersistence and authority then
-                local closed, closeResult, closeError = foundation.safeCall(
-                    sessionRepository.close, sessionRepository, authority, 'join pipeline failed')
-                if not closed or not closeResult then
-                    local failure = closed and closeError or nil
-                    foundation.safeCall(logger.error, logger, 'join persistence compensation failed', {
-                        correlationId = pending.id,
-                        code = type(failure) == 'table' and failure.code or 'SESSION_CLOSE_FAILED'
+                local coordinated, closeReport, closeError = foundation.safeCall(
+                    closeOrDeferSession, authority, 'join pipeline failed', {
+                        attempts = 2, recordReconnectGrace = false,
+                        detachSource = true, source = finalSource,
+                        sourceGeneration = authority.sourceGeneration
                     })
+                if coordinated and closeReport then
+                    if closeReport.deferred then
+                        foundation.safeCall(logger.error, logger,
+                            'join persistence compensation deferred', {
+                                correlationId = pending.id,
+                                code = foundation.failureCode(
+                                    closeReport.failure, 'SESSION_CLOSE_FAILED')
+                            })
+                    else
+                        leaseReleased = true
+                    end
+                    releaseAdmission(pending)
+                    return
                 end
+                foundation.safeCall(logger.error, logger, 'join persistence compensation failed', {
+                    correlationId = pending.id,
+                    code = foundation.failureCode(
+                        coordinated and closeError or closeReport, 'SESSION_CLOSE_FAILED')
+                })
+                releaseAdmission(pending)
+                return
             end
             if current then
                 foundation.safeCall(players.removeSession, players, current.id)
@@ -256,6 +300,10 @@ factories.identityConnectionJoin = function(deps)
                 id = pending.sessionId, userId = pending.userId, state = 'AUTHENTICATED',
                 source = finalSource, sourceGeneration = 0, characterId = nil, version = 1,
                 connectedAt = foundation.utcIso(), clusterLease = pending.clusterLease,
+                admissionGateLease = pending.admissionGateLease,
+                admissionGateDeadlineAt = pending.admissionGateDeadlineAt,
+                clusterLeaseDeadlineAt = pending.clusterLeaseDeadlineAt,
+                authorityDeadlineAt = pending.authorityDeadlineAt,
                 persistencePending = true
             }
             local transitioned = transition(session, 'SELECTING_CHARACTER')
@@ -272,13 +320,37 @@ factories.identityConnectionJoin = function(deps)
                 return nil, rejectJoin(pending, 'JOIN_SOURCE_CHANGED',
                     'The player source changed while the session was opening.', false)
             end
-            local leaseInvoked, leaseRenewed = foundation.safeCall(leases.renew, leases, pending.clusterLease)
-            if not leaseInvoked or not leaseRenewed then
+            local authorityRenewed = true
+            for _, field in ipairs({ 'admissionGateLease', 'clusterLease' }) do
+                local lease = pending[field]
+                if type(lease) ~= 'table' then authorityRenewed = false break end
+                local attemptStartedAt = foundation.monotonicMs()
+                local oldDeadline = pending.authorityDeadlineAt
+                if type(oldDeadline) ~= 'number' or oldDeadline <= attemptStartedAt then
+                    authorityRenewed = false
+                    break
+                end
+                local leaseInvoked, leaseRenewed = foundation.safeCall(leases.renew, leases, lease)
+                local currentPending = players:getPending(oldSource)
+                if not leaseInvoked or not leaseRenewed or not currentPending
+                    or currentPending.id ~= pending.id
+                    or not sameLease(currentPending[field], lease)
+                    or not refreshLeaseDeadline(pending, field, attemptStartedAt) then
+                    authorityRenewed = false
+                    break
+                end
+                local published = publishPendingDeadlines()
+                if not published then authorityRenewed = false break end
+            end
+            if not authorityRenewed then
                 local rejection = rejectJoin(pending, 'JOIN_LEASE_LOST',
-                    'Session authority expired before the join completed. Please reconnect.')
+                    'Admission or session authority expired before the join completed. Please reconnect.')
                 cleanupOwnedSession(false)
                 return nil, rejection
             end
+            session.admissionGateDeadlineAt = pending.admissionGateDeadlineAt
+            session.clusterLeaseDeadlineAt = pending.clusterLeaseDeadlineAt
+            session.authorityDeadlineAt = pending.authorityDeadlineAt
             if not continuationIsCurrent() then
                 local admissionError = rejectClosedAdmission(false)
                 if admissionError then return nil, admissionError end
@@ -314,7 +386,9 @@ factories.identityConnectionJoin = function(deps)
                     'The player disconnected while the session was opening.')
             end
             if not persisted then
-                local leaseLost = type(persistenceError) == 'table' and persistenceError.code == 'LEASE_LOST'
+                local leaseLost = type(persistenceError) == 'table'
+                    and (persistenceError.code == 'LEASE_LOST'
+                        or persistenceError.code == 'ADMISSION_GATE_LOST')
                 local rejection = rejectJoin(pending, leaseLost and 'JOIN_LEASE_LOST'
                     or 'SESSION_PERSISTENCE_FAILED', leaseLost
                     and 'Session authority changed before persistence. Please reconnect.'
@@ -322,14 +396,82 @@ factories.identityConnectionJoin = function(deps)
                 cleanupOwnedSession(not leaseLost)
                 return nil, rejection
             end
+            pending.admissionGateLease = nil
+            clearLeaseDeadline(pending, 'admissionGateLease')
+            bound.admissionGateLease = nil
+            clearLeaseDeadline(bound, 'admissionGateLease')
+            local gateCleared, gateClearError = players:updateSession(bound.id, function(candidate)
+                if candidate.source ~= finalSource
+                    or candidate.sourceGeneration ~= bound.sourceGeneration
+                    or candidate.persistencePending ~= true
+                    or not sameLease(candidate.clusterLease, bound.clusterLease)
+                    or not sameLease(candidate.admissionGateLease, session.admissionGateLease) then
+                    error('join session authority changed before gate retirement publication')
+                end
+                candidate.admissionGateLease = nil
+                candidate.admissionGateDeadlineAt = nil
+                candidate.clusterLeaseDeadlineAt = bound.clusterLeaseDeadlineAt
+                candidate.authorityDeadlineAt = bound.authorityDeadlineAt
+            end)
+            if not gateCleared then
+                local rejection = rejectJoin(pending, 'SESSION_FINALIZATION_FAILED',
+                    'Admission authority retirement could not be published. Please reconnect.')
+                cleanupOwnedSession(true)
+                if gateClearError then
+                    foundation.safeCall(logger.error, logger,
+                        'join admission gate retirement publication failed', {
+                            correlationId = pending.id,
+                            code = gateClearError.code or 'SESSION_FINALIZATION_FAILED'
+                        })
+                end
+                return nil, rejection
+            end
+            bound = gateCleared
+            boundSession = bound
+            local finalAttemptStartedAt = foundation.monotonicMs()
+            if not players:isCurrent(bound.id, finalSource, bound.sourceGeneration) then
+                local rejection = rejectJoin(pending, 'JOIN_LEASE_LOST',
+                    'Session authority expired before finalization. Please reconnect.')
+                cleanupOwnedSession(true)
+                return nil, rejection
+            end
             local finalLeaseInvoked, finalLeaseRenewed = foundation.safeCall(
                 leases.renew, leases, pending.clusterLease)
-            if not finalLeaseInvoked or not finalLeaseRenewed then
+            if not finalLeaseInvoked or not finalLeaseRenewed
+                or not players:isCurrent(bound.id, finalSource, bound.sourceGeneration)
+                or not refreshLeaseDeadline(bound, 'clusterLease', finalAttemptStartedAt) then
                 local rejection = rejectJoin(pending, 'JOIN_LEASE_LOST',
                     'Session authority changed while the session was opening. Please reconnect.')
                 cleanupOwnedSession(true)
                 return nil, rejection
             end
+            local deadlinePublished, deadlinePublishError = players:updateSession(
+                bound.id, function(candidate)
+                    if candidate.source ~= finalSource
+                        or candidate.sourceGeneration ~= bound.sourceGeneration
+                        or candidate.persistencePending ~= true
+                        or not sameLease(candidate.clusterLease, bound.clusterLease)
+                        or candidate.admissionGateLease ~= nil then
+                        error('join session authority changed during final lease renewal')
+                    end
+                    candidate.clusterLeaseDeadlineAt = bound.clusterLeaseDeadlineAt
+                    candidate.authorityDeadlineAt = bound.authorityDeadlineAt
+                end)
+            if not deadlinePublished then
+                local rejection = rejectJoin(pending, 'JOIN_LEASE_LOST',
+                    'Session authority renewal could not be published. Please reconnect.')
+                cleanupOwnedSession(true)
+                if deadlinePublishError then
+                    foundation.safeCall(logger.error, logger,
+                        'join lease deadline publication failed', {
+                            correlationId = pending.id,
+                            code = deadlinePublishError.code or 'JOIN_LEASE_LOST'
+                        })
+                end
+                return nil, rejection
+            end
+            bound = deadlinePublished
+            boundSession = bound
             if not players:isCurrent(bound.id, finalSource, bound.sourceGeneration)
                 or not continuationIsCurrent() then
                 local admissionError = rejectClosedAdmission(true)
@@ -346,7 +488,13 @@ factories.identityConnectionJoin = function(deps)
                     or candidate.persistencePending ~= true then
                     error('join session authority changed before publication')
                 end
+                candidate.admissionGateLease = nil
+                candidate.admissionGateDeadlineAt = nil
+                candidate.clusterLeaseDeadlineAt = bound.clusterLeaseDeadlineAt
+                candidate.authorityDeadlineAt = bound.authorityDeadlineAt
                 candidate.persistencePending = nil
+                candidate.persistedSource = finalSource
+                candidate.persistedSourceGeneration = bound.sourceGeneration
             end)
             if not opened or not players:isCurrent(bound.id, finalSource, bound.sourceGeneration)
                 or not continuationIsCurrent() then

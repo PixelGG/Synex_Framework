@@ -37,6 +37,8 @@ function fixtureManifest(
     capabilities: { request: [] },
     services: { provide: [], require: [], optional: [] },
     contracts: { provide: [], consume: [] },
+    events: { publish: [], subscribe: [] },
+    hooks: { register: [], run: [] },
     dependencies: {
       required: required.map((dependency) => ({ name: dependency, version: ">=0.1.0" })),
       optional: [],

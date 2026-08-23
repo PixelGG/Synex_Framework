@@ -33,6 +33,7 @@ factories.platform = function(overrides)
         cancelEvent = overrides.cancelEvent or CancelEvent or fallback('CancelEvent'),
         wait = overrides.wait or Wait,
         setTimeout = overrides.setTimeout or SetTimeout,
+        createThread = overrides.createThread or (Citizen and Citizen.CreateThread or nil),
         nowGame = overrides.nowGame or GetGameTimer,
         jsonDecode = overrides.jsonDecode or function(value) return json.decode(value) end,
         jsonEncode = overrides.jsonEncode or function(value) return json.encode(value) end,

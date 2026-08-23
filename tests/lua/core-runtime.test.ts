@@ -181,6 +181,48 @@ test('owner purge revokes all tracked artifacts once', async () => {
   engine.global.close();
 });
 
+test('owner registries bound artifacts and concurrent operations with reusable capacity', async () => {
+  const engine = await createKernelEngine(['foundation', 'registries']);
+  const result = await engine.doString(`
+    local foundation = SynexCoreFactories.foundation({ platform = FakePlatform })
+    foundation.configureIds('owner-capacity')
+    local owners = SynexCoreFactories.registries({
+      foundation = foundation,
+      maximumArtifactsPerOwner = 2,
+      maximumArtifactsPerKind = 1,
+      maximumOperationsPerOwner = 1
+    }).owners
+    local epoch = owners:activate('synex_example')
+    assert(owners:track('synex_example', epoch, 'hook', 'a', function() end))
+    local duplicate, duplicateError = owners:track(
+      'synex_example', epoch, 'hook', 'a', function() end)
+    assert(duplicate == nil and duplicateError.code == 'DUPLICATE_OWNER_ARTIFACT')
+    local kindOverflow, kindError = owners:track(
+      'synex_example', epoch, 'hook', 'b', function() end)
+    assert(kindOverflow == nil and kindError.code == 'OWNER_ARTIFACT_LIMIT')
+    assert(owners:track('synex_example', epoch, 'service', 'b', function() end))
+    local totalOverflow, totalError = owners:track(
+      'synex_example', epoch, 'state', 'c', function() end)
+    assert(totalOverflow == nil and totalError.code == 'OWNER_ARTIFACT_LIMIT')
+    assert(owners:list()[1].artifacts == 2)
+    assert(owners:release('synex_example', 'hook', 'a'))
+    assert(owners:track('synex_example', epoch, 'state', 'c', function() end))
+
+    local operation = assert(owners:beginOperation('synex_example', epoch))
+    local operationOverflow, operationError = owners:beginOperation('synex_example', epoch)
+    assert(operationOverflow == nil and operationError.code == 'OWNER_OPERATION_LIMIT')
+    assert(owners:finishOperation('synex_example', epoch, operation))
+    assert(owners:beginOperation('synex_example', epoch))
+    local report = owners:purge('synex_example', epoch, 'fixture cleanup')
+    assert(report.cleaned == 2 and report.aborted == 1)
+    return table.concat({duplicateError.code, kindError.code, totalError.code,
+      operationError.code, report.cleaned, report.aborted}, ':')
+  `);
+  assert.equal(result,
+    'DUPLICATE_OWNER_ARTIFACT:OWNER_ARTIFACT_LIMIT:OWNER_ARTIFACT_LIMIT:OWNER_OPERATION_LIMIT:2:1');
+  engine.global.close();
+});
+
 test('contract validation rejects unknown properties and oversized strings', async () => {
   const engine = await createKernelEngine(['foundation', 'contracts']);
   const code = await engine.doString(`
@@ -260,7 +302,10 @@ test('semantic ranges and capability wildcards use boundary-aware matching', asy
     assert(foundation.semver('1.0.0-alpha.2'))
     assert(not foundation.semver('1.0.0-alpha..2'))
     assert(not foundation.semver('1.0.0-alpha.02'))
+    assert(not foundation.semver(string.rep('1', 129)))
     assert(not foundation.semverSatisfies('1.1.0-beta.1', '^1.0.0'))
+    assert(not foundation.semverSatisfies('1.0.0', 123))
+    assert(not foundation.semverSatisfies('1.0.0', string.rep('>', 257)))
     assert(foundation.semverCompare(
       foundation.semver('1.0.0-beta.10'), foundation.semver('1.0.0-beta.2')
     ) > 0)
@@ -397,9 +442,13 @@ test('service registry injects the real caller and keeps capability-less methods
         private = function() return { value = true } end
       }
     }))
-    local value = assert(messaging.services:call(
+    local spoofed, spoofedError = messaging.services:call(
       'synex_consumer', consumerEpoch, 'synex.fixture', '^1.0.0', 'read', {},
       { caller = 'synex_spoofed', callerEpoch = 999 }
+    )
+    assert(spoofed == nil and spoofedError.code == 'INVALID_SERVICE_CONTEXT')
+    local value = assert(messaging.services:call(
+      'synex_consumer', consumerEpoch, 'synex.fixture', '^1.0.0', 'read', {}, {}
     ))
     assert(value.caller == 'synex_consumer')
     local privateValue, privateError = messaging.services:call(
@@ -410,9 +459,9 @@ test('service registry injects the real caller and keeps capability-less methods
       'synex_attacker', attackerEpoch, 'synex.fixture', '^1.0.0', 'read', {}, {}
     )
     assert(deniedValue == nil and deniedError.code == 'CAPABILITY_UNDECLARED')
-    return value.caller
+    return value.caller .. ':' .. spoofedError.code
   `);
-  assert.equal(result, 'synex_consumer');
+  assert.equal(result, 'synex_consumer:INVALID_SERVICE_CONTEXT');
   engine.global.close();
 });
 
@@ -470,9 +519,9 @@ test('network RPC limiter state is fenced by source generation', async () => {
         version = '1.0.0', payload = {}
       })
       handlers[SynexProtocol.events.cancel]('request-new')
-      assert(consumed[1] == ('rpc:42:%s:synex.fixture.read'):format(old.sourceGeneration))
+      assert(consumed[1] == ('rpc:42:%s:ingress'):format(old.sourceGeneration))
       assert(consumed[2] == ('rpc-cancel:42:%s:'):format(old.sourceGeneration))
-      assert(consumed[3] == ('rpc:42:%s:synex.fixture.read'):format(replacement.sourceGeneration))
+      assert(consumed[3] == ('rpc:42:%s:ingress'):format(replacement.sourceGeneration))
       assert(consumed[4] == ('rpc-cancel:42:%s:'):format(replacement.sourceGeneration))
       assert(purged[1] == ('rpc:42:%s:'):format(old.sourceGeneration))
       assert(purged[2] == ('rpc-cancel:42:%s:'):format(old.sourceGeneration))
@@ -533,14 +582,14 @@ test('service provider health and circuit state drive dependency validation and 
         'synex_core', coreEpoch, 'synex.fixture', '^1.0.0', 'read', {}, {})
       assert(value == nil and callError.code == 'FIXTURE_FAILURE')
     end
-    local opened = lifecycle.dependencies:snapshot().providerHealth['synex.fixture'].synex_provider
+    local opened = lifecycle.dependencies:snapshot().providerHealth['synex.fixture'].synex_provider['1']
     assert(opened.health == 'HEALTHY' and opened.circuit == 'OPEN')
     assert(#lifecycle.dependencies:validate() == 1)
     now = now + 5001
     failProvider = false
     assert(messaging.services:call(
       'synex_core', coreEpoch, 'synex.fixture', '^1.0.0', 'read', {}, {}))
-    local recovered = lifecycle.dependencies:snapshot().providerHealth['synex.fixture'].synex_provider
+    local recovered = lifecycle.dependencies:snapshot().providerHealth['synex.fixture'].synex_provider['1']
     assert(recovered.health == 'HEALTHY' and recovered.circuit == 'CLOSED')
     assert(#lifecycle.dependencies:validate() == 0)
     assert(messaging.services:setHealth(
@@ -578,6 +627,18 @@ test('durable event delivery preserves outbox identity across subscriber retries
     local security = SynexCoreFactories.security({
       platform = FakePlatform, foundation = foundation, coreResource = 'synex_core',
       policy = { default = { allow = {}, deny = {} }, resources = {} }
+    })
+    security.capabilities:registerManifest('synex_core', {
+      capabilities = { request = {} },
+      events = { publish = {'synex.fixture.*'}, subscribe = {} }
+    })
+    security.capabilities:registerManifest('synex_consumer', {
+      capabilities = { request = {} },
+      events = { publish = {}, subscribe = {'synex.fixture.changed'} }
+    })
+    security.capabilities:registerManifest('synex_failing_consumer', {
+      capabilities = { request = {} },
+      events = { publish = {}, subscribe = {'synex.fixture.changed'} }
     })
     local contracts = SynexCoreFactories.contracts({ foundation = foundation, protocol = SynexProtocol })
     local messaging = SynexCoreFactories.messaging({
@@ -763,6 +824,18 @@ test('session lease acquisition is fenced by the current ready runtime instance'
     local foundation = SynexCoreFactories.foundation({ platform = FakePlatform })
     local calls, expectedOwner, currentBoot = {}, 'instance-a:session-a', 'boot-a'
     local contended, contendedReads = false, 0
+    local globalCount, globalLimit, otherCount, otherLimit = 0, 100, 0, 100
+    local leaseRows = {
+      ['session:user-a'] = {
+        owner_id = 'instance-a:session-a', fencing_token = 6,
+        valid = 1, lease_capacity_kind = 'session'
+      }
+    }
+    local function capacityKind(name)
+      if name:sub(1, 8) == 'session:' then return 'session' end
+      if name:sub(1, 10) == 'admission:' then return 'admission' end
+      return 'other'
+    end
     local function hasParameter(parameters, expected)
       for _, value in ipairs(parameters or {}) do if value == expected then return true end end
       return false
@@ -782,18 +855,58 @@ test('session lease acquisition is fenced by the current ready runtime instance'
       startTransaction = function(handler)
         return handler(function(sql, parameters)
           calls[#calls + 1] = { kind = 'transaction', sql = sql, parameters = parameters }
+          if sql:find('SELECT', 1, true) and sql:find('synex_cluster_leases', 1, true) then
+            if contended then
+              contendedReads = contendedReads + 1
+              return {{ owner_id = 'instance-b:session-b', fencing_token = 1,
+                valid = 1, lease_capacity_kind = capacityKind(parameters[1]) }}
+            end
+            local row = leaseRows[parameters[1]]
+            return row and {{ owner_id = row.owner_id, fencing_token = row.fencing_token,
+              valid = row.valid, lease_capacity_kind = row.lease_capacity_kind }} or {}
+          end
           if sql:find('synex_instances', 1, true) then return {{ status = 'ready' }} end
           if sql:find('synex_instance_boots', 1, true) then
             return hasParameter(parameters, currentBoot) and {{ boot_id = currentBoot }} or {}
           end
-          if sql:find('SELECT', 1, true) and sql:find('owner_id', 1, true) then
-            if contended then
-              contendedReads = contendedReads + 1
-              return {{ owner_id = 'instance-b:session-b', fencing_token = 1, valid = 1 }}
-            end
-            return {{ owner_id = expectedOwner, fencing_token = 7, valid = 1 }}
+          if sql:find('INSERT IGNORE INTO', 1, true)
+              and sql:find('synex_cluster_leases', 1, true) then
+            if leaseRows[parameters[1]] then return { affectedRows = 0 } end
+            leaseRows[parameters[1]] = {
+              owner_id = parameters[2], fencing_token = 1, valid = 1,
+              lease_capacity_kind = capacityKind(parameters[1])
+            }
+            return { affectedRows = 1 }
           end
-          return 1
+          if sql:find('UPDATE', 1, true) and sql:find('synex_cluster_leases', 1, true) then
+            if sql:find('terminal_compaction_at', 1, true) then
+              local row = leaseRows[parameters[5]]
+              if not row then return { affectedRows = 0 } end
+              row.owner_id, row.fencing_token, row.valid =
+                parameters[3], row.fencing_token + 1, 1
+              return { affectedRows = 1 }
+            end
+            return { affectedRows = 1 }
+          end
+          if sql:find('FROM', 1, true) and sql:find('synex_cluster_lease_capacity', 1, true) then
+            return {{ entry_count = globalCount, global_limit = globalLimit }}
+          end
+          if sql:find('FROM', 1, true)
+              and sql:find('synex_cluster_lease_kind_capacity', 1, true) then
+            return {{ lease_capacity_kind = parameters[1], entry_count = otherCount,
+              kind_limit = otherLimit }}
+          end
+          if sql:find('UPDATE', 1, true)
+              and sql:find('synex_cluster_lease_capacity', 1, true) then
+            globalCount = globalCount + 1
+            return { affectedRows = 1 }
+          end
+          if sql:find('UPDATE', 1, true)
+              and sql:find('synex_cluster_lease_kind_capacity', 1, true) then
+            otherCount = otherCount + 1
+            return { affectedRows = 1 }
+          end
+          error('unexpected lease fixture SQL')
         end)
       end
     }
@@ -807,18 +920,19 @@ test('session lease acquisition is fenced by the current ready runtime instance'
     local lease = assert(leases:acquire(
       'session:user-a', 'instance-a:session-a', 45, 'instance-a', 'boot-a'))
     assert(lease.fencingToken == 7 and lease.requesterInstanceId == 'instance-a'
-      and lease.requesterBootId == 'boot-a' and #calls == 4)
+      and lease.requesterBootId == 'boot-a' and #calls == 5)
     assert(calls[1].sql:find('synex_instances', 1, true)
       and calls[1].sql:find("ready", 1, true) and calls[1].sql:find('FOR UPDATE', 1, true))
     assert(calls[2].sql:find('synex_instance_boots', 1, true)
       and calls[2].sql:find('FOR UPDATE', 1, true))
-    assert(calls[3].sql:find('INSERT INTO', 1, true)
-      and calls[3].sql:find('ON DUPLICATE KEY UPDATE', 1, true)
-      and calls[3].sql:find('fencing_token', 1, true)
-      and not calls[3].sql:find('INSERT IGNORE', 1, true))
-    assert(calls[4].sql:find('SELECT', 1, true)
-      and calls[4].sql:find('synex_cluster_leases', 1, true)
-      and calls[4].sql:find('FOR UPDATE', 1, true))
+    assert(calls[3].sql:find('SELECT', 1, true)
+      and calls[3].sql:find('synex_cluster_leases', 1, true)
+      and calls[3].sql:find('FOR UPDATE', 1, true))
+    assert(calls[4].sql:find('UPDATE', 1, true)
+      and calls[4].sql:find('fencing_token', 1, true)
+      and calls[4].sql:find('terminal_compaction_at', 1, true))
+    assert(calls[5].sql:find('SELECT', 1, true)
+      and calls[5].sql:find('FOR UPDATE', 1, true))
 
     local beforeInvalid = #calls
     local invalid, invalidError = leases:acquire(
@@ -842,12 +956,12 @@ test('session lease acquisition is fenced by the current ready runtime instance'
 
     currentBoot = 'boot-b'
     local renewed, renewError = leases:renew(lease)
-    assert(renewed == nil and renewError.code == 'LEASE_LOST' and #calls == 6)
-    assert(calls[6].sql:find('synex_instance_boots', 1, true)
-      and calls[6].parameters[1] == 'instance-a' and calls[6].parameters[2] == 'boot-a')
+    assert(renewed == nil and renewError.code == 'LEASE_LOST' and #calls == 7)
+    assert(calls[7].sql:find('synex_instance_boots', 1, true)
+      and calls[7].parameters[1] == 'instance-a' and calls[7].parameters[2] == 'boot-a')
     local stale, staleError = leases:acquire(
       'session:user-a', 'instance-a:session-a', 45, 'instance-a', 'boot-a')
-    assert(stale == nil and staleError.code == 'LEASE_BUSY' and #calls == 8)
+    assert(stale == nil and staleError.code == 'LEASE_BUSY' and #calls == 9)
 
     currentBoot = 'boot-a'
     contended = true
@@ -855,16 +969,18 @@ test('session lease acquisition is fenced by the current ready runtime instance'
     local collided, collisionError = leases:acquire(
       'session:user-b', 'instance-a:session-b', 45, 'instance-a', 'boot-a')
     assert(collided == nil and collisionError.code == 'LEASE_BUSY'
-      and collisionError.retryable == true and #calls == beforeContention + 4)
-    assert(calls[beforeContention + 3].sql:find('ON DUPLICATE KEY UPDATE', 1, true)
-      and calls[beforeContention + 4].sql:find('FOR UPDATE', 1, true))
+      and collisionError.retryable == true and #calls == beforeContention + 3)
+    assert(calls[beforeContention + 3].sql:find('SELECT', 1, true)
+      and calls[beforeContention + 3].sql:find('FOR UPDATE', 1, true))
     contended = false
 
     expectedOwner = 'instance-a:saga-a'
     local beforeGeneric = #calls
-    local generic = assert(leases:acquire('saga:test', expectedOwner, 45))
-    assert(generic.owner == expectedOwner and #calls == beforeGeneric + 3)
-    for index = beforeGeneric + 1, beforeGeneric + 3 do
+    local generic = assert(leases:acquire('generic:test', expectedOwner, 45))
+    assert(generic.owner == expectedOwner and #calls == beforeGeneric + 7
+      and globalCount == 1 and otherCount == 1)
+    assert(calls[beforeGeneric + 2].sql:find('INSERT IGNORE INTO', 1, true))
+    for index = beforeGeneric + 1, beforeGeneric + 7 do
       assert(not calls[index].sql:find('synex_instances', 1, true))
     end
     return table.concat({lease.fencingToken, invalidError.code, missingBootError.code,

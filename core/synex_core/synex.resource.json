@@ -24,6 +24,14 @@
     ],
     "consume": []
   },
+  "events": {
+    "publish": ["synex.characters.created", "synex.characters.deleted"],
+    "subscribe": []
+  },
+  "hooks": {
+    "register": [],
+    "run": ["synex.characters.before_create"]
+  },
   "dependencies": {
     "required": [
       {
@@ -46,19 +54,38 @@
     { "id": "009_legacy_import", "path": "migrations/009_legacy_import.sql", "transactional": false },
     { "id": "010_retention_archive", "path": "migrations/010_retention_archive.sql", "transactional": false },
     { "id": "011_instance_boot_authority", "path": "migrations/011_instance_boot_authority.sql", "transactional": false },
-    { "id": "012_session_control_boot_authority", "path": "migrations/012_session_control_boot_authority.sql", "transactional": false }
+    { "id": "012_session_control_boot_authority", "path": "migrations/012_session_control_boot_authority.sql", "transactional": false },
+    { "id": "013_migration_fencing", "path": "migrations/013_migration_fencing.sql", "transactional": false },
+    { "id": "014_runtime_owner_attribution", "path": "migrations/014_runtime_owner_attribution.sql", "transactional": false },
+    { "id": "015_character_reconciliation_fencing", "path": "migrations/015_character_reconciliation_fencing.sql", "transactional": false },
+    { "id": "016_rbac_policy_revision", "path": "migrations/016_rbac_policy_revision.sql", "transactional": false },
+    { "id": "017_runtime_scalability", "path": "migrations/017_runtime_scalability.sql", "transactional": false },
+    { "id": "018_character_slot_reuse", "path": "migrations/018_character_slot_reuse.sql", "transactional": false },
+    { "id": "019_session_control_target_authority", "path": "migrations/019_session_control_target_authority.sql", "transactional": false },
+    { "id": "020_terminal_lease_eligibility", "path": "migrations/020_terminal_lease_eligibility.sql", "transactional": false },
+    { "id": "021_worker_queue_scalability", "path": "migrations/021_worker_queue_scalability.sql", "transactional": false },
+    { "id": "022_idempotency_capacity", "path": "migrations/022_idempotency_capacity.sql", "transactional": false },
+    { "id": "023_lease_authority_recovery", "path": "migrations/023_lease_authority_recovery.sql", "transactional": false },
+    { "id": "024_session_control_capacity", "path": "migrations/024_session_control_capacity.sql", "transactional": false },
+    { "id": "025_cluster_lease_capacity", "path": "migrations/025_cluster_lease_capacity.sql", "transactional": false }
   ],
   "dataOwnership": {
     "tables": [
       "synex_schema_migrations",
       "synex_schema_migration_attempts",
+      "synex_schema_migration_fences",
       "synex_cluster_leases",
+      "synex_cluster_lease_capacity",
+      "synex_cluster_lease_kind_capacity",
       "synex_users",
       "synex_identifiers",
       "synex_sessions",
       "synex_characters",
       "synex_character_slots",
       "synex_idempotency_keys",
+      "synex_idempotency_capacity",
+      "synex_idempotency_owner_capacity",
+      "synex_idempotency_namespace_capacity",
       "synex_outbox",
       "synex_sagas",
       "synex_saga_steps",
@@ -70,10 +97,13 @@
       "synex_instance_boots",
       "synex_session_control_requests",
       "synex_session_control_authority",
+      "synex_session_control_capacity",
+      "synex_session_control_requester_capacity",
       "synex_rbac_roles",
       "synex_rbac_role_permissions",
       "synex_rbac_subject_roles",
       "synex_rbac_subject_versions",
+      "synex_rbac_policy_revisions",
       "synex_legacy_imports",
       "synex_legacy_id_mappings",
       "synex_audit_archive"

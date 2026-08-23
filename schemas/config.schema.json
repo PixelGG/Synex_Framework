@@ -25,19 +25,32 @@
     "connections": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["pendingTtlMs", "gateTimeoutMs", "duplicatePolicy", "allowlistRequired", "clusterSessionLeaseSeconds", "clusterHeartbeatMs", "queueEnabled", "queueUpdateMs", "queueTimeoutMs", "maximumQueued", "maximumActiveSessions", "queueReservedSlots", "queueStaffPriority", "queueReconnectPriority", "queueReconnectGraceMs", "queueStaffAce", "maintenanceMode", "maintenanceMessage", "maintenanceBypassAce"],
+      "required": ["pendingTtlMs", "gateTimeoutMs", "duplicatePolicy", "allowlistRequired", "clusterSessionLeaseSeconds", "clusterHeartbeatMs", "queueEnabled", "queueUpdateMs", "queueTimeoutMs", "maximumQueued", "maximumActiveSessions", "maximumConcurrentConnections", "connectionRate", "connectionBurst", "queueReservedSlots", "queueStaffPriority", "queueReconnectPriority", "queueReconnectGraceMs", "queueStaffAce", "maintenanceMode", "maintenanceMessage", "maintenanceBypassAce"],
       "properties": {
         "pendingTtlMs": { "type": "integer", "minimum": 1000, "maximum": 600000 },
         "gateTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 60000 },
         "duplicatePolicy": { "enum": ["deny_new", "kick_old", "allow", "replace_old"] },
         "allowlistRequired": { "type": "boolean" },
-        "clusterSessionLeaseSeconds": { "type": "integer", "minimum": 10, "maximum": 300 },
-        "clusterHeartbeatMs": { "type": "integer", "minimum": 1000, "maximum": 60000 },
+        "clusterSessionLeaseSeconds": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 300,
+          "description": "Cluster session-authority lease. Semantic validation requires this duration to be at least three heartbeat intervals."
+        },
+        "clusterHeartbeatMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 60000,
+          "description": "Cluster renewal interval. Semantic validation requires this value to be no more than one third of clusterSessionLeaseSeconds."
+        },
         "queueEnabled": { "type": "boolean" },
         "queueUpdateMs": { "type": "integer", "minimum": 250, "maximum": 30000 },
         "queueTimeoutMs": { "type": "integer", "minimum": 1000, "maximum": 1800000 },
         "maximumQueued": { "type": "integer", "minimum": 1, "maximum": 10000 },
         "maximumActiveSessions": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "maximumConcurrentConnections": { "type": "integer", "minimum": 1, "maximum": 10000 },
+        "connectionRate": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000 },
+        "connectionBurst": { "type": "integer", "minimum": 1, "maximum": 1000 },
         "queueReservedSlots": { "type": "integer", "minimum": 0, "maximum": 9999 },
         "queueStaffPriority": { "type": "integer", "minimum": 1, "maximum": 100000 },
         "queueReconnectPriority": { "type": "integer", "minimum": 1, "maximum": 100000 },
@@ -88,12 +101,22 @@
     "retention": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["workerIntervalMs", "batchSize", "audit", "financial"],
+      "required": ["workerIntervalMs", "batchSize", "sessionControlAfterDays", "audit", "financial", "outbox"],
       "properties": {
         "workerIntervalMs": { "type": "integer", "minimum": 60000, "maximum": 86400000 },
         "batchSize": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "sessionControlAfterDays": { "type": "integer", "minimum": 1, "maximum": 36500 },
         "audit": { "$ref": "#/$defs/retentionPolicy" },
-        "financial": { "$ref": "#/$defs/retentionPolicy" }
+        "financial": { "$ref": "#/$defs/retentionPolicy" },
+        "outbox": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["publishedPayloadAfterDays", "deadPayloadAfterDays"],
+          "properties": {
+            "publishedPayloadAfterDays": { "type": "integer", "minimum": 1, "maximum": 36500 },
+            "deadPayloadAfterDays": { "type": "integer", "minimum": 1, "maximum": 36500 }
+          }
+        }
       }
     },
     "features": {

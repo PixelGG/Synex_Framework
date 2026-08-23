@@ -7,16 +7,26 @@ const root = process.cwd();
 const core = path.join(root, 'core', 'synex_core');
 const modules = [
   'server/identity_common.lua',
+  'server/identity_session_fencing.lua',
   'server/identity_repository.lua',
+  'server/identity_character_deletion_reconciliation.lua',
+  'server/identity_character_unloads.lua',
   'server/identity_characters.lua',
   'server/identity_connection_replacement.lua',
   'server/identity_connection_claims.lua',
   'server/identity_connection_authority.lua',
+  'server/identity_connection_ingress.lua',
   'server/identity_connection_terminals.lua',
   'server/identity_connection_join.lua',
+  'server/identity_connection_connecting.lua',
+  'server/identity_connection_heartbeat.lua',
   'server/identity_connection_maintenance.lua',
   'server/identity_connections.lua',
   'server/identity.lua',
+  'server/runtime_persistence_instances.lua',
+  'server/runtime_persistence_control.lua',
+  'server/runtime_persistence_control_retention.lua',
+  'server/runtime_persistence_rbac.lua',
   'server/runtime_persistence.lua',
   'server/runtime_configuration.lua',
   'server/runtime_gate.lua',
@@ -27,6 +37,7 @@ const modules = [
   'server/bootstrap_api.lua',
   'server/bootstrap_diagnostics.lua',
   'server/bootstrap_restart.lua',
+  'server/bootstrap_resource_events.lua',
   'server/bootstrap_lifecycle.lua',
   'server/bootstrap.lua',
 ] as const;
@@ -35,7 +46,7 @@ async function source(relativePath: string): Promise<string> {
   return readFile(path.join(core, relativePath), 'utf8');
 }
 
-test('identity and bootstrap use cohesive fixed manifest-listed modules', async () => {
+test('identity, runtime persistence, and bootstrap use cohesive fixed manifest-listed modules', async () => {
   const manifest = await source('fxmanifest.lua');
   for (const relativePath of modules) {
     const contents = await source(relativePath);
@@ -48,13 +59,25 @@ test('identity and bootstrap use cohesive fixed manifest-listed modules', async 
       `${relativePath} dynamically loads executable code`,
     );
   }
+  let previousRuntimeOffset = -1;
+  for (const relativePath of [
+    'server/runtime_persistence_instances.lua',
+    'server/runtime_persistence_control.lua',
+    'server/runtime_persistence_control_retention.lua',
+    'server/runtime_persistence_rbac.lua',
+    'server/runtime_persistence.lua',
+  ]) {
+    const offset = manifest.indexOf(`'${relativePath}'`);
+    assert.ok(offset > previousRuntimeOffset, `${relativePath} has an invalid manifest load order`);
+    previousRuntimeOffset = offset;
+  }
   assert.ok((await source('server/identity.lua')).split(/\r?\n/u).length <= 100);
   assert.ok((await source('server/bootstrap.lua')).split(/\r?\n/u).length <= 250);
 });
 
 test('GetAPI facade categories and kernel exports preserve their public surface', async () => {
   const api = await source('server/bootstrap_api.lua');
-  const lifecycle = await source('server/bootstrap_lifecycle.lua');
+  const resourceEvents = await source('server/bootstrap_resource_events.lua');
   assert.match(
     api,
     /getRetentionPolicy\s*=\s*function\(\)[\s\S]*?'synex\.runtime\.read'[\s\S]*?foundation\.copy/u,
@@ -84,7 +107,7 @@ test('GetAPI facade categories and kernel exports preserve their public surface'
     'Services',
     'States',
   ]);
-  const exports = [...lifecycle.matchAll(/platform\.export\('([^']+)'/gu)]
+  const exports = [...resourceEvents.matchAll(/platform\.export\('([^']+)'/gu)]
     .map((match) => match[1])
     .sort();
   assert.deepEqual(exports, ['GetAPI', 'GetRuntimeStatus', 'Invoke']);
@@ -115,7 +138,7 @@ test('client RPC responses are accepted only from the server sentinel source', a
 test('boot validates UTC and fail-closes named recurring worker registration', async () => {
   const lifecycle = await source('server/bootstrap_lifecycle.lua');
   const discovery = await source('server/bootstrap_discovery.lua');
-  const connections = await source('server/identity_connections.lua');
+  const connecting = await source('server/identity_connection_connecting.lua');
   const utcValidation = lifecycle.indexOf('persistence.database:validateUtcSession()');
   const migrationBootstrap = lifecycle.indexOf('persistence.migrations:bootstrap()');
   assert.ok(utcValidation >= 0 && utcValidation < migrationBootstrap);
@@ -146,17 +169,20 @@ test('boot validates UTC and fail-closes named recurring worker registration', a
     discovery,
     /not active and includeInactiveCritical == true and manifest\.critical == true/u,
   );
-  assert.match(connections, /if not lifecycle\.core:canAdmitPlayers\(\) then/u);
-  assert.doesNotMatch(connections, /if not lifecycle\.core:isOperational\(\) then/u);
+  assert.match(connecting, /if not lifecycle\.core:canAdmitPlayers\(\) then/u);
+  assert.doesNotMatch(connecting, /if not lifecycle\.core:isOperational\(\) then/u);
 });
 
 test('the core stop event is synchronous and durable cleanup belongs to explicit restart preparation', async () => {
-  const lifecycle = await source('server/bootstrap_lifecycle.lua');
+  const resourceEvents = await source('server/bootstrap_resource_events.lua');
   const restart = await source('server/bootstrap_restart.lua');
-  const stopStart = lifecycle.indexOf("platform.addEventHandler('onResourceStop'");
-  const nonCoreStart = lifecycle.indexOf('            reloadSnapshots[resource] = nil', stopStart);
+  const stopStart = resourceEvents.indexOf("platform.addEventHandler('onResourceStop'");
+  const nonCoreStart = resourceEvents.indexOf(
+    '            local epoch = registries.owners:epoch(resource)',
+    stopStart,
+  );
   assert.ok(stopStart >= 0 && nonCoreStart > stopStart, 'the Core stop boundary must be discoverable');
-  const coreStop = lifecycle.slice(stopStart, nonCoreStart);
+  const coreStop = resourceEvents.slice(stopStart, nonCoreStart);
   assert.doesNotMatch(
     coreStop,
     /(?:platform\.(?:defer|wait)|drainQuiescedTerminals|persistence\.|releaseQuiescedLeases|lifecycle\.reload[:.]quiesce)/u,

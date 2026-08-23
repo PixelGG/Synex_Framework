@@ -34,6 +34,7 @@ async function engineWith(...modules: string[]): Promise<LuaEngine> {
           allowlistRequired = false, clusterSessionLeaseSeconds = 45, clusterHeartbeatMs = 10000,
           queueEnabled = false, queueUpdateMs = 1000, queueTimeoutMs = 120000,
           maximumQueued = 128, maximumActiveSessions = 128, queueReservedSlots = 0,
+          maximumConcurrentConnections = 256, connectionRate = 0.5, connectionBurst = 6,
           queueStaffPriority = 1000, queueReconnectPriority = 500, queueReconnectGraceMs = 60000,
           queueStaffAce = 'synex.queue.staff', maintenanceMode = false,
           maintenanceMessage = 'Synex is currently in maintenance mode.',
@@ -47,9 +48,10 @@ async function engineWith(...modules: string[]): Promise<LuaEngine> {
         logging = { level = 'info', pretty = false },
         privacy = { identifierSaltConvar = 'synex_identifier_salt', diagnosticIdentifierPrefix = 8 },
         retention = {
-          workerIntervalMs = 3600000, batchSize = 250,
+          workerIntervalMs = 3600000, batchSize = 250, sessionControlAfterDays = 30,
           audit = { mode = 'retain_forever', archiveAfterDays = 365 },
-          financial = { mode = 'retain_forever', archiveAfterDays = 365 }
+          financial = { mode = 'retain_forever', archiveAfterDays = 365 },
+          outbox = { publishedPayloadAfterDays = 30, deadPayloadAfterDays = 365 }
         },
         features = { durableEvents = true, sagas = true, stateReplication = true }
       }
@@ -78,9 +80,31 @@ test('runtime configuration rejects unknown keys and invalid cross-field values'
     local _, reservedError = validator:validateRuntime(valid)
     assert(reservedError.details.path == '$.connections.queueReservedSlots')
     valid = ValidRuntimeConfig()
+    valid.connections.clusterSessionLeaseSeconds = 10
+    valid.connections.clusterHeartbeatMs = 9999
+    local _, unsafeHeartbeatError = validator:validateRuntime(valid)
+    assert(unsafeHeartbeatError.details.path == '$.connections.clusterHeartbeatMs')
+    valid.connections.clusterHeartbeatMs = 3334
+    local _, boundaryHeartbeatError = validator:validateRuntime(valid)
+    assert(boundaryHeartbeatError.details.path == '$.connections.clusterHeartbeatMs')
+    valid.connections.clusterHeartbeatMs = 3333
+    assert(validator:validateRuntime(valid))
+    valid = ValidRuntimeConfig()
     valid.connections.maintenanceMessage = string.char(10)
     local _, messageError = validator:validateRuntime(valid)
     assert(messageError.details.path == '$.connections.maintenanceMessage')
+    valid = ValidRuntimeConfig()
+    valid.connections.maximumConcurrentConnections = 0
+    local _, connectionCapError = validator:validateRuntime(valid)
+    assert(connectionCapError.details.path == '$.connections.maximumConcurrentConnections')
+    valid = ValidRuntimeConfig()
+    valid.connections.connectionRate = 0
+    local _, connectionRateError = validator:validateRuntime(valid)
+    assert(connectionRateError.details.path == '$.connections.connectionRate')
+    valid = ValidRuntimeConfig()
+    valid.connections.connectionBurst = 1.5
+    local _, connectionBurstError = validator:validateRuntime(valid)
+    assert(connectionBurstError.details.path == '$.connections.connectionBurst')
     valid = ValidRuntimeConfig()
     valid.connections.duplicatePolicy = 'kick_old'
     assert(validator:validateRuntime(valid))
@@ -98,6 +122,14 @@ test('runtime configuration rejects unknown keys and invalid cross-field values'
     valid.retention.financial.archiveAfterDays = 0
     local _, retentionAgeError = validator:validateRuntime(valid)
     assert(retentionAgeError.details.path == '$.retention.financial.archiveAfterDays')
+    valid = ValidRuntimeConfig()
+    valid.retention.outbox.deadPayloadAfterDays = 0
+    local _, outboxRetentionError = validator:validateRuntime(valid)
+    assert(outboxRetentionError.details.path == '$.retention.outbox.deadPayloadAfterDays')
+    valid = ValidRuntimeConfig()
+    valid.retention.sessionControlAfterDays = 0
+    local _, controlRetentionError = validator:validateRuntime(valid)
+    assert(controlRetentionError.details.path == '$.retention.sessionControlAfterDays')
     valid = ValidRuntimeConfig()
     valid.retention.audit.mode = 'archive'
     valid.retention.financial.mode = 'archive'
@@ -242,6 +274,39 @@ test('capability denials reach the bounded audit sink without trusting caller co
   engine.global.close();
 });
 
+test('capability audit sink exceptions never expose their message in logs', async () => {
+  const engine = await engineWith('foundation', 'security');
+  const result = await engine.doString(`
+    local capturedLog = nil
+    local platform = {
+      print = function() end,
+      nowGame = function() return 1000 end,
+      jsonEncode = function(record) capturedLog = record return '{}' end,
+      jsonDecode = function() return {} end
+    }
+    local foundation = SynexCoreFactories.foundation({ platform = platform })
+    local security = SynexCoreFactories.security({
+      platform = platform, foundation = foundation, coreResource = 'synex_core',
+      policy = { default = { allow = {}, deny = {} }, resources = {} }
+    })
+    security.capabilities:registerManifest(
+      'synex_fixture', { capabilities = { request = {} } })
+    assert(security.capabilities:setAuditSink(function()
+      error('password=fixture-secret-that-must-not-be-logged')
+    end))
+    local _, denied = security.capabilities:check(
+      'synex_fixture', 'synex.accounts.mint', { operation = 'fixture.call' })
+    assert(denied.code == 'CAPABILITY_UNDECLARED')
+    assert(capturedLog.message == 'capability denial audit failed')
+    assert(capturedLog.fields.error == nil)
+    assert(capturedLog.fields.code == 'CAPABILITY_AUDIT_FAILED')
+    assert(capturedLog.fields.failureType == 'string')
+    return capturedLog.fields.code
+  `);
+  assert.equal(result, 'CAPABILITY_AUDIT_FAILED');
+  engine.global.close();
+});
+
 test('disabled durable-event and saga feature flags fail closed before database access', async () => {
   const engine = await engineWith('foundation', 'persistence', 'reliability');
   const result = await engine.doString(`
@@ -255,7 +320,7 @@ test('disabled durable-event and saga feature flags fail closed before database 
       instanceId = 'test', sha256 = function() return string.rep('0', 64) end,
       features = { durableEvents = false, sagas = false }
     })
-    local _, outboxError = reliability.outbox:enqueue({
+    local _, outboxError = reliability.outbox:enqueue('synex_fixture', {
       aggregateType = 'fixture', aggregateId = '1', eventType = 'fixture.created'
     })
     local _, sagaError = reliability.sagas:start('fixture', 'correlation', {})

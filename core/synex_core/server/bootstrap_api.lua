@@ -53,7 +53,10 @@ factories.bootstrapApi = function(deps)
         end
         if not ok then
             logger:error('owner API operation failed', {
-                caller = caller, operation = operation, traceId = traceId, error = tostring(value)
+                caller = caller,
+                operation = operation,
+                traceId = traceId,
+                code = foundation.failureCode(value, 'OWNER_OPERATION_EXCEPTION')
             })
             return nil, foundation.error('INTERNAL_ERROR', 'The Synex API operation failed.', { traceId = traceId })
         end
@@ -82,6 +85,47 @@ factories.bootstrapApi = function(deps)
             connectedAt = session.connectedAt,
             version = session.version
         }
+    end
+
+    local function rpcCallOptions(options)
+        options = options or {}
+        if type(options) ~= 'table' or getmetatable(options) ~= nil then
+            return nil, foundation.error('INVALID_RPC_OPTIONS',
+                'RPC call options must be a plain object.')
+        end
+        local allowed = { timeoutMs = true, traceId = true, idempotencyKey = true }
+        for key in pairs(options) do
+            if type(key) ~= 'string' or not allowed[key] then
+                return nil, foundation.error('INVALID_RPC_OPTIONS',
+                    'RPC call options contain an unknown property.')
+            end
+        end
+        local rpcConfig = defaultConfig.rpc or {}
+        local maximumTimeoutMs = math.max(100,
+            math.min(tonumber(rpcConfig.maximumTimeoutMs) or 15000, 15000))
+        local timeoutMs = options.timeoutMs == nil and (rpcConfig.timeoutMs or 5000)
+            or options.timeoutMs
+        if type(timeoutMs) ~= 'number' or math.type(timeoutMs) ~= 'integer'
+            or timeoutMs < 100 or timeoutMs > maximumTimeoutMs then
+            return nil, foundation.error('INVALID_RPC_OPTIONS',
+                'RPC timeoutMs is outside the configured range.')
+        end
+        if options.traceId ~= nil and (type(options.traceId) ~= 'string'
+            or #options.traceId < 8 or #options.traceId > 64
+            or not options.traceId:match('^[A-Za-z0-9_.:%-]+$')) then
+            return nil, foundation.error('INVALID_RPC_OPTIONS', 'RPC traceId is invalid.')
+        end
+        if options.idempotencyKey ~= nil and (type(options.idempotencyKey) ~= 'string'
+            or #options.idempotencyKey < 8 or #options.idempotencyKey > 128
+            or not options.idempotencyKey:match('^[A-Za-z0-9_.:%-]+$')) then
+            return nil, foundation.error('INVALID_RPC_OPTIONS',
+                'RPC idempotencyKey is invalid.')
+        end
+        return {
+            traceId = options.traceId,
+            idempotencyKey = options.idempotencyKey,
+            deadlineAt = foundation.monotonicMs() + timeoutMs
+        }, nil
     end
 
     local function mutateAccess(caller, operation, request, traceId, handler)
@@ -210,7 +254,8 @@ factories.bootstrapApi = function(deps)
                         audit = retention.audit,
                         financial = retention.financial,
                         workerIntervalMs = retention.workerIntervalMs,
-                        batchSize = retention.batchSize
+                        batchSize = retention.batchSize,
+                        sessionControlAfterDays = retention.sessionControlAfterDays
                     }), nil
                 end)
             end
@@ -257,21 +302,37 @@ factories.bootstrapApi = function(deps)
             registerLifecycleParticipant = function(definition) return identity.characters:registerParticipant(caller, epoch, definition) end
         }
         facade.RPC = {
-            call = function(name, version, request, options) return messaging.gateway:invoke(caller, epoch, name, version, request, options) end,
+            call = function(name, version, request, options)
+                local prepared, optionsError = rpcCallOptions(options)
+                if not prepared then return nil, optionsError end
+                return messaging.gateway:invoke(caller, epoch, name, version, request, prepared)
+            end,
             registerServer = function(contract, handler)
-                if type(contract) ~= 'table' or not security.capabilities:providesContract(caller, contract.name) then
+                if type(contract) ~= 'table' or getmetatable(contract) ~= nil
+                    or type(contract.name) ~= 'string'
+                    or not security.capabilities:providesContract(caller, contract.name) then
                     return nil, foundation.error('CONTRACT_UNDECLARED', 'The resource manifest does not declare this provided contract.')
                 end
-                local candidate = foundation.copy(contract)
+                local copied, candidate = foundation.safeCall(foundation.copy, contract)
+                if not copied or type(candidate) ~= 'table' then
+                    return nil, foundation.error('INVALID_CONTRACT',
+                        'The contract definition could not be copied safely.')
+                end
                 candidate.network = 'none'
                 candidate.provider = caller
                 return messaging.gateway:register(caller, epoch, candidate, handler)
             end,
             registerNetwork = function(contract, handler)
-                if type(contract) ~= 'table' or not security.capabilities:providesContract(caller, contract.name) then
+                if type(contract) ~= 'table' or getmetatable(contract) ~= nil
+                    or type(contract.name) ~= 'string'
+                    or not security.capabilities:providesContract(caller, contract.name) then
                     return nil, foundation.error('CONTRACT_UNDECLARED', 'The resource manifest does not declare this provided contract.')
                 end
-                local candidate = foundation.copy(contract)
+                local copied, candidate = foundation.safeCall(foundation.copy, contract)
+                if not copied or type(candidate) ~= 'table' then
+                    return nil, foundation.error('INVALID_CONTRACT',
+                        'The contract definition could not be copied safely.')
+                end
                 candidate.network = 'client-to-server'
                 candidate.provider = caller
                 return messaging.gateway:register(caller, epoch, candidate, handler)
@@ -385,8 +446,19 @@ factories.bootstrapApi = function(deps)
             publish = function(topic, payload, options) return messaging.events:publish(caller, epoch, topic, payload, options) end,
             publishOutbox = function(topic, payload, metadata)
                 return guarded(caller, epoch, 'synex.events.durable', 'Events.publishOutbox', function(traceId)
-                    local candidate = type(metadata) == 'table' and foundation.copy(metadata) or metadata
-                    if type(candidate) == 'table' and candidate.traceId == nil then candidate.traceId = traceId end
+                    if type(metadata) ~= 'table' or getmetatable(metadata) ~= nil then
+                        return messaging.events:publishOutbox(caller, epoch, topic, payload, metadata)
+                    end
+                    local candidate, count = {}, 0
+                    for key, value in pairs(metadata) do
+                        count = count + 1
+                        if count > 4 then
+                            return nil, foundation.error('INVALID_OUTBOX_EVENT',
+                                'Outbox event metadata contains too many properties.')
+                        end
+                        candidate[key] = value
+                    end
+                    if candidate.traceId == nil then candidate.traceId = traceId end
                     return messaging.events:publishOutbox(caller, epoch, topic, payload, candidate)
                 end)
             end,
@@ -415,14 +487,19 @@ factories.bootstrapApi = function(deps)
                     return stateService:define(caller, epoch, definition)
                 end, foundation.nextId('trace'))
             end,
-            get = function(name, subject)
+            get = function(name, subject, context)
                 return ownerOperation(caller, epoch, 'States.get', function()
-                    return stateService:get(caller, epoch, name, subject)
+                    return stateService:get(caller, epoch, name, subject, context)
                 end, foundation.nextId('trace'))
             end,
             set = function(name, subject, value, context)
                 return ownerOperation(caller, epoch, 'States.set', function()
                     return stateService:set(caller, epoch, name, subject, value, context)
+                end, foundation.nextId('trace'))
+            end,
+            clear = function(name, subject, context)
+                return ownerOperation(caller, epoch, 'States.clear', function()
+                    return stateService:clear(caller, epoch, name, subject, context)
                 end, foundation.nextId('trace'))
             end
         }
@@ -460,7 +537,12 @@ factories.bootstrapApi = function(deps)
         facade.Outbox = {
             enqueue = function(event)
                 return guarded(caller, epoch, 'synex.events.durable', 'Outbox.enqueue', function()
-                    return reliability.outbox:enqueue(event)
+                    local topic = type(event) == 'table' and getmetatable(event) == nil
+                        and rawget(event, 'eventType') or nil
+                    local authorized, authorizationError = messaging.events:authorizePublisher(
+                        caller, epoch, topic)
+                    if not authorized then return nil, authorizationError end
+                    return reliability.outbox:enqueue(caller, event)
                 end)
             end
         }
@@ -477,12 +559,13 @@ factories.bootstrapApi = function(deps)
             end,
             record = function(publicId, expectedVersion, stepName, eventType, payload, errorValue)
                 return guarded(caller, epoch, 'synex.sagas.write', 'Sagas.record', function()
-                    return reliability.sagas:record(publicId, expectedVersion, stepName, eventType, payload, errorValue)
+                    return sagaRuntime:record(
+                        caller, publicId, expectedVersion, stepName, eventType, payload, errorValue)
                 end)
             end,
             get = function(publicId)
                 return guarded(caller, epoch, 'synex.sagas.read', 'Sagas.get', function()
-                    return sagaRuntime:get(publicId)
+                    return sagaRuntime:get(caller, publicId)
                 end)
             end
         }
@@ -555,7 +638,9 @@ factories.bootstrapApi = function(deps)
         end
         local epoch, callerError = ensureOwner(caller)
         if not epoch then return nil, callerError end
-        return messaging.gateway:invoke(caller, epoch, name, version, request, options)
+        local prepared, optionsError = rpcCallOptions(options)
+        if not prepared then return nil, optionsError end
+        return messaging.gateway:invoke(caller, epoch, name, version, request, prepared)
     end
 
     function runtime:getAPI(versionRange)

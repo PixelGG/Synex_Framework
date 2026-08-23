@@ -18,6 +18,7 @@
     "sensitive": { "type": "boolean" },
     "replicated": { "type": "boolean" },
     "persistent": { "type": "boolean" },
+    "maximumBytes": { "type": "integer", "minimum": 1, "maximum": 16384 },
     "readCapability": { "$ref": "#/$defs/capability" },
     "writeCapability": { "$ref": "#/$defs/capability" }
   },

@@ -32,6 +32,14 @@
       "synex.runtime.status"
     ]
   },
+  "events": {
+    "publish": [],
+    "subscribe": []
+  },
+  "hooks": {
+    "register": [],
+    "run": []
+  },
   "dependencies": {
     "required": [
       {

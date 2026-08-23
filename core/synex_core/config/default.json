@@ -22,6 +22,9 @@
     "queueTimeoutMs": 120000,
     "maximumQueued": 128,
     "maximumActiveSessions": 128,
+    "maximumConcurrentConnections": 256,
+    "connectionRate": 0.5,
+    "connectionBurst": 6,
     "queueReservedSlots": 0,
     "queueStaffPriority": 1000,
     "queueReconnectPriority": 500,
@@ -53,6 +56,7 @@
   "retention": {
     "workerIntervalMs": 3600000,
     "batchSize": 250,
+    "sessionControlAfterDays": 30,
     "audit": {
       "mode": "retain_forever",
       "archiveAfterDays": 365
@@ -60,6 +64,10 @@
     "financial": {
       "mode": "retain_forever",
       "archiveAfterDays": 365
+    },
+    "outbox": {
+      "publishedPayloadAfterDays": 30,
+      "deadPayloadAfterDays": 365
     }
   },
   "features": {

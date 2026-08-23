@@ -3944,6 +3944,9 @@
           "operational": {
             "type": "boolean"
           },
+          "playerAdmission": {
+            "type": "boolean"
+          },
           "reasons": {
             "type": "object"
           },
@@ -3967,6 +3970,7 @@
           "state",
           "revision",
           "operational",
+          "playerAdmission",
           "reasons",
           "recentTransitions"
         ],
@@ -3978,5 +3982,5 @@
     }
   ],
   "schema": 1,
-  "sourceHash": "63fc97bec257cb54f15f7735448cd83fbde85834c33f2e9c98441f00c14375bb"
+  "sourceHash": "7d823d421d2db0bbbabb2e64171a14c45d0fbcab23a4fd9bc11458c708482795"
 }

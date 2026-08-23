@@ -23,11 +23,14 @@ factories.commands = function(deps)
     end
 
     local function safeError(err)
+        local message = type(err) == 'table' and rawget(err, 'message') or nil
+        if type(message) ~= 'string' or #message < 1 or #message > 512 then
+            message = 'The command could not be completed.'
+        end
         return {
-            code = type(err) == 'table' and tostring(err.code or 'UNAVAILABLE') or 'UNAVAILABLE',
-            message = type(err) == 'table' and tostring(err.message or 'The command could not be completed.')
-                or 'The command could not be completed.',
-            retryable = type(err) == 'table' and err.retryable == true or false
+            code = foundation.failureCode(err, 'UNAVAILABLE'),
+            message = message,
+            retryable = type(err) == 'table' and rawget(err, 'retryable') == true or false
         }
     end
 
@@ -172,9 +175,10 @@ factories.commands = function(deps)
                     workers.total, workers.healthy, workers.degraded, workers.unhealthy, workers.pending),
                 ('[synex] Cluster %d healthy | %d stale | %d total'):format(
                     cluster.healthy, cluster.stale, cluster.total),
-                ('[synex] Migrations %d/%d applied | %d applying | %d failed'):format(
+                ('[synex] Migrations %d/%d applied | %d applying | %d indeterminate | %d failed'):format(
                     migrations.totals.applied, migrations.totals.defined,
-                    migrations.totals.applying, migrations.totals.failed),
+                    migrations.totals.applying, migrations.totals.indeterminate or 0,
+                    migrations.totals.failed),
                 '[synex] Details: synex status | synex doctor | synex sessions | synex migrations'
             }
             return { generatedAt = foundation.utcIso(), status = doctor.status, lines = lines }, nil

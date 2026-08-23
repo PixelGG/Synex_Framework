@@ -32,6 +32,8 @@ export interface ResourceManifest {
   capabilities: { request: string[] };
   services: { provide: string[]; require: string[]; optional: string[] };
   contracts: { provide: string[]; consume: string[] };
+  events: { publish: string[]; subscribe: string[] };
+  hooks: { register: string[]; run: string[] };
   dependencies: {
     required: Array<{ name: string; version: string }>;
     optional: Array<{ name: string; version: string }>;
@@ -124,6 +126,8 @@ export function isResourceManifest(value: unknown): value is ResourceManifest {
     isRecord(value.capabilities) &&
     isRecord(value.services) &&
     isRecord(value.contracts) &&
+    isRecord(value.events) &&
+    isRecord(value.hooks) &&
     isRecord(value.dependencies) &&
     Array.isArray(value.migrations) &&
     isRecord(value.dataOwnership) &&

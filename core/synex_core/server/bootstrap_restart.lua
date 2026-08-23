@@ -9,6 +9,9 @@ factories.bootstrapRestart = function(deps)
     local persistence = assert(deps.persistence, 'bootstrap restart requires persistence')
     local registries = assert(deps.registries, 'bootstrap restart requires registries')
     local facadeCache = assert(deps.facadeCache, 'bootstrap restart requires facade cache')
+    local stateService = deps.stateService or {
+        purgeAllPlayers = function() return { players = 0, cleared = 0, replicated = 0, skipped = 0, failures = {} }, nil end
+    }
     local coreResource = assert(deps.coreResource, 'bootstrap restart requires core resource')
     local evictConnectedPlayers = assert(deps.evictConnectedPlayers,
         'bootstrap restart requires player eviction')
@@ -53,9 +56,18 @@ factories.bootstrapRestart = function(deps)
         if not invoked or not connectionReport then
             recordFailure(failures, 'connection_quiesce', invoked and connectionError or nil)
         end
+        local stateInvoked, stateReport, stateError = foundation.safeCall(
+            stateService.purgeAllPlayers, stateService)
+        if not stateInvoked or not stateReport then
+            recordFailure(failures, 'player_state_purge', stateInvoked and stateError or stateReport)
+        elseif #(stateReport.failures or {}) > 0 then
+            recordFailure(failures, 'player_state_purge', foundation.error(
+                'PLAYER_STATE_PURGE_FAILED',
+                'One or more replicated player state values could not be cleared.'))
+        end
         local evicted, evictionError = evictConnectedPlayers(playerReason)
         if evicted == nil then recordFailure(failures, 'player_eviction', evictionError) end
-        return connectionReport, evicted
+        return connectionReport, evicted, stateReport
     end
 
     local function moveToStopping(reason, failures)
@@ -88,10 +100,11 @@ factories.bootstrapRestart = function(deps)
             state = 'preparing', startedAt = foundation.utcIso(),
             restartCommand = 'restart ' .. coreResource
         }
-        local connectionReport, evicted = beginFence(
+        local connectionReport, evicted, stateReport = beginFence(
             'operator restart preparation',
             'Synex Core is preparing to restart. Please reconnect shortly.', failures)
         report.connections = connectionReport
+        report.playerState = stateReport
         report.evictedPlayers = evicted or 0
 
         local invoked, terminalReport, terminalError = foundation.safeCall(

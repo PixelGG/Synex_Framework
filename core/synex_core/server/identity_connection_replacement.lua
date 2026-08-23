@@ -5,6 +5,9 @@ factories.identityConnectionReplacement = function(deps)
     local foundation = assert(deps.foundation, 'connection replacement requires foundation')
     local players = assert(deps.players, 'connection replacement requires player registry')
     local messaging = assert(deps.messaging, 'connection replacement requires messaging')
+    local stateService = deps.stateService or {
+        purgePlayer = function() return { cleared = 0, replicated = 0, skipped = 0, failures = {} }, nil end
+    }
     local characters = assert(deps.characters, 'connection replacement requires character service')
     local sessionRepository = assert(deps.sessionRepository, 'connection replacement requires session repository')
     local releaseConnectionLease = assert(
@@ -76,21 +79,40 @@ factories.identityConnectionReplacement = function(deps)
             firstError = type(err) == 'table' and err
                 or foundation.error(code, message, { retryable = true })
         end
-        for _, session in ipairs(players:sessionsByUser(userId)) do
+        local list = type(players.rawSessionsByUser) == 'function'
+            and players:rawSessionsByUser(userId) or players:sessionsByUser(userId)
+        for _, session in ipairs(list) do
             if isQuiesced() then return nil, stoppingError() end
             local current = players:getSession(session.id) or session
             if current.source ~= nil then
                 if isQuiesced() then return nil, stoppingError() end
+                local source = current.source
+                local sourceGeneration = current.sourceGeneration
+                local statePurged, stateReport, stateError = foundation.safeCall(
+                    stateService.purgePlayer, stateService, source, sourceGeneration)
+                if not statePurged or not stateReport then
+                    rememberFailure(statePurged and stateError or stateReport,
+                        'PLAYER_STATE_PURGE_FAILED',
+                        'The previous session player state could not be purged safely.')
+                elseif #(stateReport.failures or {}) > 0 then
+                    rememberFailure(foundation.error(
+                        'PLAYER_STATE_PURGE_FAILED',
+                        'One or more replicated player state values could not be cleared.',
+                        { retryable = true, details = { failures = #stateReport.failures } }),
+                        'PLAYER_STATE_PURGE_FAILED',
+                        'The previous session player state could not be purged safely.')
+                end
+                if isQuiesced() then return nil, stoppingError() end
                 local detached, detachError = players:detachSource(
-                    current.id, current.source, current.sourceGeneration)
+                    current.id, source, sourceGeneration)
                 if detached then
                     current = detached
                     if isQuiesced() then return nil, stoppingError() end
                     foundation.safeCall(
                         messaging.network.purgeSource, messaging.network,
-                        current.source, current.sourceGeneration)
+                        source, sourceGeneration)
                     if isQuiesced() then return nil, stoppingError() end
-                    foundation.safeCall(platform.dropPlayer, current.source,
+                    foundation.safeCall(platform.dropPlayer, source,
                         'This session was replaced by a newer connection.')
                     if isQuiesced() then return nil, stoppingError() end
                 else

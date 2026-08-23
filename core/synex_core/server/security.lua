@@ -14,9 +14,15 @@ factories.security = function(deps)
     local subjectCache = {}
     local subjectCacheSize = 0
     local rbacHydrated = rbacStore == nil
+    local rolePolicyRevision = rbacStore and nil or 0
     local rbacCacheTtlMs = math.max(1000, math.min(tonumber(deps.rbacCacheTtlMs) or 5000, 60000))
     local rbacCacheMaximum = math.max(64, math.min(tonumber(deps.rbacCacheMaximum) or 2048, 10000))
     local buckets = {}
+    local bucketCount = 0
+    local rateLimiterMaximum = math.max(64, math.min(math.floor(tonumber(deps.rateLimiterMaximum) or 8192), 65536))
+    local rateLimiterTtlMs = math.max(1000, math.min(math.floor(tonumber(deps.rateLimiterTtlMs) or 300000), 3600000))
+    local rateLimiterSweepMs = math.max(250, math.min(math.floor(rateLimiterTtlMs / 4), 5000))
+    local lastBucketSweepAt = 0
     local auditSink = nil
     local denialAudit = {}
     local denialAuditSize = 0
@@ -44,6 +50,24 @@ factories.security = function(deps)
             if foundation.wildcardMatch(pattern, capability) then return true end
         end
         return false
+    end
+
+    local function validEventTopic(value)
+        if type(value) ~= 'string' or #value < 3 or #value > 128
+            or value:find('[%z\1-\31\127]') or value:find('*', 1, true)
+            or value:sub(-1) == '.' or value:find('..', 1, true)
+            or not value:match('^[a-z][a-z0-9_]*%.[a-z][a-z0-9_.]*$') then return false end
+        for segment in value:gmatch('[^.]+') do
+            if not segment:match('^[a-z][a-z0-9_]*$') then return false end
+        end
+        return true
+    end
+
+    local function matchesEventPattern(pattern, topic)
+        if pattern == topic then return true end
+        if type(pattern) ~= 'string' or pattern:sub(-2) ~= '.*' then return false end
+        local prefix = pattern:sub(1, -2)
+        return topic:sub(1, #prefix) == prefix and #topic > #prefix
     end
 
     local function auditCapabilityDenial(resource, capability, context, reason)
@@ -76,9 +100,12 @@ factories.security = function(deps)
             }
         })
         if not ok or sinkError then
+            local failure = ok and sinkError or sinkResult
             logger:error('capability denial audit failed', {
                 resource = resource, capability = capability,
-                error = tostring(ok and sinkError or sinkResult), traceId = context.traceId
+                code = foundation.failureCode(failure, 'CAPABILITY_AUDIT_FAILED'),
+                failureType = type(failure),
+                traceId = context.traceId
             })
         end
     end
@@ -88,6 +115,12 @@ factories.security = function(deps)
         local requested = {}
         for _, capability in ipairs((manifest.capabilities and manifest.capabilities.request) or {}) do requested[capability] = true end
         manifests[resource] = { requested = requested, manifest = foundation.copy(manifest) }
+        return true, nil
+    end
+    function capabilityPolicy:unregisterManifest(resource)
+        local registered = manifests[resource] ~= nil
+        manifests[resource] = nil
+        return registered
     end
     function capabilityPolicy:class(capability)
         return capabilityClass[capability]
@@ -171,6 +204,83 @@ factories.security = function(deps)
         end
         return false
     end
+    local function checkEventAuthority(resource, topic, declaration, operation)
+        if not validEventTopic(topic) then
+            return nil, foundation.error('INVALID_EVENT', 'Domain event topics must be bounded namespaced identifiers.')
+        end
+        local registered = manifests[resource]
+        if not registered then
+            return nil, foundation.error('RESOURCE_NOT_REGISTERED',
+                'The calling resource has no validated Synex manifest.')
+        end
+        if declaration == 'publish' and resource ~= deps.coreResource then
+            local ownedPrefix = 'synex.' .. tostring(resource):sub(7) .. '.'
+            if type(resource) ~= 'string' or not resource:match('^synex_[a-z0-9_]+$')
+                or topic:sub(1, #ownedPrefix) ~= ownedPrefix then
+                metrics:increment('synex_event_authorization_denials_total', {
+                    operation = operation, reason = 'foreign_namespace'
+                })
+                return nil, foundation.error('EVENT_TOPIC_FORBIDDEN',
+                    'A resource may publish only within its owned event namespace.')
+            end
+        end
+        for _, pattern in ipairs((registered.manifest.events or {})[declaration] or {}) do
+            if matchesEventPattern(pattern, topic) then return true, nil end
+        end
+        metrics:increment('synex_event_authorization_denials_total', {
+            operation = operation, reason = 'undeclared'
+        })
+        return nil, foundation.error(
+            declaration == 'publish' and 'EVENT_PUBLISH_UNDECLARED' or 'EVENT_SUBSCRIBE_UNDECLARED',
+            declaration == 'publish'
+                and 'The resource manifest does not declare this published event topic.'
+                or 'The resource manifest does not declare this subscribed event topic.')
+    end
+    function capabilityPolicy:canPublishEvent(resource, topic)
+        return checkEventAuthority(resource, topic, 'publish', 'publish')
+    end
+    function capabilityPolicy:canSubscribeEvent(resource, topic)
+        return checkEventAuthority(resource, topic, 'subscribe', 'subscribe')
+    end
+    local function checkHookAuthority(resource, name, declaration)
+        if not validEventTopic(name) then
+            return nil, foundation.error('INVALID_HOOK',
+                'Hook names must be bounded namespaced identifiers.')
+        end
+        local registered = manifests[resource]
+        if not registered then
+            return nil, foundation.error('RESOURCE_NOT_REGISTERED',
+                'The calling resource has no validated Synex manifest.')
+        end
+        if declaration == 'run' and resource ~= deps.coreResource then
+            local ownedPrefix = 'synex.' .. tostring(resource):sub(7) .. '.'
+            if type(resource) ~= 'string' or not resource:match('^synex_[a-z0-9_]+$')
+                or name:sub(1, #ownedPrefix) ~= ownedPrefix then
+                metrics:increment('synex_hook_authorization_denials_total', {
+                    operation = declaration, reason = 'foreign_namespace'
+                })
+                return nil, foundation.error('HOOK_NAME_FORBIDDEN',
+                    'A resource may execute only hooks within its owned namespace.')
+            end
+        end
+        for _, pattern in ipairs((registered.manifest.hooks or {})[declaration] or {}) do
+            if matchesEventPattern(pattern, name) then return true, nil end
+        end
+        metrics:increment('synex_hook_authorization_denials_total', {
+            operation = declaration, reason = 'undeclared'
+        })
+        return nil, foundation.error(
+            declaration == 'register' and 'HOOK_REGISTER_UNDECLARED' or 'HOOK_RUN_UNDECLARED',
+            declaration == 'register'
+                and 'The resource manifest does not declare this registered hook.'
+                or 'The resource manifest does not declare this executed hook.')
+    end
+    function capabilityPolicy:canRegisterHook(resource, name)
+        return checkHookAuthority(resource, name, 'register')
+    end
+    function capabilityPolicy:canRunHook(resource, name)
+        return checkHookAuthority(resource, name, 'run')
+    end
     function capabilityPolicy:setAuditSink(sink)
         if sink ~= nil and type(sink) ~= 'function' then
             return nil, foundation.error('INVALID_ARGUMENT', 'Capability audit sink must be a function.')
@@ -229,7 +339,7 @@ factories.security = function(deps)
         end
     end
 
-    local function putSubjectCache(subject, roles, version)
+    local function putSubjectCache(subject, roles, version, validForMs)
         if not subjectCache[subject] then
             subjectCacheSize = subjectCacheSize + 1
             if subjectCacheSize > rbacCacheMaximum then
@@ -241,9 +351,11 @@ factories.security = function(deps)
             end
         end
         local now = foundation.monotonicMs()
+        local ttl = rbacCacheTtlMs
+        if validForMs ~= nil then ttl = math.min(ttl, math.max(0, validForMs)) end
         subjectCache[subject] = {
-            roles = foundation.copy(roles), version = tonumber(version) or 0,
-            expiresAt = now + rbacCacheTtlMs, touchedAt = now
+            roles = foundation.copy(roles), version = version,
+            expiresAt = now + ttl, touchedAt = now
         }
     end
 
@@ -272,27 +384,130 @@ factories.security = function(deps)
         return foundation.copy(context), nil
     end
 
-    function rbac:hydrate()
-        if not rbacStore then rbacHydrated = true return true, nil end
-        local rows, err = rbacStore:loadRoles()
-        if not rows then return nil, err end
-        if #rows > 16384 then return nil, foundation.error('RBAC_TOO_LARGE', 'Persistent RBAC role data exceeds the safe bootstrap limit.') end
+    local function normalizedPolicyRevision(value)
+        local revision = tonumber(value)
+        if not revision or math.type(revision) ~= 'integer' or revision < 1 then
+            return nil, foundation.error('RBAC_POLICY_REVISION_INVALID',
+                'The persistent RBAC policy revision is invalid.')
+        end
+        return revision, nil
+    end
+
+    local function normalizedSubjectVersion(value)
+        local version = tonumber(value)
+        if not version or math.type(version) ~= 'integer' or version < 0
+            or version >= math.maxinteger then
+            return nil, foundation.error('RBAC_SUBJECT_VERSION_INVALID',
+                'The persistent RBAC subject version is invalid.')
+        end
+        return version, nil
+    end
+
+    local function loadCurrentSubjectVersion(subject)
+        if type(rbacStore.loadSubjectVersion) ~= 'function' then
+            return nil, foundation.error('RBAC_STORE_INVALID',
+                'The persistent RBAC store does not expose subject revision authority.')
+        end
+        local version, versionError = rbacStore:loadSubjectVersion(subject)
+        if version == nil then
+            return nil, versionError or foundation.error('RBAC_SUBJECT_VERSION_UNAVAILABLE',
+                'The persistent RBAC subject version is unavailable.', { retryable = true })
+        end
+        return normalizedSubjectVersion(version)
+    end
+
+    local function applyRolePolicySnapshot(snapshot, minimumRevision)
+        if type(snapshot) ~= 'table' or type(snapshot.rows) ~= 'table' then
+            return nil, foundation.error('RBAC_DATA_INVALID',
+                'The persistent RBAC role snapshot is invalid.')
+        end
+        local revision, revisionError = normalizedPolicyRevision(snapshot.revision)
+        if not revision then return nil, revisionError end
+        if minimumRevision and revision < minimumRevision then
+            return nil, foundation.error('RBAC_POLICY_SNAPSHOT_STALE',
+                'The persistent RBAC role snapshot is older than the observed policy revision.', {
+                    retryable = true
+                })
+        end
+        if rolePolicyRevision and revision < rolePolicyRevision then
+            return nil, foundation.error('RBAC_POLICY_REVISION_REGRESSED',
+                'The persistent RBAC policy revision regressed.', { retryable = true })
+        end
+        if #snapshot.rows > 16384 then
+            return nil, foundation.error('RBAC_TOO_LARGE',
+                'Persistent RBAC role data exceeds the safe bootstrap limit.')
+        end
         local loaded = {}
-        for _, row in ipairs(rows) do
-            if not validRole(row.role_name) then return nil, foundation.error('RBAC_DATA_INVALID', 'Persistent RBAC contains an invalid role.') end
-            loaded[row.role_name] = loaded[row.role_name] or { allow = {}, deny = {}, version = tonumber(row.version) or 1 }
+        for _, row in ipairs(snapshot.rows) do
+            if type(row) ~= 'table' or not validRole(row.role_name) then
+                return nil, foundation.error('RBAC_DATA_INVALID',
+                    'Persistent RBAC contains an invalid role.')
+            end
+            local version = tonumber(row.version)
+            if not version or math.type(version) ~= 'integer' or version < 1 then
+                return nil, foundation.error('RBAC_DATA_INVALID',
+                    'Persistent RBAC contains an invalid role version.')
+            end
+            local existing = loaded[row.role_name]
+            if existing and existing.version ~= version then
+                return nil, foundation.error('RBAC_DATA_INVALID',
+                    'Persistent RBAC contains inconsistent role versions.')
+            end
+            loaded[row.role_name] = existing or { allow = {}, deny = {}, version = version }
             if row.permission_key ~= nil then
                 if not validPermission(row.permission_key) or (row.effect ~= 'allow' and row.effect ~= 'deny') then
-                    return nil, foundation.error('RBAC_DATA_INVALID', 'Persistent RBAC contains an invalid permission.')
+                    return nil, foundation.error('RBAC_DATA_INVALID',
+                        'Persistent RBAC contains an invalid permission.')
                 end
                 loaded[row.role_name][row.effect][row.permission_key] = true
             end
         end
         rolePermissions = loaded
+        rolePolicyRevision = revision
         rbacHydrated = true
         subjectCache = {}
         subjectCacheSize = 0
         return true, nil
+    end
+
+    local function refreshRolePolicy(minimumRevision)
+        local attempts = minimumRevision and 2 or 1
+        for attempt = 1, attempts do
+            local snapshot, snapshotError = rbacStore:loadRoleSnapshot()
+            if not snapshot then
+                return nil, snapshotError or foundation.error('RBAC_POLICY_REFRESH_FAILED',
+                    'The persistent RBAC role policy could not be refreshed.', { retryable = true })
+            end
+            local applied, applyError = applyRolePolicySnapshot(snapshot, minimumRevision)
+            if applied then return true, nil end
+            if not applyError or applyError.code ~= 'RBAC_POLICY_SNAPSHOT_STALE'
+                or attempt == attempts then return nil, applyError end
+        end
+        return nil, foundation.error('RBAC_POLICY_REFRESH_FAILED',
+            'The persistent RBAC role policy could not be refreshed.', { retryable = true })
+    end
+
+    local function ensureRolePolicyCurrent()
+        if not rbacStore then return true, nil end
+        if not rbacHydrated then return refreshRolePolicy() end
+        local revision, revisionError = rbacStore:loadPolicyRevision()
+        if revision == nil then
+            return nil, revisionError or foundation.error('RBAC_POLICY_REVISION_UNAVAILABLE',
+                'The persistent RBAC policy revision is unavailable.', { retryable = true })
+        end
+        local currentRevision, invalidRevision = normalizedPolicyRevision(revision)
+        if not currentRevision then return nil, invalidRevision end
+        if rolePolicyRevision and currentRevision < rolePolicyRevision then
+            return nil, foundation.error('RBAC_POLICY_REVISION_REGRESSED',
+                'The persistent RBAC policy revision regressed.', { retryable = true })
+        end
+        if currentRevision ~= rolePolicyRevision then return refreshRolePolicy(currentRevision) end
+        return true, nil
+    end
+
+    function rbac:hydrate()
+        if not rbacStore then rbacHydrated = true return true, nil end
+        return refreshRolePolicy()
     end
 
     function rbac:defineRole(name, permissions, context)
@@ -302,22 +517,42 @@ factories.security = function(deps)
         local mutationContext, contextError = validateMutationContext(context)
         if not mutationContext then return nil, contextError end
         if rbacStore then
-            local persisted, persistenceError = rbacStore:defineRole(name, normalized, mutationContext)
-            if not persisted then return nil, persistenceError end
+            local persistedSnapshot, persistenceError = rbacStore:defineRole(name, normalized, mutationContext)
+            if not persistedSnapshot then return nil, persistenceError end
+            local committedRevision, revisionError = normalizedPolicyRevision(
+                type(persistedSnapshot) == 'table' and persistedSnapshot.committedRevision or nil)
+            local snapshotRevision = type(persistedSnapshot) == 'table'
+                and tonumber(persistedSnapshot.revision) or nil
+            if not committedRevision or snapshotRevision ~= committedRevision then
+                rbacHydrated = false
+                return nil, revisionError or foundation.error('RBAC_POLICY_SNAPSHOT_INVALID',
+                    'The committed RBAC role snapshot revision is inconsistent.', {
+                        retryable = true
+                    })
+            end
+            local applied, applyError = applyRolePolicySnapshot(persistedSnapshot, committedRevision)
+            if not applied then
+                rbacHydrated = false
+                return nil, applyError
+            end
+        else
+            local currentVersion = rolePermissions[name] and tonumber(rolePermissions[name].version) or 0
+            local stored = { allow = {}, deny = {}, version = currentVersion + 1 }
+            for _, permission in ipairs(normalized) do stored[permission.effect][permission.permission] = true end
+            rolePermissions[name] = stored
+            subjectCache = {}
+            subjectCacheSize = 0
         end
-        local currentVersion = rolePermissions[name] and tonumber(rolePermissions[name].version) or 0
-        local stored = { allow = {}, deny = {}, version = currentVersion + 1 }
-        for _, permission in ipairs(normalized) do stored[permission.effect][permission.permission] = true end
-        rolePermissions[name] = stored
-        subjectCache = {}
-        subjectCacheSize = 0
         metrics:increment('synex_rbac_mutations_total', { action = 'define_role' })
         return true, nil
     end
 
     function rbac:assign(subject, role, context)
         if not validSubject(subject) then return nil, foundation.error('INVALID_SUBJECT', 'RBAC subject is invalid.') end
-        if not validRole(role) or not rolePermissions[role] then return nil, foundation.error('ROLE_NOT_FOUND', 'The role does not exist.') end
+        if not validRole(role) then return nil, foundation.error('INVALID_ROLE', 'Role name is invalid.') end
+        local policyCurrent, policyError = ensureRolePolicyCurrent()
+        if not policyCurrent then return nil, policyError end
+        if not rolePermissions[role] then return nil, foundation.error('ROLE_NOT_FOUND', 'The role does not exist.') end
         local mutationContext, contextError = validateMutationContext(context)
         if not mutationContext then return nil, contextError end
         local expiresAt = mutationContext.expiresAt
@@ -353,28 +588,68 @@ factories.security = function(deps)
 
     function rbac:check(subject, permission, explicitDenies)
         if not validSubject(subject) or not validPermission(permission) then return false, nil end
+        local policyCurrent, policyError = ensureRolePolicyCurrent()
+        if not policyCurrent then return false, policyError end
         if matchesAny(explicitDenies, permission) then return false, nil end
-        if not rbacHydrated then
-            local hydrated, hydrationError = self:hydrate()
-            if not hydrated then return false, hydrationError end
-        end
         local roles = subjectRoles[subject] or {}
         if rbacStore then
             local now = foundation.monotonicMs()
             local cached = subjectCache[subject]
+            local cacheCurrent = false
             if cached and cached.expiresAt > now then
-                cached.touchedAt = now
-                roles = cached.roles
-                metrics:increment('synex_rbac_cache_total', { result = 'hit' })
-            else
-                local loaded, loadError = rbacStore:loadSubject(subject)
-                if not loaded then
+                local currentVersion, versionError = loadCurrentSubjectVersion(subject)
+                if currentVersion == nil then
                     metrics:increment('synex_rbac_cache_total', { result = 'error' })
-                    return false, loadError
+                    return false, versionError
+                end
+                local refreshedNow = foundation.monotonicMs()
+                if currentVersion == cached.version and cached.expiresAt > refreshedNow then
+                    cached.touchedAt = refreshedNow
+                    roles = cached.roles
+                    cacheCurrent = true
+                    metrics:increment('synex_rbac_cache_total', { result = 'hit' })
+                else
+                    invalidateSubject(subject)
+                    metrics:increment('synex_rbac_cache_total', { result = 'stale' })
+                end
+            end
+            if not cacheCurrent then
+                local loaded, loadError = rbacStore:loadSubject(subject)
+                if type(loaded) ~= 'table' or type(loaded.roles) ~= 'table' then
+                    metrics:increment('synex_rbac_cache_total', { result = 'error' })
+                    return false, loadError or foundation.error('RBAC_DATA_INVALID',
+                        'The persistent RBAC subject snapshot is invalid.')
+                end
+                local loadedVersion, versionError = normalizedSubjectVersion(loaded.version)
+                if loadedVersion == nil then
+                    metrics:increment('synex_rbac_cache_total', { result = 'error' })
+                    return false, versionError
+                end
+                local validForMs = loaded.validForMs
+                if validForMs ~= nil then
+                    validForMs = tonumber(validForMs)
+                    if not validForMs or math.type(validForMs) ~= 'integer'
+                        or validForMs < 0 or validForMs > 31536000000 then
+                        metrics:increment('synex_rbac_cache_total', { result = 'error' })
+                        return false, foundation.error('RBAC_DATA_INVALID',
+                            'The persistent RBAC assignment validity is invalid.')
+                    end
+                end
+                if #loaded.roles > 512 then
+                    metrics:increment('synex_rbac_cache_total', { result = 'error' })
+                    return false, foundation.error('RBAC_DATA_INVALID',
+                        'The persistent RBAC subject assignments exceed the safe bound.')
                 end
                 roles = {}
-                for _, role in ipairs(loaded.roles or {}) do if rolePermissions[role] then roles[role] = true end end
-                putSubjectCache(subject, roles, loaded.version)
+                for _, role in ipairs(loaded.roles) do
+                    if not validRole(role) then
+                        metrics:increment('synex_rbac_cache_total', { result = 'error' })
+                        return false, foundation.error('RBAC_DATA_INVALID',
+                            'The persistent RBAC subject contains an invalid role.')
+                    end
+                    if rolePermissions[role] then roles[role] = true end
+                end
+                putSubjectCache(subject, roles, loadedVersion, validForMs)
                 metrics:increment('synex_rbac_cache_total', { result = 'miss' })
             end
         end
@@ -410,25 +685,61 @@ factories.security = function(deps)
             persistent = rbacStore ~= nil,
             hydrated = rbacHydrated,
             roles = roleCount,
+            policyRevision = rolePolicyRevision,
             cachedSubjects = subjectCacheSize,
             cacheMaximum = rbacCacheMaximum,
             cacheTtlMs = rbacCacheTtlMs
         }
     end
 
+    local function sweepBuckets(now)
+        if now - lastBucketSweepAt < rateLimiterSweepMs then return end
+        lastBucketSweepAt = now
+        for key, bucket in pairs(buckets) do
+            if now - bucket.touchedAt >= rateLimiterTtlMs then
+                buckets[key] = nil
+                bucketCount = math.max(0, bucketCount - 1)
+            end
+        end
+    end
+
     local limiter = {}
     function limiter:consume(key, capacity, refillPerSecond, cost)
         local now = foundation.monotonicMs()
-        capacity = math.max(1, math.min(capacity or 1, 10000))
-        refillPerSecond = math.max(0.01, math.min(refillPerSecond or 1, 10000))
-        cost = math.max(0.01, cost or 1)
+        if type(key) ~= 'string' or #key < 1 or #key > 512 then
+            return nil, foundation.error('INVALID_RATE_LIMIT_KEY', 'The operation rate-limit key is invalid.')
+        end
+        if type(capacity) ~= 'number' or capacity ~= capacity
+            or capacity == math.huge or capacity == -math.huge or capacity <= 0 or capacity > 10000
+            or type(refillPerSecond) ~= 'number' or refillPerSecond ~= refillPerSecond
+            or refillPerSecond == math.huge or refillPerSecond == -math.huge
+            or refillPerSecond <= 0 or refillPerSecond > 10000
+            or type(cost) ~= 'number' or cost ~= cost or cost == math.huge or cost == -math.huge
+            or cost <= 0 or cost > 10000 then
+            return nil, foundation.error('INVALID_RATE_LIMIT',
+                'Rate-limit capacity, refill, and cost must be finite bounded positive numbers.')
+        end
+        sweepBuckets(now)
         local bucket = buckets[key]
-        if not bucket then bucket = { tokens = capacity, at = now }; buckets[key] = bucket end
+        if not bucket then
+            if bucketCount >= rateLimiterMaximum then
+                metrics:increment('synex_rate_limit_rejections_total', {
+                    scope = key:match('^[^:]+') or 'unknown'
+                })
+                return nil, foundation.error('RATE_LIMITED', 'The operation rate limit was exceeded.', {
+                    retryable = true, details = { retryAfterMs = rateLimiterTtlMs }
+                })
+            end
+            bucket = { tokens = capacity, at = now, touchedAt = now }
+            buckets[key] = bucket
+            bucketCount = bucketCount + 1
+        end
         local elapsed = math.max(0, now - bucket.at)
         bucket.tokens = math.min(capacity, bucket.tokens + elapsed * refillPerSecond / 1000)
         bucket.at = now
+        bucket.touchedAt = now
         if bucket.tokens < cost then
-            metrics:increment('synex_rate_limit_rejections_total', { scope = tostring(key):match('^[^:]+') or 'unknown' })
+            metrics:increment('synex_rate_limit_rejections_total', { scope = key:match('^[^:]+') or 'unknown' })
             local retryAfterMs = math.ceil((cost - bucket.tokens) / refillPerSecond * 1000)
             return nil, foundation.error('RATE_LIMITED', 'The operation rate limit was exceeded.', {
                 retryable = true, details = { retryAfterMs = retryAfterMs }
@@ -437,14 +748,38 @@ factories.security = function(deps)
         bucket.tokens = bucket.tokens - cost
         return true, nil
     end
-    function limiter:purge(prefix)
-        for key in pairs(buckets) do if key:sub(1, #prefix) == prefix then buckets[key] = nil end end
+    function limiter:purge(...)
+        for index = 1, select('#', ...) do
+            local prefix = select(index, ...)
+            if type(prefix) == 'string' and #prefix > 0 then
+                for key in pairs(buckets) do
+                    if key:sub(1, #prefix) == prefix then
+                        buckets[key] = nil
+                        bucketCount = math.max(0, bucketCount - 1)
+                    end
+                end
+            end
+        end
+    end
+    function limiter:snapshot()
+        sweepBuckets(foundation.monotonicMs())
+        return { buckets = bucketCount, maximum = rateLimiterMaximum, ttlMs = rateLimiterTtlMs }
     end
 
-    local function validateNetworkEnvelope(envelope)
-        if type(envelope) ~= 'table' then return nil, foundation.error('INVALID_ENVELOPE', 'RPC envelope must be an object.') end
+    local function validateNetworkEnvelope(envelope, configuredMaximumDeadlineMs)
+        local maximumDeadlineMs = type(configuredMaximumDeadlineMs) == 'number'
+            and math.type(configuredMaximumDeadlineMs) == 'integer'
+            and configuredMaximumDeadlineMs >= 50 and configuredMaximumDeadlineMs <= 15000
+            and configuredMaximumDeadlineMs or 15000
+        if type(envelope) ~= 'table' or getmetatable(envelope) ~= nil then
+            return nil, foundation.error('INVALID_ENVELOPE', 'RPC envelope must be a plain object.')
+        end
         local allowed = { wire = true, requestId = true, procedure = true, version = true, payload = true, traceId = true, deadlineMs = true, idempotencyKey = true }
-        for key in pairs(envelope) do if not allowed[key] then return nil, foundation.error('INVALID_ENVELOPE', 'RPC envelope contains an unknown field.') end end
+        for key in pairs(envelope) do
+            if type(key) ~= 'string' or not allowed[key] then
+                return nil, foundation.error('INVALID_ENVELOPE', 'RPC envelope contains an unknown field.')
+            end
+        end
         if envelope.wire ~= 1 then return nil, foundation.error('WIRE_VERSION_UNSUPPORTED', 'RPC wire version is unsupported.') end
         if type(envelope.requestId) ~= 'string' or #envelope.requestId < 8 or #envelope.requestId > 96
             or not envelope.requestId:match('^[A-Za-z0-9_.:%-]+$') then
@@ -459,7 +794,11 @@ factories.security = function(deps)
             or not envelope.traceId:match('^[A-Za-z0-9_.:%-]+$')) then
             return nil, foundation.error('INVALID_TRACE_ID', 'RPC trace ID is invalid.')
         end
-        if envelope.deadlineMs ~= nil and (type(envelope.deadlineMs) ~= 'number' or envelope.deadlineMs < 50 or envelope.deadlineMs > 15000) then return nil, foundation.error('INVALID_DEADLINE', 'RPC deadline is invalid.') end
+        if envelope.deadlineMs ~= nil and (type(envelope.deadlineMs) ~= 'number'
+            or math.type(envelope.deadlineMs) ~= 'integer'
+            or envelope.deadlineMs < 50 or envelope.deadlineMs > maximumDeadlineMs) then
+            return nil, foundation.error('INVALID_DEADLINE', 'RPC deadline is invalid.')
+        end
         if envelope.idempotencyKey ~= nil and (type(envelope.idempotencyKey) ~= 'string'
             or #envelope.idempotencyKey < 8 or #envelope.idempotencyKey > 128
             or not envelope.idempotencyKey:match('^[A-Za-z0-9_.:%-]+$')) then

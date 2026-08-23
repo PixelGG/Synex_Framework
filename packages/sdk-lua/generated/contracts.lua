@@ -271,7 +271,7 @@ SynexLuaGeneratedContracts = {
       ["version"] = "1.0.0"
     }
   },
-  ["sourceHash"] = "63fc97bec257cb54f15f7735448cd83fbde85834c33f2e9c98441f00c14375bb",
+  ["sourceHash"] = "7d823d421d2db0bbbabb2e64171a14c45d0fbcab23a4fd9bc11458c708482795",
   ["versions"] = {
     ["synex.accounts.burn@1.0.0"] = {
       ["kind"] = "rpc",

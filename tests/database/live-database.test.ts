@@ -384,13 +384,68 @@ test('live MariaDB/MySQL applies every migration and exposes enforced account co
 }, async () => {
   const { connection, databaseName } = await openLiveDatabase();
   try {
-    await applyMigrations(connection, await loadMigrations());
+    const migrations = await loadMigrations();
+    await applyMigrations(connection, migrations);
+    const slotMigration = migrations.find(
+      (migration) => migration.file === '018_character_slot_reuse.sql',
+    );
+    assert.ok(slotMigration, 'character slot reuse migration is missing');
+    await connection.query(
+      'ALTER TABLE synex_characters DROP INDEX uq_characters_user_slot_active',
+    );
+    await connection.query(
+      'ALTER TABLE synex_characters DROP COLUMN active_slot_marker',
+    );
+    await connection.query(
+      `ALTER TABLE synex_characters
+       ADD COLUMN active_slot_marker TINYINT UNSIGNED
+       GENERATED ALWAYS AS (CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE NULL END) STORED`,
+    );
+    await connection.query(
+      'ALTER TABLE synex_characters ADD INDEX uq_characters_user_slot (user_id, slot)',
+    );
+    try {
+      await assert.rejects(
+        applyMigrations(connection, [slotMigration]),
+        /active slot marker definition verification failed/iu,
+      );
+      const [failedSlotIndexes] = await connection.query<RowDataPacket[]>(
+        `SELECT index_name FROM information_schema.statistics
+         WHERE table_schema = ? AND table_name = 'synex_characters'
+           AND index_name IN ('uq_characters_user_slot', 'uq_characters_user_slot_active')`,
+        [databaseName],
+      );
+      assert.equal(
+        failedSlotIndexes.some((row) => row.index_name === 'uq_characters_user_slot'),
+        true,
+      );
+      assert.equal(
+        failedSlotIndexes.some((row) => row.index_name === 'uq_characters_user_slot_active'),
+        false,
+      );
+    } finally {
+      await connection.query('DROP PROCEDURE IF EXISTS synex_migrate_018_character_slot_reuse');
+      const [cleanupIndexes] = await connection.query<RowDataPacket[]>(
+        `SELECT DISTINCT index_name FROM information_schema.statistics
+         WHERE table_schema = ? AND table_name = 'synex_characters'
+           AND index_name IN ('uq_characters_user_slot', 'uq_characters_user_slot_active')`,
+        [databaseName],
+      );
+      if (cleanupIndexes.some((row) => row.index_name === 'uq_characters_user_slot')) {
+        await connection.query('ALTER TABLE synex_characters DROP INDEX uq_characters_user_slot');
+      }
+      if (cleanupIndexes.some((row) => row.index_name === 'uq_characters_user_slot_active')) {
+        await connection.query('ALTER TABLE synex_characters DROP INDEX uq_characters_user_slot_active');
+      }
+      await connection.query('ALTER TABLE synex_characters DROP COLUMN active_slot_marker');
+      await applyMigrations(connection, [slotMigration]);
+    }
     const [engines] = await connection.query<EngineRow[]>(
       `SELECT table_name, engine FROM information_schema.tables
        WHERE table_schema = ? AND table_name LIKE 'synex\\_%' ESCAPE '\\\\'`,
       [databaseName],
     );
-    assert.ok(engines.length >= 46);
+    assert.ok(engines.length >= 47);
     assert.ok(engines.every((row) => row.engine.toLowerCase() === 'innodb'));
 
     const [checks] = await connection.query<ConstraintRow[]>(
@@ -437,6 +492,178 @@ test('live MariaDB/MySQL applies every migration and exposes enforced account co
       [databaseName],
     );
     assert.equal(reversalForeignKeys.length, 2);
+
+    const [scalabilityIndexes] = await connection.query<RowDataPacket[]>(
+      `SELECT table_name, index_name, seq_in_index, column_name
+       FROM information_schema.statistics
+       WHERE table_schema = ? AND index_name IN (
+         'idx_sessions_instance_generation',
+         'idx_sessions_instance_open',
+         'idx_session_control_requester_pending',
+         'idx_session_control_target_pending',
+         'idx_session_control_state_scan',
+         'idx_cluster_leases_owner_expiry',
+         'idx_cluster_leases_domain_expiry',
+         'idx_cluster_leases_terminal_compaction',
+         'idx_sessions_character_open',
+         'idx_sessions_user_open',
+         'idx_audit_log_archive_queue'
+       ) ORDER BY table_name, index_name, seq_in_index`,
+      [databaseName],
+    );
+    const indexShapes = new Map<string, string[]>();
+    for (const row of scalabilityIndexes) {
+      const name = String(row.index_name);
+      const columns = indexShapes.get(name) ?? [];
+      columns.push(String(row.column_name));
+      indexShapes.set(name, columns);
+    }
+    assert.deepEqual(indexShapes.get('idx_sessions_instance_generation'), [
+      'server_instance_id', 'source_generation',
+    ]);
+    assert.deepEqual(indexShapes.get('idx_sessions_instance_open'), [
+      'server_instance_id', 'closed_at', 'id',
+    ]);
+    assert.deepEqual(indexShapes.get('idx_session_control_requester_pending'), [
+      'requested_by_instance_id', 'state', 'created_at', 'request_id',
+    ]);
+    assert.deepEqual(indexShapes.get('idx_session_control_target_pending'), [
+      'target_instance_id', 'state', 'expires_at', 'created_at', 'request_id',
+    ]);
+    assert.deepEqual(indexShapes.get('idx_session_control_state_scan'), [
+      'state', 'request_id',
+    ]);
+    assert.deepEqual(indexShapes.get('idx_cluster_leases_owner_expiry'), [
+      'owner_id', 'expires_at', 'lease_name',
+    ]);
+    assert.deepEqual(indexShapes.get('idx_cluster_leases_domain_expiry'), [
+      'lease_domain_kind', 'expires_at', 'lease_name',
+    ]);
+    assert.deepEqual(indexShapes.get('idx_cluster_leases_terminal_compaction'), [
+      'terminal_compaction_at', 'lease_name',
+    ]);
+    assert.deepEqual(indexShapes.get('idx_sessions_character_open'), [
+      'character_id', 'closed_at', 'id',
+    ]);
+    assert.deepEqual(indexShapes.get('idx_sessions_user_open'), [
+      'user_id', 'closed_at', 'connected_at', 'id',
+    ]);
+    assert.deepEqual(indexShapes.get('idx_audit_log_archive_queue'), [
+      'archive_recorded_at', 'occurred_at', 'id',
+    ]);
+
+    const [scalabilityColumns] = await connection.query<RowDataPacket[]>(
+      `SELECT table_name, column_name, data_type, character_maximum_length,
+              datetime_precision, is_nullable, extra
+       FROM information_schema.columns
+       WHERE table_schema = ? AND (
+         (table_name = 'synex_cluster_leases' AND column_name = 'lease_domain_kind')
+         OR (table_name = 'synex_cluster_leases' AND column_name = 'terminal_compaction_at')
+         OR (table_name = 'synex_audit_log' AND column_name = 'archive_recorded_at')
+         OR (table_name = 'synex_session_control_requests' AND column_name = 'target_instance_id')
+       ) ORDER BY table_name, column_name`,
+      [databaseName],
+    );
+    assert.equal(scalabilityColumns.length, 4);
+    const leaseDomain = scalabilityColumns.find((row) => row.column_name === 'lease_domain_kind');
+    const terminalCompaction = scalabilityColumns.find(
+      (row) => row.column_name === 'terminal_compaction_at',
+    );
+    const archiveCheckpoint = scalabilityColumns.find((row) => row.column_name === 'archive_recorded_at');
+    const controlTarget = scalabilityColumns.find((row) => row.column_name === 'target_instance_id');
+    assert.match(String(leaseDomain?.extra ?? ''), /STORED GENERATED/iu);
+    assert.equal(String(terminalCompaction?.data_type).toLowerCase(), 'datetime');
+    assert.equal(Number(terminalCompaction?.datetime_precision), 6);
+    assert.equal(String(terminalCompaction?.is_nullable), 'YES');
+    assert.equal(String(terminalCompaction?.extra ?? ''), '');
+    assert.equal(String(archiveCheckpoint?.is_nullable), 'YES');
+    assert.equal(String(controlTarget?.data_type).toLowerCase(), 'char');
+    assert.equal(Number(controlTarget?.character_maximum_length), 36);
+    assert.equal(String(controlTarget?.is_nullable), 'NO');
+
+    const [slotMarkerColumns] = await connection.query<RowDataPacket[]>(
+      `SELECT column_name, data_type, column_type, is_nullable, extra, generation_expression
+       FROM information_schema.columns
+       WHERE table_schema = ? AND table_name = 'synex_characters'
+         AND column_name = 'active_slot_marker'`,
+      [databaseName],
+    );
+    assert.equal(slotMarkerColumns.length, 1);
+    assert.equal(String(slotMarkerColumns[0]?.data_type).toLowerCase(), 'tinyint');
+    assert.match(String(slotMarkerColumns[0]?.column_type ?? ''), /^tinyint(?:\(\d+\))? unsigned$/iu);
+    assert.equal(String(slotMarkerColumns[0]?.is_nullable), 'YES');
+    assert.match(String(slotMarkerColumns[0]?.extra ?? ''), /STORED GENERATED/iu);
+    const slotExpression = String(
+      slotMarkerColumns[0]?.generation_expression ?? '',
+    ).replaceAll('`', '').replace(/[\s()]/gu, '').toLowerCase();
+    assert.ok(new Set([
+      'casewhendeleted_atisnullthen1elsenullend',
+      'casewhenisnulldeleted_atthen1elsenullend',
+      'ifdeleted_atisnull,1,null',
+      'ifisnulldeleted_at,1,null',
+    ]).has(slotExpression), `unexpected active_slot_marker expression: ${slotExpression}`);
+
+    const [slotIndexes] = await connection.query<RowDataPacket[]>(
+      `SELECT index_name, seq_in_index, column_name, non_unique
+       FROM information_schema.statistics
+       WHERE table_schema = ? AND table_name = 'synex_characters'
+         AND index_name IN ('uq_characters_user_slot', 'uq_characters_user_slot_active')
+       ORDER BY index_name, seq_in_index`,
+      [databaseName],
+    );
+    assert.equal(slotIndexes.some((row) => row.index_name === 'uq_characters_user_slot'), false);
+    const activeSlotIndex = slotIndexes.filter(
+      (row) => row.index_name === 'uq_characters_user_slot_active',
+    );
+    assert.deepEqual(
+      activeSlotIndex.map((row) => String(row.column_name)),
+      ['user_id', 'slot', 'active_slot_marker'],
+    );
+    assert.ok(activeSlotIndex.every((row) => Number(row.non_unique) === 0));
+
+    const slotUserId = randomUUID();
+    const deletedCharacterId = randomUUID();
+    const activeCharacterId = randomUUID();
+    await connection.query(
+      `INSERT INTO synex_users (id, metadata_json) VALUES (?, '{}')`,
+      [slotUserId],
+    );
+    await connection.query(
+      `INSERT INTO synex_character_slots (user_id, slot_limit) VALUES (?, 1)`,
+      [slotUserId],
+    );
+    await connection.query(
+      `INSERT INTO synex_characters
+       (id, user_id, slot, status, first_name, last_name, metadata_json, deleted_at)
+       VALUES (?, ?, 1, 'deleted', 'Deleted', 'Character', '{}', CURRENT_TIMESTAMP(6))`,
+      [deletedCharacterId, slotUserId],
+    );
+    await connection.query(
+      `INSERT INTO synex_characters
+       (id, user_id, slot, status, first_name, last_name, metadata_json)
+       VALUES (?, ?, 1, 'active', 'Live', 'Character', '{}')`,
+      [activeCharacterId, slotUserId],
+    );
+    await assert.rejects(
+      connection.query(
+        `INSERT INTO synex_characters
+         (id, user_id, slot, status, first_name, last_name, metadata_json)
+         VALUES (?, ?, 1, 'active', 'Duplicate', 'Character', '{}')`,
+        [randomUUID(), slotUserId],
+      ),
+      (error: unknown) => typeof error === 'object' && error !== null
+        && 'code' in error && error.code === 'ER_DUP_ENTRY',
+    );
+    const [slotRows] = await connection.query<RowDataPacket[]>(
+      `SELECT id, active_slot_marker FROM synex_characters
+       WHERE user_id = ? AND slot = 1 ORDER BY id`,
+      [slotUserId],
+    );
+    assert.equal(slotRows.length, 2);
+    const deletedSlot = slotRows.find((row) => row.id === deletedCharacterId);
+    const activeSlot = slotRows.find((row) => row.id === activeCharacterId);
+    assert.equal(deletedSlot?.active_slot_marker, null);
+    assert.equal(Number(activeSlot?.active_slot_marker), 1);
   } finally {
     await connection.end();
   }
@@ -650,7 +877,7 @@ test('live restart waits for an in-flight prior-boot insert, then closes it and 
     const bootB = randomUUID();
     const sessionId = randomUUID();
     const leaseName = `session:${userId}`;
-    const leaseOwner = `${instanceId}:live`;
+    const leaseOwner = `${instanceId}:${sessionId}`;
     await setup.connection.query(
       `INSERT INTO synex_users (id, status, locale, metadata_json, version)
        VALUES (?, 'active', 'en', '{}', 1)`,
@@ -733,9 +960,15 @@ test('live restart waits for an in-flight prior-boot insert, then closes it and 
       );
       assert.equal(authority.length, 1);
       await restarter.connection.query(
-        `UPDATE synex_cluster_leases SET expires_at = CURRENT_TIMESTAMP(6)
-         WHERE lease_name LIKE 'session:%' AND owner_id LIKE ?`,
-        [`${instanceId}:%`],
+        `UPDATE synex_cluster_leases AS lease
+         INNER JOIN synex_sessions AS session
+           ON session.server_instance_id = ?
+          AND session.closed_at IS NULL
+          AND lease.owner_id = CONCAT(session.server_instance_id, ':', session.id)
+         SET lease.expires_at = CURRENT_TIMESTAMP(6)
+         WHERE LEFT(lease.lease_name, 8) = 'session:'
+           AND lease.expires_at > CURRENT_TIMESTAMP(6)`,
+        [instanceId],
       );
       await restarter.connection.query(
         `UPDATE synex_sessions
@@ -761,9 +994,15 @@ test('live restart waits for an in-flight prior-boot insert, then closes it and 
     assert.equal(sessions[0]?.state, 'CLOSED');
     assert.ok(sessions[0]?.closed_at);
     const [floor] = await setup.connection.query<RowDataPacket[]>(
-      `SELECT MAX(source_generation) AS source_generation_floor
-       FROM synex_sessions WHERE server_instance_id = ?`,
-      [instanceId],
+      `SELECT COALESCE((
+         SELECT session.source_generation
+         FROM synex_sessions AS session
+         WHERE session.server_instance_id = boot.instance_id
+         ORDER BY session.source_generation DESC LIMIT 1
+       ), 0) AS source_generation_floor
+       FROM synex_instance_boots AS boot
+       WHERE boot.instance_id = ? AND boot.boot_id = ? LIMIT 1`,
+      [instanceId, bootB],
     );
     assert.equal(asNumber(floor[0]?.source_generation_floor as string | number), 38);
   } finally {

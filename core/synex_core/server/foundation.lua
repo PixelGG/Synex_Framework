@@ -50,6 +50,15 @@ factories.foundation = function(deps)
         }
     end
 
+    local function failureCode(value, fallback)
+        local code = type(value) == 'table' and rawget(value, 'code') or nil
+        if type(code) == 'string' and #code >= 2 and #code <= 64
+            and code:match('^[A-Z][A-Z0-9_]+$') then return code end
+        if type(fallback) == 'string' and #fallback >= 2 and #fallback <= 64
+            and fallback:match('^[A-Z][A-Z0-9_]+$') then return fallback end
+        return 'RUNTIME_ERROR'
+    end
+
     local function safeCall(handler, ...)
         local arguments = table.pack(...)
         local ok, first, second = xpcall(function()
@@ -57,6 +66,29 @@ factories.foundation = function(deps)
         end, debug.traceback)
         if ok then return true, first, second end
         return false, first
+    end
+
+    local gameTimerModulo = 0x100000000
+    local gameTimerHalfRange = 0x80000000
+    local previousGameTimer = nil
+    local monotonicGameTimer = 0
+    local function monotonicMs()
+        local raw = platform.nowGame()
+        if type(raw) ~= 'number' or math.type(raw) ~= 'integer' then
+            error('the Cfx game timer returned a non-integer value', 2)
+        end
+        local current = raw % gameTimerModulo
+        if previousGameTimer == nil then
+            previousGameTimer = current
+            monotonicGameTimer = current
+            return monotonicGameTimer
+        end
+        local elapsed = (current - previousGameTimer) % gameTimerModulo
+        if elapsed <= gameTimerHalfRange then
+            previousGameTimer = current
+            monotonicGameTimer = monotonicGameTimer + elapsed
+        end
+        return monotonicGameTimer
     end
 
     local sequence = 0
@@ -72,12 +104,8 @@ factories.foundation = function(deps)
         sequence = sequence + 1
         local namespace = tostring(prefix or 'id'):lower():gsub('[^a-z0-9]', ''):sub(1, 5)
         if namespace == '' then namespace = 'id' end
-        local now = os.time() * 1000 + ((platform.nowGame and platform.nowGame() or 0) % 1000)
+        local now = os.time() * 1000 + (monotonicMs() % 1000)
         return ('%s_%011x_%08x_%08x'):format(namespace, now & 0x7ffffffffff, idNode, sequence & 0xffffffff)
-    end
-
-    local function monotonicMs()
-        return platform.nowGame()
     end
 
     local function utcIso()
@@ -94,7 +122,7 @@ factories.foundation = function(deps)
     end
 
     local function semver(value)
-        if type(value) ~= 'string' then return nil end
+        if type(value) ~= 'string' or #value < 1 or #value > 128 then return nil end
         local major, minor, patch, suffix = value:match('^(%d+)%.(%d+)%.(%d+)(.*)$')
         if not major
             or (#major > 1 and major:sub(1, 1) == '0')
@@ -151,6 +179,7 @@ factories.foundation = function(deps)
         local parsed = semver(version)
         if not parsed then return false end
         if range == nil or range == '' or range == '*' then return true end
+        if type(range) ~= 'string' or #range > 256 then return false end
         if parsed.prerelease ~= nil then return false end
         local matched = false
         for token in range:gmatch('%S+') do
@@ -182,19 +211,45 @@ factories.foundation = function(deps)
         identifier = true, identifiers = true, webhook = true
     }
 
-    local function redact(value, depth)
-        if type(value) ~= 'table' then return value end
+    local function redact(value, depth, seen)
+        local valueType = type(value)
+        if valueType == 'string' then
+            if #value > 4096 then return value:sub(1, 4096) .. '[TRUNCATED]' end
+            return value
+        end
+        if valueType == 'number' then
+            if value ~= value or value == math.huge or value == -math.huge then return '[NON_FINITE]' end
+            return value
+        end
+        if valueType == 'nil' or valueType == 'boolean' then return value end
+        if valueType ~= 'table' then return '[UNSUPPORTED_TYPE]' end
+        if getmetatable(value) ~= nil then return '[UNSAFE_TABLE]' end
         depth = (depth or 0) + 1
         if depth > 8 then return '[DEPTH_LIMIT]' end
+        seen = seen or {}
+        if seen[value] then return '[CYCLE]' end
+        seen[value] = true
         local output = {}
-        for key, item in pairs(value) do
-            local normalized = type(key) == 'string' and key:lower() or ''
+        local count = 0
+        for key, item in next, value do
+            count = count + 1
+            if count > 128 then
+                output['[TRUNCATED_FIELDS]'] = true
+                break
+            end
+            if type(key) ~= 'string' or #key < 1 or #key > 128 then
+                output[('[INVALID_FIELD_%d]'):format(count)] = '[REDACTED]'
+                goto continue
+            end
+            local normalized = key:lower()
             if redactedKeys[normalized] or normalized:find('password', 1, true) or normalized:find('secret', 1, true) then
                 output[key] = '[REDACTED]'
             else
-                output[key] = redact(item, depth)
+                output[key] = redact(item, depth, seen)
             end
+            ::continue::
         end
+        seen[value] = nil
         return output
     end
 
@@ -235,18 +290,20 @@ factories.foundation = function(deps)
     function logger:write(level, message, fields)
         if (levelOrder[level] or 3) < (levelOrder[configuredLevel] or 3) then return end
         local context = currentContext()
+        local safeMessage = type(message) == 'string' and message or 'Log message unavailable.'
+        if #safeMessage > 1024 then safeMessage = safeMessage:sub(1, 1024) .. '[TRUNCATED]' end
         local record = {
             timestamp = utcIso(),
             level = level,
             component = 'synex_core',
-            message = tostring(message),
+            message = safeMessage,
             traceId = context and context.traceId or nil,
             caller = context and context.caller or nil,
             operation = context and (context.contract or context.service or context.hook) or nil,
             fields = redact(fields or {})
         }
         local ok, encoded = pcall(platform.jsonEncode, record)
-        platform.print(ok and encoded or ('[synex_core] %s: %s'):format(level, tostring(message)))
+        platform.print(ok and encoded or ('[synex_core] %s: %s'):format(level, safeMessage))
     end
     for _, level in ipairs({ 'trace', 'debug', 'info', 'warn', 'error', 'fatal' }) do
         logger[level] = function(self, message, fields) return self:write(level, message, fields) end
@@ -254,24 +311,78 @@ factories.foundation = function(deps)
 
     local metricValues = {}
     local metricHistograms = {}
+    local metricSeries = {}
+    local metricSeriesCount = 0
+    local metricSeriesMaximum = math.max(8, math.min(
+        math.floor(tonumber(deps.maximumMetricSeries) or 2048), 16384))
+    local droppedMetricSamples = 0
+    local invalidMetricSamples = 0
     local metrics = {}
     local function metricKey(name, labels)
+        if type(name) ~= 'string' or #name < 1 or #name > 128
+            or not name:match('^[A-Za-z_:][A-Za-z0-9_:]*$') then return nil end
+        if labels ~= nil and (type(labels) ~= 'table' or getmetatable(labels) ~= nil) then return nil end
         local parts = {}
-        for key, value in pairs(labels or {}) do parts[#parts + 1] = tostring(key) .. '=' .. tostring(value) end
+        for key, value in pairs(labels or {}) do
+            if type(key) ~= 'string' or #key < 1 or #key > 64
+                or not key:match('^[A-Za-z_][A-Za-z0-9_]*$')
+                or (#parts + 1) > 12 then return nil end
+            local valueType = type(value)
+            if valueType == 'number' and (value ~= value or value == math.huge or value == -math.huge) then
+                return nil
+            end
+            if valueType ~= 'string' and valueType ~= 'number' and valueType ~= 'boolean' then return nil end
+            local encoded = tostring(value)
+            if #encoded > 128 then return nil end
+            parts[#parts + 1] = ('%d:%s=%s:%d:%s'):format(
+                #key, key, valueType, #encoded, encoded)
+        end
         table.sort(parts)
-        return name .. ':' .. table.concat(parts, ',')
+        local key = name .. ':' .. table.concat(parts, ',')
+        if #key > 2048 then return nil end
+        return key
+    end
+    local function reserveMetricSeries(key)
+        if metricSeries[key] then return true end
+        if metricSeriesCount >= metricSeriesMaximum then
+            droppedMetricSamples = droppedMetricSamples + 1
+            return false
+        end
+        metricSeries[key] = true
+        metricSeriesCount = metricSeriesCount + 1
+        return true
     end
     function metrics:increment(name, labels, amount)
         local key = metricKey(name, labels)
-        metricValues[key] = (metricValues[key] or 0) + (amount or 1)
+        amount = amount == nil and 1 or amount
+        if not key or type(amount) ~= 'number' or amount ~= amount
+            or amount == math.huge or amount == -math.huge then
+            invalidMetricSamples = invalidMetricSamples + 1
+            return false
+        end
+        if not reserveMetricSeries(key) then return false end
+        metricValues[key] = (metricValues[key] or 0) + amount
+        return true
     end
     function metrics:gauge(name, labels, value)
         local key = metricKey(name, labels)
+        if not key or type(value) ~= 'number' or value ~= value
+            or value == math.huge or value == -math.huge then
+            invalidMetricSamples = invalidMetricSamples + 1
+            return false
+        end
+        if not reserveMetricSeries(key) then return false end
         metricValues[key] = value
+        return true
     end
     function metrics:observe(name, labels, value)
-        if type(value) ~= 'number' or value ~= value or value == math.huge or value == -math.huge then return false end
         local key = metricKey(name, labels)
+        if not key or type(value) ~= 'number' or value ~= value
+            or value == math.huge or value == -math.huge then
+            invalidMetricSamples = invalidMetricSamples + 1
+            return false
+        end
+        if not reserveMetricSeries(key) then return false end
         local samples = metricHistograms[key] or {}
         samples[#samples + 1] = value
         if #samples > 512 then table.remove(samples, 1) end
@@ -296,7 +407,16 @@ factories.foundation = function(deps)
                 p99 = percentile(0.99)
             }
         end
-        return { values = deepCopy(metricValues), histograms = histograms }
+        return {
+            values = deepCopy(metricValues),
+            histograms = histograms,
+            cardinality = {
+                series = metricSeriesCount,
+                maximumSeries = metricSeriesMaximum,
+                droppedSamples = droppedMetricSamples,
+                invalidSamples = invalidMetricSamples
+            }
+        }
     end
 
     local function loadJson(resource, path, fallback)
@@ -311,6 +431,7 @@ factories.foundation = function(deps)
         copy = deepCopy,
         readonly = readonly,
         error = errorResult,
+        failureCode = failureCode,
         safeCall = safeCall,
         nextId = deps.nextId or nextId,
         configureIds = configureIds,

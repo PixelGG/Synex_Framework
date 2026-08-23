@@ -268,8 +268,10 @@ factories.bootstrapDiagnostics = function(deps)
         local rbacSummary, rbacSummaryError = persistence.rbac:summary()
         add('rbac', rbacSummaryError and 'FAIL' or (rbac.hydrated and rbac.persistent and 'PASS' or 'WARN'),
             rbacSummaryError and rbacSummaryError.code
-                or ('%d role(s), %d active assignment(s), %d cached subject(s)'):format(
-                    rbacSummary.roles, rbacSummary.activeAssignments, rbac.cachedSubjects))
+                or ('%d%s role(s), %d%s active assignment(s), %d cached subject(s)'):format(
+                    rbacSummary.roles, rbacSummary.rolesTruncated and '+' or '',
+                    rbacSummary.activeAssignments,
+                    rbacSummary.activeAssignmentsTruncated and '+' or '', rbac.cachedSubjects))
         local unhealthyWorkers = 0
         for _, worker in ipairs(lifecycle.scheduler:snapshot()) do
             if worker.health == 'DEGRADED' or worker.health == 'UNHEALTHY' then unhealthyWorkers = unhealthyWorkers + 1 end
@@ -280,7 +282,9 @@ factories.bootstrapDiagnostics = function(deps)
         local sagaSnapshot = sagaRuntime:snapshot()
         local sagaPersistence = sagaSnapshot.persisted or {}
         add('saga-worker', sagaPersistence.available == false and 'WARN' or 'PASS',
-            ('%d handler(s); %d persisted saga(s)'):format(#sagaSnapshot.handlers, tonumber(sagaPersistence.total) or 0))
+            ('%d handler(s); %d%s persisted saga(s)'):format(
+                #sagaSnapshot.handlers, tonumber(sagaPersistence.total) or 0,
+                sagaPersistence.truncated and '+' or ''))
         local resources = registries.resources:summary()
         local resourceProblems = resources.degraded + resources.unhealthy + resources.unknown
         add('resource-health', resourceProblems > 0 and 'WARN' or 'PASS',

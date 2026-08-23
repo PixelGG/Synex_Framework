@@ -83,8 +83,8 @@ export function configurationSemanticDiagnostics(
   }
   if (typeof connections.clusterHeartbeatMs === "number"
     && typeof connections.clusterSessionLeaseSeconds === "number"
-    && connections.clusterHeartbeatMs >= connections.clusterSessionLeaseSeconds * 1000) {
-    add("/connections/clusterHeartbeatMs", "must be shorter than the cluster session lease.");
+    && connections.clusterHeartbeatMs * 3 > connections.clusterSessionLeaseSeconds * 1000) {
+    add("/connections/clusterHeartbeatMs", "must not exceed one third of the cluster session lease.");
   }
   if (typeof connections.queueUpdateMs === "number" && typeof connections.queueTimeoutMs === "number"
     && connections.queueUpdateMs > connections.queueTimeoutMs) {

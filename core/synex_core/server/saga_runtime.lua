@@ -16,6 +16,9 @@ factories.sagaRuntime = function(deps)
     local definitionCount = 0
     local dispatching = false
     local lastDispatch = nil
+    local activeSagaLease = nil
+    local sagaLeaseTtlSeconds = 300
+    local sagaLeaseHeartbeatMs = 10000
     local function plainObject(value)
         return type(value) == 'table' and getmetatable(value) == nil
     end
@@ -131,13 +134,17 @@ factories.sagaRuntime = function(deps)
         if not enabled then return nil, foundation.error('FEATURE_DISABLED', 'The sagas feature is disabled by configuration.') end
         local definition = definitionFor(sagaType)
         if not definition then return nil, foundation.error('SAGA_HANDLER_UNAVAILABLE', 'No active handler owns this saga type.', { retryable = true }) end
+        if definition.owner ~= owner then
+            return nil, foundation.error('SAGA_OWNER_DENIED',
+                'Only the registered saga handler owner may start this saga type.')
+        end
         options = options == nil and {} or options
         if not exactKeys(options, { deadlineAt = true }) or (options.deadlineAt ~= nil
             and (type(options.deadlineAt) ~= 'string' or #options.deadlineAt < 19 or #options.deadlineAt > 32
                 or not options.deadlineAt:match('^%d%d%d%d%-%d%d%-%d%d[T ]%d%d:%d%d:%d%d'))) then
             return nil, foundation.error('INVALID_SAGA', 'Saga start options are invalid.')
         end
-        local started, startError = store:start(sagaType, correlationId, context, {
+        local started, startError = store:start(owner, sagaType, correlationId, context, {
             deadlineAt = options.deadlineAt or deadlineAfter(definition.timeoutMs)
         })
         if not started then return nil, startError end
@@ -165,7 +172,8 @@ factories.sagaRuntime = function(deps)
         end
         if not ok then
             return nil, foundation.error('SAGA_HANDLER_FAILED', 'The saga handler raised an error.', {
-                retryable = true, details = tostring(value):sub(1, 512)
+                retryable = true,
+                details = { cause = foundation.failureCode(value, 'SAGA_HANDLER_FAILED') }
             }), elapsed
         end
         if handlerError ~= nil or value == nil then
@@ -175,10 +183,66 @@ factories.sagaRuntime = function(deps)
         return value, nil, elapsed
     end
 
+    local function sagaLeaseFailure(value)
+        return foundation.error('SAGA_LEASE_LOST',
+            'The durable saga execution lease was lost.', {
+                retryable = true,
+                details = { cause = foundation.failureCode(value, 'SAGA_LEASE_LOST') }
+            })
+    end
+
+    local function renewSagaLease(context)
+        if context == nil then return true, nil end
+        if context.error then return nil, context.error end
+        local invoked, renewed, renewError = foundation.safeCall(
+            leases.renew, leases, context.lease)
+        if not invoked or not renewed then
+            context.error = sagaLeaseFailure(invoked and renewError or renewed)
+            context.active = false
+            return nil, context.error
+        end
+        return true, nil
+    end
+
+    local function startSagaLeaseHeartbeat(lease)
+        local heartbeat = { active = true, lease = lease, error = nil }
+        if type(platform.createThread) ~= 'function' or type(platform.wait) ~= 'function' then
+            return heartbeat
+        end
+        local created, createError = foundation.safeCall(platform.createThread, function()
+            local ran, threadError = foundation.safeCall(function()
+                while heartbeat.active do
+                    platform.wait(sagaLeaseHeartbeatMs)
+                    if not heartbeat.active then break end
+                    renewSagaLease(heartbeat)
+                end
+            end)
+            if not ran and heartbeat.active then
+                heartbeat.error = sagaLeaseFailure(threadError)
+                heartbeat.active = false
+            end
+        end)
+        if not created then
+            heartbeat.error = sagaLeaseFailure(createError)
+            heartbeat.active = false
+        end
+        return heartbeat
+    end
+
     local function appendEvent(saga, definition, command, traceId)
+        local renewed, renewError = renewSagaLease(activeSagaLease)
+        if not renewed then return nil, renewError end
         command.publicId = saga.publicId
+        command.ownerResource = definition.owner
         command.expectedVersion = saga.version
         command.context = command.context or saga.context
+        if command.terminal == true then
+            local lease = activeSagaLease and activeSagaLease.lease or nil
+            if type(lease) ~= 'table' then
+                return nil, sagaLeaseFailure('terminal saga event has no active lease')
+            end
+            command.lease = foundation.copy(lease)
+        end
         local persisted, persistError = store:appendRuntimeEvent(command)
         if not persisted then return nil, persistError end
         saga.version = persisted.version
@@ -259,6 +323,8 @@ factories.sagaRuntime = function(deps)
             }, traceId)
             if not started then return nil, startError end
         end
+        local leaseCurrent, leaseError = renewSagaLease(activeSagaLease)
+        if not leaseCurrent then return nil, leaseError end
         local result, handlerError, elapsed = invokeOwned(definition, target.step.compensate,
             foundation.copy(saga.context), foundation.copy(target.forward.succeeded or {}), foundation.readonly({
                 sagaId = saga.publicId, sagaType = saga.sagaType, step = target.step.name,
@@ -340,6 +406,8 @@ factories.sagaRuntime = function(deps)
             }, traceId)
             if not started then return nil, startError end
         end
+        local leaseCurrent, leaseError = renewSagaLease(activeSagaLease)
+        if not leaseCurrent then return nil, leaseError end
         local result, handlerError, elapsed = invokeOwned(definition, step.run,
             foundation.copy(saga.context), foundation.readonly({
                 sagaId = saga.publicId, sagaType = saga.sagaType, correlationId = saga.correlationId,
@@ -390,10 +458,32 @@ factories.sagaRuntime = function(deps)
     local function processCandidate(candidate)
         local definition = definitionFor(candidate.sagaType)
         if not definition then return { deferred = true, handlerUnavailable = true }, nil end
-        local saga, loadError = store:load(candidate.publicId)
+        if candidate.ownerResource ~= definition.owner then
+            return { deferred = true, ownerUnavailable = true }, nil
+        end
+        local saga, loadError = store:load(candidate.publicId, definition.owner)
         if not saga then return nil, loadError end
         if saga.state == 'compensating' then return runCompensation(saga, definition) end
         return runForward(saga, definition)
+    end
+
+    local function activeCandidateSelectors()
+        local selectors = {}
+        for sagaType, definition in pairs(definitions) do
+            if owners:isCurrent(definition.owner, definition.epoch) then
+                selectors[#selectors + 1] = {
+                    ownerResource = definition.owner,
+                    sagaType = sagaType
+                }
+            end
+        end
+        table.sort(selectors, function(left, right)
+            if left.ownerResource == right.ownerResource then
+                return left.sagaType < right.sagaType
+            end
+            return left.ownerResource < right.ownerResource
+        end)
+        return selectors
     end
 
     function runtime:dispatchBatch(maximum)
@@ -407,17 +497,27 @@ factories.sagaRuntime = function(deps)
         local ok, unexpected = xpcall(function()
             local activeBootId, bootError = instances:bootId()
             if not activeBootId then firstError = bootError return end
-            local candidates, candidateError = store:candidates(maximum)
+            local candidates, candidateError = store:candidates(50, activeCandidateSelectors())
             if not candidates then firstError = candidateError return end
-            report.claimed = #candidates
+            report.scanned = #candidates
             for _, candidate in ipairs(candidates) do
+                if report.processed + report.failed >= maximum then break end
+                report.claimed = report.claimed + 1
                 local lease, leaseError = leases:acquire('saga:' .. candidate.publicId,
-                    nextSagaLeaseOwner(), 45, instanceId, activeBootId)
+                    nextSagaLeaseOwner(), sagaLeaseTtlSeconds, instanceId, activeBootId)
                 if not lease then
                     if leaseError and leaseError.code == 'LEASE_BUSY' then report.leaseBusy = report.leaseBusy + 1
                     else report.failed = report.failed + 1; firstError = firstError or leaseError end
                 else
+                    local heartbeat = startSagaLeaseHeartbeat(lease)
+                    activeSagaLease = heartbeat
                     local processedOk, result, processError = foundation.safeCall(processCandidate, candidate)
+                    activeSagaLease = nil
+                    heartbeat.active = false
+                    if heartbeat.error and processedOk and result then
+                        result = nil
+                        processError = heartbeat.error
+                    end
                     local released, releaseError = leases:release(lease)
                     if not released then firstError = firstError or releaseError; report.failed = report.failed + 1 end
                     if not processedOk or not result then
@@ -433,7 +533,8 @@ factories.sagaRuntime = function(deps)
         dispatching = false
         if not ok then
             firstError = foundation.error('SAGA_DISPATCH_FAILED', 'Saga dispatch raised an unexpected error.', {
-                details = tostring(unexpected):sub(1, 512), retryable = true
+                details = { cause = foundation.failureCode(unexpected, 'SAGA_DISPATCH_FAILED') },
+                retryable = true
             })
             report.failed = report.failed + 1
         end
@@ -446,9 +547,25 @@ factories.sagaRuntime = function(deps)
         return report, nil
     end
 
-    function runtime:get(publicId)
-        local saga, err = store:load(publicId)
+    function runtime:record(owner, publicId, expectedVersion, stepName, eventType, payload, errorValue)
+        local saga, loadError = store:load(publicId, owner)
+        if not saga then return nil, loadError end
+        local definition = definitionFor(saga.sagaType)
+        if not definition or definition.owner ~= owner or saga.ownerResource ~= owner then
+            return nil, foundation.error('SAGA_OWNER_DENIED',
+                'The saga is not owned by the calling resource.')
+        end
+        return store:record(owner, publicId, expectedVersion, stepName, eventType, payload, errorValue)
+    end
+
+    function runtime:get(owner, publicId)
+        local saga, err = store:load(publicId, owner)
         if not saga then return nil, err end
+        local definition = definitionFor(saga.sagaType)
+        if not definition or definition.owner ~= owner or saga.ownerResource ~= owner then
+            return nil, foundation.error('SAGA_OWNER_DENIED',
+                'The saga is not owned by the calling resource.')
+        end
         saga.databaseId = nil
         saga.context = foundation.redact(saga.context)
         for _, event in ipairs(saga.steps) do

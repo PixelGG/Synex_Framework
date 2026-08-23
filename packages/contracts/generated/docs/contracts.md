@@ -1,6 +1,6 @@
 # Synex Contract Reference
 
-Source hash: `63fc97bec257cb54f15f7735448cd83fbde85834c33f2e9c98441f00c14375bb`
+Source hash: `7d823d421d2db0bbbabb2e64171a14c45d0fbcab23a4fd9bc11458c708482795`
 
 | Contract | Version | Kind | Provider | Network | Stability | Capability |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -3850,6 +3850,9 @@ Source hash: `63fc97bec257cb54f15f7735448cd83fbde85834c33f2e9c98441f00c14375bb`
     "operational": {
       "type": "boolean"
     },
+    "playerAdmission": {
+      "type": "boolean"
+    },
     "reasons": {
       "type": "object"
     },
@@ -3873,6 +3876,7 @@ Source hash: `63fc97bec257cb54f15f7735448cd83fbde85834c33f2e9c98441f00c14375bb`
     "state",
     "revision",
     "operational",
+    "playerAdmission",
     "reasons",
     "recentTransitions"
   ],
