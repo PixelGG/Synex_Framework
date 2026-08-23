@@ -142,6 +142,10 @@ test('boot validates UTC and fail-closes named recurring worker registration', a
   const utcValidation = lifecycle.indexOf('persistence.database:validateUtcSession()');
   const migrationBootstrap = lifecycle.indexOf('persistence.migrations:bootstrap()');
   assert.ok(utcValidation >= 0 && utcValidation < migrationBootstrap);
+  assert.match(
+    lifecycle,
+    /if not manifests\[coreResource\] then[\s\S]*?'CORE_MANIFEST_UNAVAILABLE'/u,
+  );
   const instanceRegistration = lifecycle.indexOf('persistence.instances:register(defaultConfig.instanceName)');
   const authorityCleanup = lifecycle.indexOf("persistence.instances:terminateLocalSessions('synex_core restarted')");
   const sourceGenerationFloor = lifecycle.indexOf('persistence.instances:sourceGenerationFloor()');
@@ -152,7 +156,7 @@ test('boot validates UTC and fail-closes named recurring worker registration', a
   assert.ok(serviceRegistration > sourceGenerationSeed);
   assert.match(
     lifecycle,
-    /local function scheduleEvery[\s\S]*?if not token then error\(scheduleError\.message\) end/u,
+    /local function scheduleEvery[\s\S]*?if not token then raiseBootFailure\(scheduleError, 'SCHEDULER_REGISTRATION_FAILED'\) end/u,
   );
   assert.match(
     lifecycle,

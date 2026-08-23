@@ -9,6 +9,7 @@ factories.bootstrapDiscovery = function(deps)
     local lifecycle = assert(deps.lifecycle, 'bootstrap discovery requires lifecycle')
     local stateService = assert(deps.stateService, 'bootstrap discovery requires state service')
     local runtimeGate = assert(deps.runtimeGate, 'bootstrap discovery requires runtime gate')
+    local logger = foundation.logger
     local manifests = deps.manifests or {}
     local ownerSnapshotMaximumBytes = deps.ownerSnapshotMaximumBytes or 65536
     local discoveryRevision = 0
@@ -81,7 +82,13 @@ factories.bootstrapDiscovery = function(deps)
         table.sort(names)
         for _, name in ipairs(names) do
             local _, err = discoverResource(name)
-            if err then return nil, err end
+            if err then
+                logger:error('Synex resource discovery failed', {
+                    code = foundation.failureCode(err, 'RESOURCE_DISCOVERY_FAILED'),
+                    resource = type(name) == 'string' and name or 'unavailable'
+                })
+                return nil, err
+            end
         end
         return true, nil
     end

@@ -1078,6 +1078,7 @@ test('failed restart cleanup keeps the persisted instance fenced and admission c
   try {
     const result = await engine.doString(`
       local calls, persistedStatus = {}, 'ready'
+      local fatalDiagnostic = nil
       local connectionQuiesceCalls, connectionLeaseReleaseCalls = 0, 0
       local platform = {
         nowGame = function() return 1000 end, random = function() return 43 end,
@@ -1089,7 +1090,12 @@ test('failed restart cleanup keeps the persisted instance fenced and admission c
         getPlayers = function() return {} end,
         dropPlayer = function() error('no connected fixture player may be dropped') end
       }
-      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      local logger = {}
+      for _, level in ipairs({'trace', 'debug', 'info', 'warn', 'error'}) do
+        logger[level] = function() end
+      end
+      logger.fatal = function(_, _, fields) fatalDiagnostic = fields end
+      local foundation = SynexCoreFactories.foundation({ platform = platform, logger = logger })
       local registries = SynexCoreFactories.registries({ foundation = foundation })
       registries.owners:activate('synex_core')
       local lifecycle = SynexCoreFactories.lifecycle({
@@ -1127,7 +1133,8 @@ test('failed restart cleanup keeps the persisted instance fenced and admission c
           fail = function() end, stop = function() end
         },
         coreResource = 'synex_core', registries = registries, lifecycle = lifecycle,
-        reloadSnapshots = {}, facadeCache = {}, manifests = {}, reliability = {},
+        reloadSnapshots = {}, facadeCache = {},
+        manifests = { synex_core = { migrations = {} } }, reliability = {},
         sagaRuntime = {}, retention = {}, messaging = { network = {} },
         identity = {
           connections = {
@@ -1172,6 +1179,9 @@ test('failed restart cleanup keeps the persisted instance fenced and admission c
       assert(lifecycle.core:get() == 'FAILED' and lifecycle.core:canAdmitPlayers() == false)
       assert(connectionQuiesceCalls == 1 and connectionLeaseReleaseCalls == 1)
       assert(releaseCalls == 2)
+      assert(fatalDiagnostic.code == 'TRANSACTION_REJECTED'
+        and fatalDiagnostic.stage == 'terminate_local_sessions'
+        and fatalDiagnostic.failureType == 'table')
       return table.concat({bootError.code, persistedStatus, lifecycle.core:get(), releaseCalls,
         connectionQuiesceCalls, connectionLeaseReleaseCalls}, ':')
     `);
@@ -1256,7 +1266,8 @@ test('late boot failure purges scheduled workers and stale timeout callbacks rem
         runtime = runtime, platform = platform, foundation = foundation,
         runtimeGate = { beginBoot = noop, open = noop, fail = noop, stop = noop },
         coreResource = 'synex_core', registries = registries, lifecycle = lifecycle,
-        reloadSnapshots = {}, facadeCache = facadeCache, manifests = {},
+        reloadSnapshots = {}, facadeCache = facadeCache,
+        manifests = { synex_core = { migrations = {} } },
         reliability = { outbox = { dispatchBatch = function()
           mutations.outbox = mutations.outbox + 1
           return {}, nil
@@ -2752,7 +2763,8 @@ test('instance status synchronization clears a failed write after desired status
         runtime = runtime, platform = platform, foundation = foundation,
         runtimeGate = { beginBoot = noop, open = noop, fail = noop, stop = noop },
         coreResource = 'synex_core', registries = registries, lifecycle = lifecycle,
-        reloadSnapshots = {}, facadeCache = {}, manifests = {}, reliability = {},
+        reloadSnapshots = {}, facadeCache = {},
+        manifests = { synex_core = { migrations = {} } }, reliability = {},
         sagaRuntime = {}, retention = {},
         messaging = { network = {} },
         identity = {

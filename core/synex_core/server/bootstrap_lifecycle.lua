@@ -50,6 +50,11 @@ factories.bootstrapLifecycle = function(deps)
     local instanceStatusInitialized = false
     local instanceRegisteredDuringBoot = false
     local lastInstanceStatus = nil
+    local function raiseBootFailure(failure, fallbackCode)
+        if type(failure) == 'table' then error(failure, 0) end
+        error(foundation.error(fallbackCode, 'The current core boot step failed.'), 0)
+    end
+
     local function evictConnectedPlayers(reason)
         local listed, connectedPlayers = foundation.safeCall(platform.getPlayers)
         if not listed or type(connectedPlayers) ~= 'table' then
@@ -338,64 +343,102 @@ factories.bootstrapLifecycle = function(deps)
     function runtime:start()
         runtimeGate:beginBoot()
         instanceRegisteredDuringBoot = false
+        local bootStage = 'configure'
+        local bootResource = nil
         local ok, err = xpcall(function()
             advance('CONFIGURING', 'configuration loaded')
+            bootStage = 'evict_connected_players'
             local _, evictionError = evictConnectedPlayers('Synex Core restarted. Please reconnect.')
-            if evictionError then error(evictionError.message) end
+            if evictionError then raiseBootFailure(evictionError, 'PLAYER_EVICTION_FAILED') end
+            bootStage = 'enter_database_connecting'
             advance('DATABASE_CONNECTING', 'connecting database')
+            bootStage = 'validate_oxmysql_version'
             local oxmysqlVersion = platform.resourceMetadata('oxmysql', 'version', 0)
             local minimumOxmysqlVersion = defaultConfig.database.minimumOxmysqlVersion or '2.14.1'
             if type(oxmysqlVersion) ~= 'string' or not foundation.semverSatisfies(oxmysqlVersion, '>=' .. minimumOxmysqlVersion) then
-                error(('oxmysql %s or newer is required; detected %s'):format(minimumOxmysqlVersion, tostring(oxmysqlVersion)))
+                raiseBootFailure(nil, 'OXMYSQL_VERSION_UNSUPPORTED')
             end
+            bootStage = 'validate_database_utc'
             local utcSession, utcSessionError = persistence.database:validateUtcSession()
-            if not utcSession then error(utcSessionError.message) end
+            if not utcSession then raiseBootFailure(utcSessionError, 'DATABASE_UTC_VALIDATION_FAILED') end
+            bootStage = 'bootstrap_migration_schema'
             local bootstrapped, bootstrapError = persistence.migrations:bootstrap()
-            if not bootstrapped then error(bootstrapError.message) end
+            if not bootstrapped then raiseBootFailure(bootstrapError, 'MIGRATION_BOOTSTRAP_FAILED') end
+            bootStage = 'enter_migrating'
             advance('MIGRATING', 'database connected')
+            bootStage = 'acquire_migration_lease'
             local lease, leaseError = persistence.migrations:acquireLease()
-            if not lease then error(leaseError.message) end
+            if not lease then raiseBootFailure(leaseError, 'MIGRATION_LEASE_ACQUIRE_FAILED') end
+            bootStage = 'discover_resources'
             local discovered, discoveryError = discoverAll()
-            if not discovered then error(discoveryError.message) end
+            if not discovered then raiseBootFailure(discoveryError, 'RESOURCE_DISCOVERY_FAILED') end
+            if not manifests[coreResource] then
+                raiseBootFailure(foundation.error('CORE_MANIFEST_UNAVAILABLE',
+                    'The Synex Core resource manifest was not discovered.'), 'CORE_MANIFEST_UNAVAILABLE')
+            end
             local names = {}
             for name in pairs(manifests) do names[#names + 1] = name end
             table.sort(names)
             for _, name in ipairs(names) do
+                bootStage = 'apply_migrations'
+                bootResource = name
                 local applied, migrationError = persistence.migrations:apply(name, manifests[name].migrations)
-                if not applied then error(migrationError.message) end
+                if not applied then raiseBootFailure(migrationError, 'MIGRATION_APPLY_FAILED') end
             end
+            bootResource = nil
+            bootStage = 'release_migration_lease'
             local released, releaseError = persistence.migrations:releaseLease()
-            if not released then error(releaseError.message) end
+            if not released then raiseBootFailure(releaseError, 'MIGRATION_LEASE_RELEASE_FAILED') end
+            bootStage = 'register_instance'
             local instanceRegistered, instanceRegistrationError = persistence.instances:register(defaultConfig.instanceName)
-            if not instanceRegistered then error(instanceRegistrationError.message) end
+            if not instanceRegistered then raiseBootFailure(instanceRegistrationError, 'INSTANCE_REGISTRATION_FAILED') end
             instanceRegisteredDuringBoot = true
+            bootStage = 'terminate_local_sessions'
             local terminated, terminationError = persistence.instances:terminateLocalSessions('synex_core restarted')
-            if not terminated then error(terminationError.message) end
+            if not terminated then raiseBootFailure(terminationError, 'SESSION_TERMINATION_FAILED') end
+            bootStage = 'seed_source_generation'
             local sourceGenerationFloor, sourceGenerationError = persistence.instances:sourceGenerationFloor()
-            if sourceGenerationFloor == nil then error(sourceGenerationError.message) end
+            if sourceGenerationFloor == nil then
+                raiseBootFailure(sourceGenerationError, 'SOURCE_GENERATION_READ_FAILED')
+            end
             local sourceGenerationSeeded, sourceGenerationSeedError =
                 registries.players:seedSourceGeneration(sourceGenerationFloor)
-            if not sourceGenerationSeeded then error(sourceGenerationSeedError.message) end
+            if not sourceGenerationSeeded then
+                raiseBootFailure(sourceGenerationSeedError, 'SOURCE_GENERATION_SEED_FAILED')
+            end
+            bootStage = 'hydrate_rbac'
             local rbacHydrated, rbacHydrationError = security.rbac:hydrate()
-            if not rbacHydrated then error(rbacHydrationError.message) end
+            if not rbacHydrated then raiseBootFailure(rbacHydrationError, 'RBAC_HYDRATION_FAILED') end
+            bootStage = 'enter_resource_discovery'
             advance('DISCOVERING_RESOURCES', 'migrations applied')
+            bootStage = 'enter_contract_validation'
             advance('VALIDATING_CONTRACTS', 'resource manifests discovered')
             -- Generated contracts were validated when the registry was constructed.
+            bootStage = 'enter_capability_validation'
             advance('VALIDATING_CAPABILITIES', 'contracts validated')
+            bootStage = 'enter_service_startup'
             advance('STARTING_SERVICES', 'capabilities and dependencies validated')
+            bootStage = 'register_core_contracts'
             local registered, registrationError = registerCoreContracts()
-            if not registered then error(registrationError.message) end
+            if not registered then raiseBootFailure(registrationError, 'CORE_CONTRACT_REGISTRATION_FAILED') end
+            bootStage = 'register_core_services'
             local serviceToken, serviceRegistrationError = registerCoreServices()
-            if not serviceToken then error(serviceRegistrationError.message) end
+            if not serviceToken then
+                raiseBootFailure(serviceRegistrationError, 'CORE_SERVICE_REGISTRATION_FAILED')
+            end
+            bootStage = 'validate_runtime_dependencies'
             local _, criticalFindings = refreshDependencyHealth()
-            if criticalFindings > 0 then error('critical Synex live dependencies, providers, or capability grants are unavailable') end
+            if criticalFindings > 0 then
+                raiseBootFailure(nil, 'CRITICAL_DEPENDENCY_UNAVAILABLE')
+            end
             local coreEpoch = registries.owners:epoch(coreResource)
             local function scheduleEvery(intervalMs, handler, name)
                 local token, scheduleError = lifecycle.scheduler:every(
                     coreResource, coreEpoch, intervalMs, handler, { name = name })
-                if not token then error(scheduleError.message) end
+                if not token then raiseBootFailure(scheduleError, 'SCHEDULER_REGISTRATION_FAILED') end
                 return token
             end
+            bootStage = 'start_runtime_workers'
             if defaultConfig.features.durableEvents then
                 scheduleEvery(1000, function()
                     local report, dispatchError = reliability.outbox:dispatchBatch(function(event)
@@ -495,20 +538,23 @@ factories.bootstrapLifecycle = function(deps)
             enforceCriticalResources = true
             lifecycle.core:setCriticalFoundationsValidated(false)
             local _, postBootCritical = refreshDependencyHealth()
+            bootStage = 'enter_runtime_state'
             advance(postBootCritical > 0 and 'DEGRADED' or 'READY',
                 postBootCritical > 0
                     and 'kernel services started; critical foundations are pending'
                     or 'kernel services and critical foundations started')
             local instanceStatus = postBootCritical > 0 and 'degraded' or 'ready'
+            bootStage = 'persist_instance_status'
             local instanceReady, instanceReadyError = persistence.instances:setStatus(instanceStatus)
-            if not instanceReady then error(instanceReadyError.message) end
+            if not instanceReady then raiseBootFailure(instanceReadyError, 'INSTANCE_STATUS_WRITE_FAILED') end
             lastInstanceStatus = instanceStatus
             instanceStatusInitialized = true
             lifecycle.core:setCriticalFoundationsValidated(
                 postBootCritical == 0 and lifecycle.core:get() == 'READY'
                     and next(lifecycle.core:snapshot().reasons) == nil)
+            bootStage = 'synchronize_resource_health'
             local _, coreHealthError = synchronizeCoreResourceHealth()
-            if coreHealthError then error(coreHealthError.message) end
+            if coreHealthError then raiseBootFailure(coreHealthError, 'CORE_HEALTH_SYNC_FAILED') end
             logger:info('Synex core kernel services started', {
                 apiVersion = SynexProtocol.api,
                 instanceId = defaultConfig.instanceId,
@@ -537,7 +583,10 @@ factories.bootstrapLifecycle = function(deps)
             end
             foundation.safeCall(synchronizeCoreResourceHealth)
             foundation.safeCall(logger.fatal, logger, 'Synex core failed to start', {
-                code = foundation.failureCode(err, 'CORE_BOOT_EXCEPTION')
+                code = foundation.failureCode(err, 'CORE_BOOT_EXCEPTION'),
+                stage = bootStage,
+                resource = bootResource,
+                failureType = type(err)
             })
             return nil, foundation.error('BOOT_FAILED', 'Synex core failed to start.')
         end
