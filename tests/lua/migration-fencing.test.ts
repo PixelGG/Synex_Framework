@@ -15,10 +15,15 @@ test('migration execution is fenced across lease expiry, errors, release, and re
   ]) {
     await engine.doString(await readFile(path.join(root, relativePath), 'utf8'));
   }
+  const migration021 = (await readFile(
+    path.join(root, 'core/synex_core/migrations/021_worker_queue_scalability.sql'),
+    'utf8',
+  )).replace(/\r\n?/gu, '\n');
 
   const result = await engine.doString(`
     local clock, idSequence = 1000, 0
     local files, threads = {}, {}
+    local migration021Contents = ${JSON.stringify(migration021)}
     local shared = nil
     local contender, contenderError = nil, nil
 
@@ -404,6 +409,142 @@ test('migration execution is fenced across lease expiry, errors, release, and re
       and shared.attempts[fencedKey].attempts == 3)
     assert(fencedSystem.migrations:releaseLease())
 
+    local previous021Checksum = '6d314f977f47fa39125c9597172e75fa05d80bfbd310aaf6be4c5584f6823b59'
+    local current021Checksum = '5add0fed6935b83e7fd0905c188c1e534a6636d5d935fea1a28a145f7b533b7c'
+    local migration021Path = 'migrations/021_worker_queue_scalability.sql'
+    local migration021Key = 'synex_core|021_worker_queue_scalability'
+
+    resetState()
+    files[migration021Path] = migration021Contents
+    local correctedSystem = persistence('instance-021-applied')
+    assert(correctedSystem.sha256(migration021Contents) == current021Checksum)
+    shared.markers[migration021Key] = {
+      checksum_sha256 = previous021Checksum, instance_id = 'legacy-instance'
+    }
+    shared.fences[migration021Key] = {
+      checksum_sha256 = previous021Checksum, owner_id = 'legacy-instance', fencing_token = 42,
+      state = 'applied', statement_count = 1, completed_statements = 1
+    }
+    shared.attempts[migration021Key] = {
+      checksum_sha256 = previous021Checksum, state = 'applied', attempts = 1
+    }
+    assert(correctedSystem.migrations:acquireLease() == 1)
+    assert(correctedSystem.migrations:apply('synex_core', {
+      { id = '021_worker_queue_scalability', path = migration021Path }
+    }))
+    assert(next(shared.executions) == nil)
+    assert(shared.markers[migration021Key].checksum_sha256 == previous021Checksum)
+    assert(correctedSystem.migrations:releaseLease())
+
+    resetState()
+    files[migration021Path] = migration021Contents
+    local failed021System = persistence('instance-021-failed')
+    shared.fences[migration021Key] = {
+      checksum_sha256 = previous021Checksum, owner_id = 'legacy-instance', fencing_token = 42,
+      state = 'failed', statement_count = 1, completed_statements = 0
+    }
+    shared.attempts[migration021Key] = {
+      checksum_sha256 = previous021Checksum, state = 'failed', attempts = 1
+    }
+    assert(failed021System.migrations:acquireLease() == 1)
+    local failed021Result, failed021Error = failed021System.migrations:apply('synex_core', {
+      { id = '021_worker_queue_scalability', path = migration021Path }
+    })
+    assert(failed021Result == nil and failed021Error.code == 'MIGRATION_CHECKSUM_MISMATCH')
+    assert(next(shared.executions) == nil)
+    assert(failed021System.migrations:releaseLease())
+
+    local function markerless021StateBlocked(instanceId, fenceState, attemptState)
+      resetState()
+      files[migration021Path] = migration021Contents
+      local system = persistence(instanceId)
+      shared.fences[migration021Key] = {
+        checksum_sha256 = previous021Checksum, owner_id = 'legacy-instance', fencing_token = 42,
+        state = fenceState, statement_count = 1, completed_statements = 0
+      }
+      shared.attempts[migration021Key] = {
+        checksum_sha256 = previous021Checksum, state = attemptState, attempts = 1
+      }
+      assert(system.migrations:acquireLease() == 1)
+      local applyResult, applyError = system.migrations:apply('synex_core', {
+        { id = '021_worker_queue_scalability', path = migration021Path }
+      })
+      assert(applyResult == nil and applyError.code == 'MIGRATION_CHECKSUM_MISMATCH')
+      assert(next(shared.executions) == nil)
+      assert(system.migrations:releaseLease())
+      return applyError.code
+    end
+    local applying021Code = markerless021StateBlocked(
+      'instance-021-applying', 'applying', 'applying')
+    local indeterminate021Code = markerless021StateBlocked(
+      'instance-021-indeterminate', 'indeterminate', 'failed')
+
+    resetState()
+    files[migration021Path] = migration021Contents
+    local unknown021System = persistence('instance-021-unknown')
+    shared.markers[migration021Key] = {
+      checksum_sha256 = string.rep('f', 64), instance_id = 'unknown-instance'
+    }
+    assert(unknown021System.migrations:acquireLease() == 1)
+    local unknown021Result, unknown021Error = unknown021System.migrations:apply('synex_core', {
+      { id = '021_worker_queue_scalability', path = migration021Path }
+    })
+    assert(unknown021Result == nil and unknown021Error.code == 'MIGRATION_CHECKSUM_MISMATCH')
+    assert(next(shared.executions) == nil)
+    assert(unknown021System.migrations:releaseLease())
+
+    local function applied021ControlBlocked(instanceId, fenceChecksum, fenceState,
+        attemptChecksum, attemptState, expectedCode)
+      resetState()
+      files[migration021Path] = migration021Contents
+      local system = persistence(instanceId)
+      shared.markers[migration021Key] = {
+        checksum_sha256 = previous021Checksum, instance_id = 'legacy-instance'
+      }
+      shared.fences[migration021Key] = {
+        checksum_sha256 = fenceChecksum, owner_id = 'legacy-instance', fencing_token = 42,
+        state = fenceState, statement_count = 1, completed_statements = 1
+      }
+      shared.attempts[migration021Key] = {
+        checksum_sha256 = attemptChecksum, state = attemptState, attempts = 1
+      }
+      assert(system.migrations:acquireLease() == 1)
+      local applyResult, applyError = system.migrations:apply('synex_core', {
+        { id = '021_worker_queue_scalability', path = migration021Path }
+      })
+      assert(applyResult == nil and applyError.code == expectedCode)
+      assert(next(shared.executions) == nil)
+      assert(system.migrations:releaseLease())
+      return applyError.code
+    end
+    local unknownFence021Code = applied021ControlBlocked('instance-021-unknown-fence',
+      string.rep('e', 64), 'applied', previous021Checksum, 'applied',
+      'MIGRATION_CHECKSUM_MISMATCH')
+    local unknownAttempt021Code = applied021ControlBlocked('instance-021-unknown-attempt',
+      previous021Checksum, 'applied', string.rep('d', 64), 'applied',
+      'MIGRATION_CHECKSUM_MISMATCH')
+    local failedAttempt021Code = applied021ControlBlocked('instance-021-failed-attempt',
+      previous021Checksum, 'applied', previous021Checksum, 'failed',
+      'MIGRATION_STATE_INCONSISTENT')
+
+    resetState()
+    files[migration021Path] = migration021Contents
+    local inconsistent021System = persistence('instance-021-inconsistent')
+    shared.markers[migration021Key] = {
+      checksum_sha256 = previous021Checksum, instance_id = 'legacy-instance'
+    }
+    shared.fences[migration021Key] = {
+      checksum_sha256 = previous021Checksum, owner_id = 'legacy-instance', fencing_token = 42,
+      state = 'failed', statement_count = 1, completed_statements = 0
+    }
+    assert(inconsistent021System.migrations:acquireLease() == 1)
+    local inconsistent021Result, inconsistent021Error = inconsistent021System.migrations:apply('synex_core', {
+      { id = '021_worker_queue_scalability', path = migration021Path }
+    })
+    assert(inconsistent021Result == nil and inconsistent021Error.code == 'MIGRATION_STATE_INCONSISTENT')
+    assert(next(shared.executions) == nil)
+    assert(inconsistent021System.migrations:releaseLease())
+
     local migrationSnapshot = assert(manager('instance-i'):snapshot(10))
     assert(migrationSnapshot.totals.defined == 4
       and migrationSnapshot.totals.applied == 1
@@ -414,12 +555,15 @@ test('migration execution is fenced across lease expiry, errors, release, and re
     assert(migrationSnapshot.resources[1].indeterminate == 1)
 
     return table.concat({ firstError.code, contenderCode, failureError.code,
-      retryError.code, legacyError.code, fencedError.code }, ':')
+      retryError.code, legacyError.code, fencedError.code, failed021Error.code,
+      applying021Code, indeterminate021Code, unknown021Error.code,
+      unknownFence021Code, unknownAttempt021Code, failedAttempt021Code,
+      inconsistent021Error.code }, ':')
   `);
 
   assert.equal(
     result,
-    'LEASE_LOST:MIGRATION_INDETERMINATE:MIGRATION_INDETERMINATE:MIGRATION_INDETERMINATE:MIGRATION_INDETERMINATE:MIGRATION_INDETERMINATE',
+    'LEASE_LOST:MIGRATION_INDETERMINATE:MIGRATION_INDETERMINATE:MIGRATION_INDETERMINATE:MIGRATION_INDETERMINATE:MIGRATION_INDETERMINATE:MIGRATION_CHECKSUM_MISMATCH:MIGRATION_CHECKSUM_MISMATCH:MIGRATION_CHECKSUM_MISMATCH:MIGRATION_CHECKSUM_MISMATCH:MIGRATION_CHECKSUM_MISMATCH:MIGRATION_CHECKSUM_MISMATCH:MIGRATION_STATE_INCONSISTENT:MIGRATION_STATE_INCONSISTENT',
   );
   engine.global.close();
 });

@@ -29,6 +29,7 @@ import { formatDiagnostic } from "./diagnostics.ts";
 import { loadSchemaRegistry } from "./schemas.ts";
 import { scanSecurity } from "./security.ts";
 import { compareVersion, parseVersion, satisfiesVersionRange } from "./semver.ts";
+import { isRegisteredMigrationChecksumCorrection } from "./migration-compatibility.ts";
 import type { ValidationReport } from "./validation.ts";
 import { loadResourceManifests, validateRepository } from "./validation.ts";
 import { npmScriptInvocation } from "./package-runner.ts";
@@ -558,6 +559,7 @@ export async function upgradeCheck(
       blockers.push("Upgrade baseline does not contain package.json.");
     } else {
       const baselineMetadata = await readPackageMetadata(baselineRoot);
+      const baselineSchemas = await loadSchemaRegistry(baselineRoot);
       const previousVersion = parseVersion(baselineMetadata.version);
       const currentVersion = parseVersion(metadata.version);
       if (!previousVersion || !currentVersion) {
@@ -580,7 +582,11 @@ export async function upgradeCheck(
       if (!(await isDirectory(baselineContractRoot))) {
         blockers.push("The upgrade baseline does not contain the matching contract/resource target path.");
       } else {
-        const previousContracts = await loadContractSources(repositoryRoot, schemas, baselineContractRoot);
+        const previousContracts = await loadContractSources(
+          baselineRoot,
+          baselineSchemas,
+          baselineContractRoot,
+        );
         const currentContracts = await loadContractSources(
           repositoryRoot,
           schemas,
@@ -599,7 +605,11 @@ export async function upgradeCheck(
         }
       }
 
-      const previousResources = await loadResourceManifests(repositoryRoot, baselineRoot, schemas);
+      const previousResources = await loadResourceManifests(
+        baselineRoot,
+        baselineRoot,
+        baselineSchemas,
+      );
       for (const diagnostic of previousResources.diagnostics) {
         (diagnostic.level === "error" ? blockers : warnings).push(`Baseline: ${formatDiagnostic(diagnostic)}`);
       }
@@ -652,9 +662,12 @@ export async function upgradeCheck(
             deltas.migrations.push(delta);
             blockers.push(delta);
           } else if (currentChecksum !== checksum) {
-            const delta = `${name} migration ${id} changed checksum.`;
+            const correction = isRegisteredMigrationChecksumCorrection(`${name}:${id}`, checksum, currentChecksum);
+            const delta = correction
+              ? `${name} migration ${id} applies a registered checksum correction.`
+              : `${name} migration ${id} changed checksum.`;
             deltas.migrations.push(delta);
-            blockers.push(delta);
+            (correction ? warnings : blockers).push(delta);
           }
         }
         for (const id of [...currentMigrations.keys()].filter((entry) => !previousMigrations.has(entry)).sort(compareText)) {

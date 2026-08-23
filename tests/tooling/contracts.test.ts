@@ -6,6 +6,7 @@ import test from "node:test";
 import type { ContractCollection, LoadedContractCollection } from "../../packages/contracts/src/types.js";
 import {
   CliError,
+  compareContracts,
   createResource,
   fuzzContractInputs,
   generateContracts,
@@ -141,6 +142,208 @@ test("generated SDK metadata preserves simultaneous contract versions", () => {
   );
   assert.match(luaSdk, /\["synex\.versioned\.echo@1\.0\.0"\]/u);
   assert.match(luaSdk, /\["synex\.versioned\.echo@2\.0\.0"\]/u);
+  assert.match(
+    luaSdk,
+    /\["latest"\][\s\S]*?\["synex\.versioned\.echo"\][\s\S]*?\["version"\] = "2\.0\.0"/u,
+  );
+  assert.match(
+    typescript,
+    /export type SynexVersionedEchoInput = SynexVersionedEcho[a-f0-9]{8}Input;/u,
+  );
+  assert.match(
+    typescript,
+    /export type SynexVersionedEchoOutput = SynexVersionedEcho[a-f0-9]{8}Output;/u,
+  );
+  assert.match(
+    typescript,
+    /export type SynexVersionedEchoError = SynexVersionedEcho[a-f0-9]{8}Error;/u,
+  );
+});
+
+test("contract compatibility preserves published versions and permits additive major versions", () => {
+  const previous = loaded("previous.contracts.json", structuredClone(SAMPLE_CONTRACT));
+  const versionOne = structuredClone(SAMPLE_CONTRACT.contracts[0]);
+  assert.ok(versionOne);
+  const versionTwo = structuredClone(versionOne);
+  versionTwo.version = "2.0.0";
+  versionTwo.output = {
+    type: "object",
+    additionalProperties: false,
+    required: ["message", "accepted"],
+    properties: {
+      message: { type: "string" },
+      accepted: { type: "boolean" },
+    },
+  };
+
+  const additive = compareContracts(
+    [previous],
+    [loaded("current.contracts.json", {
+      schema: 1,
+      domain: SAMPLE_CONTRACT.domain,
+      contracts: [versionOne, versionTwo],
+    })],
+  );
+  assert.equal(additive.some((change) => change.level === "breaking"), false);
+  assert.ok(additive.some((change) =>
+    change.contract === "synex.sample.echo@2.0.0"
+      && change.message === "Contract version was added."
+  ));
+
+  const mutatedVersionOne = structuredClone(versionTwo);
+  mutatedVersionOne.version = "1.0.0";
+  const mutation = compareContracts(
+    [previous],
+    [loaded("mutated.contracts.json", {
+      schema: 1,
+      domain: SAMPLE_CONTRACT.domain,
+      contracts: [mutatedVersionOne],
+    })],
+  );
+  assert.ok(mutation.some((change) =>
+    change.level === "breaking" && /immutable/u.test(change.message)
+  ));
+
+  const removed = compareContracts(
+    [previous],
+    [loaded("removed.contracts.json", {
+      schema: 1,
+      domain: SAMPLE_CONTRACT.domain,
+      contracts: [versionTwo],
+    })],
+  );
+  assert.ok(removed.some((change) =>
+    change.contract === "synex.sample.echo@1.0.0"
+      && change.message === "Contract version was removed."
+      && change.level === "breaking"
+  ));
+
+  const sameMajor = structuredClone(versionTwo);
+  sameMajor.version = "1.1.0";
+  const invalidMinor = compareContracts(
+    [previous],
+    [loaded("minor.contracts.json", {
+      schema: 1,
+      domain: SAMPLE_CONTRACT.domain,
+      contracts: [versionOne, sameMajor],
+    })],
+  );
+  assert.ok(invalidMinor.some((change) =>
+    change.contract === "synex.sample.echo@1.1.0"
+      && change.message === "Breaking changes require a higher major version."
+      && change.level === "breaking"
+  ));
+
+  const widenedMinor = structuredClone(versionOne);
+  widenedMinor.version = "1.1.0";
+  const widenedMessage = (widenedMinor.input.properties as Record<string, Record<string, unknown>>).message;
+  assert.ok(widenedMessage);
+  widenedMessage.maxLength = 256;
+  const validMinor = compareContracts(
+    [previous],
+    [loaded("widened-minor.contracts.json", {
+      schema: 1,
+      domain: SAMPLE_CONTRACT.domain,
+      contracts: [versionOne, widenedMinor],
+    })],
+  );
+  assert.equal(validMinor.some((change) =>
+    change.contract === "synex.sample.echo@1.1.0" && change.level === "breaking"
+  ), false);
+
+  const narrowedMinor = structuredClone(versionOne);
+  narrowedMinor.version = "1.1.0";
+  const narrowedMessage = (narrowedMinor.input.properties as Record<string, Record<string, unknown>>).message;
+  assert.ok(narrowedMessage);
+  narrowedMessage.maxLength = 64;
+  const invalidNarrowing = compareContracts(
+    [previous],
+    [loaded("narrowed-minor.contracts.json", {
+      schema: 1,
+      domain: SAMPLE_CONTRACT.domain,
+      contracts: [versionOne, narrowedMinor],
+    })],
+  );
+  assert.ok(invalidNarrowing.some((change) =>
+    change.contract === "synex.sample.echo@1.1.0"
+      && change.message === "input schema is not backward compatible."
+      && change.level === "breaking"
+  ));
+
+  const changedConstMinor = structuredClone(versionOne);
+  changedConstMinor.version = "1.1.0";
+  changedConstMinor.input = {
+    type: "object",
+    additionalProperties: false,
+    required: ["mode"],
+    properties: { mode: { const: "new" } },
+  };
+  const constBaseline = structuredClone(versionOne);
+  constBaseline.input = {
+    type: "object",
+    additionalProperties: false,
+    required: ["mode"],
+    properties: { mode: { const: "old" } },
+  };
+  const invalidConstChange = compareContracts(
+    [loaded("const-previous.contracts.json", {
+      schema: 1,
+      domain: SAMPLE_CONTRACT.domain,
+      contracts: [constBaseline],
+    })],
+    [loaded("const-minor.contracts.json", {
+      schema: 1,
+      domain: SAMPLE_CONTRACT.domain,
+      contracts: [constBaseline, changedConstMinor],
+    })],
+  );
+  assert.ok(invalidConstChange.some((change) =>
+    change.contract === "synex.sample.echo@1.1.0"
+      && change.message === "input schema is not backward compatible."
+      && change.level === "breaking"
+  ));
+
+  const addedErrorMinor = structuredClone(versionOne);
+  addedErrorMinor.version = "1.1.0";
+  addedErrorMinor.errors.push("TEMPORARILY_UNAVAILABLE");
+  const invalidErrorExpansion = compareContracts(
+    [previous],
+    [loaded("error-minor.contracts.json", {
+      schema: 1,
+      domain: SAMPLE_CONTRACT.domain,
+      contracts: [versionOne, addedErrorMinor],
+    })],
+  );
+  assert.ok(invalidErrorExpansion.some((change) =>
+    change.contract === "synex.sample.echo@1.1.0"
+      && change.message === "Error TEMPORARILY_UNAVAILABLE was added."
+      && change.level === "breaking"
+  ));
+
+  const changedBehaviorMinor = structuredClone(versionOne);
+  changedBehaviorMinor.version = "1.1.0";
+  changedBehaviorMinor.idempotent = false;
+  changedBehaviorMinor.sessionStates = ["ACTIVE"];
+  changedBehaviorMinor.rateLimit = { capacity: 1, refillPerSecond: 1 };
+  const invalidBehaviorChange = compareContracts(
+    [previous],
+    [loaded("behavior-minor.contracts.json", {
+      schema: 1,
+      domain: SAMPLE_CONTRACT.domain,
+      contracts: [versionOne, changedBehaviorMinor],
+    })],
+  );
+  for (const message of [
+    "idempotent behavior changed.",
+    "sessionStates were narrowed.",
+    "rateLimit was narrowed.",
+  ]) {
+    assert.ok(invalidBehaviorChange.some((change) =>
+      change.contract === "synex.sample.echo@1.1.0"
+        && change.message === message
+        && change.level === "breaking"
+    ));
+  }
 });
 
 test("contract fuzzer rejects malformed schemas and executes bounded Core runtime scenarios", async () => {

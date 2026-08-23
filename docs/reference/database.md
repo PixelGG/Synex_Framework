@@ -6,7 +6,7 @@ The database session used by oxmysql must be UTC. Synex deliberately relies on d
 
 ## Migration protocol
 
-Migration files are UTF-8, LF-normalized, forward-only inputs. The Core migration runner computes SHA-256 over LF-normalized bytes and records the digest in `synex_schema_migrations`. An already-applied `(resource_name, migration_id)` whose digest changes is a startup error; repair is always a new migration.
+Migration files are UTF-8, LF-normalized, forward-only inputs. The Core migration runner computes SHA-256 over LF-normalized bytes and records the digest in `synex_schema_migrations`. An already-applied `(resource_name, migration_id)` whose digest changes is normally a startup error, and repairs require a new migration. The sole registered exception is the exact old-to-current checksum correction for `synex_core:021_worker_queue_scalability`: it is accepted only when the authoritative applied marker contains the published old digest, so the corrected SQL is not executed again. Failed, applying, indeterminate, reversed, differently hashed, or differently named states remain blocked; see [Migration execution](../migrations.md#immutability).
 
 Each top-level statement is separated by a line containing exactly:
 
@@ -74,7 +74,7 @@ local result, err = exports.synex_core:Invoke(
 )
 ```
 
-Contract names never contain `@1`. All 45 generated contracts in this checkout use `network: none`, and their providers make no `registerNetwork` registrations. Domain resources deliberately expose no convenience exports: a nested export would cause Core to observe the provider resource instead of the original caller and would destroy the capability boundary. Consumers call `exports.synex_core:Invoke` directly; `options` must never be used to assert or override caller identity. The optional compatibility/control events are separate bounded resource interfaces, not generated domain contracts.
+Contract names never contain a version suffix. All generated contracts in this checkout use `network: none`, and their providers make no `registerNetwork` registrations. Domain resources deliberately expose no convenience exports: a nested export would cause Core to observe the provider resource instead of the original caller and would destroy the capability boundary. Consumers call `exports.synex_core:Invoke` directly; `options` must never be used to assert or override caller identity. The optional compatibility/control events are separate bounded resource interfaces, not generated domain contracts.
 
 The optional service-discovery surface is read-only and declares a capability for every exposed method. `synex.groups` exposes `get`, `get_read_model`, `list_subject_memberships`, `check_capability`, and `get_control_summary` under `synex.groups.read`. `list_subject_memberships` returns at most 64 active memberships plus an explicit `truncated` flag. `synex.accounts` exposes `get_snapshot`, `list_owner_accounts`, and `get_hold` under `synex.accounts.read`, `get_access` under `synex.accounts.access.read`, and `get_integrity` plus `get_control_summary` under `synex.accounts.integrity.read`. `list_owner_accounts` is the compatibility projection: it returns at most 64 active `cash`/`bank` asset accounts plus `truncated`, not an unbounded general account search. `synex.entities` exposes `getHealth` under `synex.entities.health` and `getControlSummary` under `synex.entities.read`. Mutations in these three domain resources are registered only as server RPC contracts, so they pass through Core's caller identity and capability checks.
 

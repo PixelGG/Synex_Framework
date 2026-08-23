@@ -3944,6 +3944,60 @@ return {
           ["operational"] = {
             ["type"] = "boolean"
           },
+          ["reasons"] = {
+            ["type"] = "object"
+          },
+          ["recentTransitions"] = {
+            ["items"] = {
+              ["type"] = "object"
+            },
+            ["maxItems"] = 64,
+            ["type"] = "array"
+          },
+          ["revision"] = {
+            ["minimum"] = 0,
+            ["type"] = "integer"
+          },
+          ["state"] = {
+            ["maxLength"] = 32,
+            ["type"] = "string"
+          }
+        },
+        ["required"] = {
+          "state",
+          "revision",
+          "operational",
+          "reasons",
+          "recentTransitions"
+        },
+        ["type"] = "object"
+      },
+      ["provider"] = "synex_core",
+      ["stability"] = "experimental",
+      ["version"] = "1.0.0"
+    },
+    {
+      ["capability"] = "synex.runtime.read",
+      ["domain"] = "synex.core",
+      ["errors"] = {
+        "CAPABILITY_DENIED",
+        "NOT_READY"
+      },
+      ["idempotent"] = true,
+      ["input"] = {
+        ["additionalProperties"] = false,
+        ["properties"] = {},
+        ["type"] = "object"
+      },
+      ["kind"] = "service",
+      ["name"] = "synex.runtime.status",
+      ["network"] = "none",
+      ["output"] = {
+        ["additionalProperties"] = false,
+        ["properties"] = {
+          ["operational"] = {
+            ["type"] = "boolean"
+          },
           ["playerAdmission"] = {
             ["type"] = "boolean"
           },
@@ -3978,9 +4032,9 @@ return {
       },
       ["provider"] = "synex_core",
       ["stability"] = "experimental",
-      ["version"] = "1.0.0"
+      ["version"] = "2.0.0"
     }
   },
   ["schema"] = 1,
-  ["sourceHash"] = "7d823d421d2db0bbbabb2e64171a14c45d0fbcab23a4fd9bc11458c708482795"
+  ["sourceHash"] = "5c35131d99272ec77c0512ce54fdac50322c86f80b29aac076c8e0caf1357248"
 }

@@ -17,7 +17,9 @@ BEGIN
         WHERE `TABLE_SCHEMA` = DATABASE() AND `TABLE_NAME` = 'synex_idempotency_keys'
             AND `COLUMN_NAME` = 'response_compaction_at'
             AND LOWER(`DATA_TYPE`) = 'datetime' AND `DATETIME_PRECISION` = 6
-            AND `IS_NULLABLE` = 'YES' AND `COLUMN_DEFAULT` IS NULL
+            AND `IS_NULLABLE` = 'YES'
+            AND (`COLUMN_DEFAULT` IS NULL
+                OR CAST(`COLUMN_DEFAULT` AS BINARY) = CAST('NULL' AS BINARY))
             AND COALESCE(`EXTRA`, '') = ''
     ) THEN
         SIGNAL SQLSTATE '45000'

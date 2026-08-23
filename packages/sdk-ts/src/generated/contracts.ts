@@ -1,4 +1,4 @@
-export const GENERATED_SOURCE_HASH = "7d823d421d2db0bbbabb2e64171a14c45d0fbcab23a4fd9bc11458c708482795";
+export const GENERATED_SOURCE_HASH = "5c35131d99272ec77c0512ce54fdac50322c86f80b29aac076c8e0caf1357248";
 
 export const GENERATED_CONTRACT_VERSIONS = {
   "synex.accounts.burn@1.0.0": { name: "synex.accounts.burn", version: "1.0.0", kind: "rpc", provider: "synex_accounts" },
@@ -46,6 +46,7 @@ export const GENERATED_CONTRACT_VERSIONS = {
   "synex.identity.characters.select@1.0.0": { name: "synex.identity.characters.select", version: "1.0.0", kind: "service", provider: "synex_core" },
   "synex.identity.session.by_source@1.0.0": { name: "synex.identity.session.by_source", version: "1.0.0", kind: "service", provider: "synex_core" },
   "synex.runtime.status@1.0.0": { name: "synex.runtime.status", version: "1.0.0", kind: "service", provider: "synex_core" },
+  "synex.runtime.status@2.0.0": { name: "synex.runtime.status", version: "2.0.0", kind: "service", provider: "synex_core" },
 } as const;
 
 export const GENERATED_CONTRACTS = {
@@ -93,7 +94,7 @@ export const GENERATED_CONTRACTS = {
   "synex.identity.characters.list": GENERATED_CONTRACT_VERSIONS["synex.identity.characters.list@1.0.0"],
   "synex.identity.characters.select": GENERATED_CONTRACT_VERSIONS["synex.identity.characters.select@1.0.0"],
   "synex.identity.session.by_source": GENERATED_CONTRACT_VERSIONS["synex.identity.session.by_source@1.0.0"],
-  "synex.runtime.status": GENERATED_CONTRACT_VERSIONS["synex.runtime.status@1.0.0"],
+  "synex.runtime.status": GENERATED_CONTRACT_VERSIONS["synex.runtime.status@2.0.0"],
 } as const;
 
 export type SynexAccountsBurnInput = { "account_id": string; "actor_ref"?: string; "amount_minor": number; "burn_account_id": string; "idempotency_key": string; "metadata_json"?: string; "reference"?: string; };
@@ -272,9 +273,17 @@ export type SynexIdentitySessionBySourceInput = { "source": number; };
 export type SynexIdentitySessionBySourceOutput = { "found": boolean; "session"?: { "characterId"?: string; "id": string; "source": number; "sourceGeneration": number; "state": string; "userId": string; "version": number; }; };
 export type SynexIdentitySessionBySourceError = "CAPABILITY_DENIED" | "NOT_READY";
 
-export type SynexRuntimeStatusInput = Record<string, never>;
-export type SynexRuntimeStatusOutput = { "operational": boolean; "playerAdmission": boolean; "reasons": { [key: string]: unknown; }; "recentTransitions": Array<{ [key: string]: unknown; }>; "revision": number; "state": string; };
-export type SynexRuntimeStatusError = "CAPABILITY_DENIED" | "NOT_READY";
+export type SynexRuntimeStatusf3d52e61Input = Record<string, never>;
+export type SynexRuntimeStatusf3d52e61Output = { "operational": boolean; "reasons": { [key: string]: unknown; }; "recentTransitions": Array<{ [key: string]: unknown; }>; "revision": number; "state": string; };
+export type SynexRuntimeStatusf3d52e61Error = "CAPABILITY_DENIED" | "NOT_READY";
+
+export type SynexRuntimeStatusc2f5ab45Input = Record<string, never>;
+export type SynexRuntimeStatusc2f5ab45Output = { "operational": boolean; "playerAdmission": boolean; "reasons": { [key: string]: unknown; }; "recentTransitions": Array<{ [key: string]: unknown; }>; "revision": number; "state": string; };
+export type SynexRuntimeStatusc2f5ab45Error = "CAPABILITY_DENIED" | "NOT_READY";
+
+export type SynexRuntimeStatusInput = SynexRuntimeStatusc2f5ab45Input;
+export type SynexRuntimeStatusOutput = SynexRuntimeStatusc2f5ab45Output;
+export type SynexRuntimeStatusError = SynexRuntimeStatusc2f5ab45Error;
 
 export interface GeneratedVersionedContractMap {
   "synex.accounts.burn@1.0.0": { input: SynexAccountsBurnInput; output: SynexAccountsBurnOutput; error: SynexAccountsBurnError };
@@ -321,7 +330,8 @@ export interface GeneratedVersionedContractMap {
   "synex.identity.characters.list@1.0.0": { input: SynexIdentityCharactersListInput; output: SynexIdentityCharactersListOutput; error: SynexIdentityCharactersListError };
   "synex.identity.characters.select@1.0.0": { input: SynexIdentityCharactersSelectInput; output: SynexIdentityCharactersSelectOutput; error: SynexIdentityCharactersSelectError };
   "synex.identity.session.by_source@1.0.0": { input: SynexIdentitySessionBySourceInput; output: SynexIdentitySessionBySourceOutput; error: SynexIdentitySessionBySourceError };
-  "synex.runtime.status@1.0.0": { input: SynexRuntimeStatusInput; output: SynexRuntimeStatusOutput; error: SynexRuntimeStatusError };
+  "synex.runtime.status@1.0.0": { input: SynexRuntimeStatusf3d52e61Input; output: SynexRuntimeStatusf3d52e61Output; error: SynexRuntimeStatusf3d52e61Error };
+  "synex.runtime.status@2.0.0": { input: SynexRuntimeStatusc2f5ab45Input; output: SynexRuntimeStatusc2f5ab45Output; error: SynexRuntimeStatusc2f5ab45Error };
 }
 
 export interface GeneratedContractMap {
@@ -369,5 +379,5 @@ export interface GeneratedContractMap {
   "synex.identity.characters.list": { input: SynexIdentityCharactersListInput; output: SynexIdentityCharactersListOutput; error: SynexIdentityCharactersListError };
   "synex.identity.characters.select": { input: SynexIdentityCharactersSelectInput; output: SynexIdentityCharactersSelectOutput; error: SynexIdentityCharactersSelectError };
   "synex.identity.session.by_source": { input: SynexIdentitySessionBySourceInput; output: SynexIdentitySessionBySourceOutput; error: SynexIdentitySessionBySourceError };
-  "synex.runtime.status": { input: SynexRuntimeStatusInput; output: SynexRuntimeStatusOutput; error: SynexRuntimeStatusError };
+  "synex.runtime.status": { input: SynexRuntimeStatusc2f5ab45Input; output: SynexRuntimeStatusc2f5ab45Output; error: SynexRuntimeStatusc2f5ab45Error };
 }

@@ -172,7 +172,11 @@ factories.bootstrapApi = function(deps)
 
     local function registerCoreContracts()
         local handlers = {
-            ['synex.runtime.status'] = function() return lifecycle.core:snapshot(), nil end,
+            ['synex.runtime.status'] = function(_, context)
+                local snapshot = lifecycle.core:snapshot()
+                if context.version == '1.0.0' then snapshot.playerAdmission = nil end
+                return snapshot, nil
+            end,
             ['synex.identity.session.by_source'] = function(request)
                 local session = publicSession(registries.players:getBySource(request.source))
                 return session and { found = true, session = session } or { found = false }, nil
@@ -196,12 +200,16 @@ factories.bootstrapApi = function(deps)
                 return identity.characters:delete(request.sessionId, request.characterId)
             end
         }
+        local versions = { ['synex.runtime.status'] = { '1.0.0', '2.0.0' } }
         local coreEpoch = registries.owners:epoch(coreResource)
         for name, handler in pairs(handlers) do
-            local contract, resolveError = contractSystem.registry:resolve(name, '1.0.0')
-            if not contract then return nil, resolveError end
-            local _, registerError = messaging.gateway:register(coreResource, coreEpoch, contract, handler)
-            if registerError then return nil, registerError end
+            for _, version in ipairs(versions[name] or { '1.0.0' }) do
+                local contract, resolveError = contractSystem.registry:resolve(name, version)
+                if not contract then return nil, resolveError end
+                local _, registerError = messaging.gateway:register(
+                    coreResource, coreEpoch, contract, handler)
+                if registerError then return nil, registerError end
+            end
         end
         return true, nil
     end

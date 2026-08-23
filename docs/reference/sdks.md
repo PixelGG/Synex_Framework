@@ -32,7 +32,7 @@ const snapshot = await client.request("synex.accounts.get_snapshot", {
 
 The repository does not ship a browser, NUI, HTTP, or Cfx transport implementation for this client. The host must provide a `SynexTransport` whose `request(contract, version, input)` crosses an already authorized server-side boundary. Do not expose the transport directly to untrusted NUI code or treat generated types as runtime validation.
 
-Version-specific calls use the generated `name@version` key. Current contracts are experimental even though their contract versions use semantic `1.0.0` identifiers.
+Version-specific calls use the generated `name@version` key. Current contracts are experimental even though their contract versions use semantic version identifiers.
 
 ## Generated outputs
 

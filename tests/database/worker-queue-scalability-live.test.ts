@@ -17,9 +17,11 @@ test('live migration 021 verifies exact queue metadata and fences historical com
   const { connection } = await openLiveDatabase();
   const namespace = `worker021:${randomUUID()}`;
   const owner = 'worker021';
+  let capacityTablesReady = false;
   try {
     const migrations = await loadMigrations();
     await applyMigrations(connection, migrations);
+    capacityTablesReady = true;
     const migration = migrations.find(
       (entry) => entry.file === '021_worker_queue_scalability.sql',
     );
@@ -27,7 +29,9 @@ test('live migration 021 verifies exact queue metadata and fences historical com
     await applyMigrations(connection, [migration]);
 
     const [columns] = await connection.query<RowDataPacket[]>(
-      `SELECT data_type, datetime_precision, is_nullable, column_default, extra
+      `SELECT data_type, datetime_precision, is_nullable, column_default, extra,
+              (column_default IS NULL
+                OR CAST(column_default AS BINARY) = CAST('NULL' AS BINARY)) AS default_is_null
        FROM information_schema.columns
        WHERE table_schema = DATABASE() AND table_name = 'synex_idempotency_keys'
          AND column_name = 'response_compaction_at'`,
@@ -36,8 +40,24 @@ test('live migration 021 verifies exact queue metadata and fences historical com
     assert.equal(String(columns[0]?.data_type).toLowerCase(), 'datetime');
     assert.equal(Number(columns[0]?.datetime_precision), 6);
     assert.equal(String(columns[0]?.is_nullable), 'YES');
-    assert.equal(columns[0]?.column_default, null);
+    const columnDefault = columns[0]?.column_default;
+    assert.ok(
+      columnDefault === null || columnDefault === 'NULL',
+      `unexpected response_compaction_at default metadata: ${String(columnDefault)}`,
+    );
+    assert.equal(Number(columns[0]?.default_is_null), 1);
     assert.equal(String(columns[0]?.extra ?? ''), '');
+
+    const [defaultPredicate] = await connection.query<RowDataPacket[]>(
+      `SELECT
+         (? IS NULL OR CAST(? AS BINARY) = CAST('NULL' AS BINARY)) AS sql_null,
+         (? IS NULL OR CAST(? AS BINARY) = CAST('NULL' AS BINARY)) AS mariadb_null,
+         (? IS NULL OR CAST(? AS BINARY) = CAST('NULL' AS BINARY)) AS quoted_literal`,
+      [null, null, 'NULL', 'NULL', "'NULL'", "'NULL'"],
+    );
+    assert.equal(Number(defaultPredicate[0]?.sql_null), 1);
+    assert.equal(Number(defaultPredicate[0]?.mariadb_null), 1);
+    assert.equal(Number(defaultPredicate[0]?.quoted_literal), 0);
 
     const expected = new Map<string, string[]>([
       ['idx_idempotency_response_compaction', [
@@ -189,61 +209,66 @@ test('live migration 021 verifies exact queue metadata and fences historical com
     );
     assert.equal(routines.length, 0);
   } finally {
-    await connection.beginTransaction();
     try {
-      await connection.query(
-        `SELECT entry_count FROM synex_idempotency_capacity
-         WHERE singleton_id = 1 FOR UPDATE`,
-      );
-      await connection.query(
-        `SELECT entry_count FROM synex_idempotency_owner_capacity
-         WHERE owner_resource = ? FOR UPDATE`,
-        [owner],
-      );
-      await connection.query(
-        `SELECT entry_count FROM synex_idempotency_namespace_capacity
-         WHERE namespace = ? FOR UPDATE`,
-        [namespace],
-      );
-      const [removed] = await connection.query<ResultSetHeader>(
-        'DELETE FROM synex_idempotency_keys WHERE namespace = ?',
-        [namespace],
-      );
-      if (removed.affectedRows > 0) {
-        const [globalReleased] = await connection.query<ResultSetHeader>(
-          `UPDATE synex_idempotency_capacity SET entry_count = entry_count - ?
-           WHERE singleton_id = 1 AND entry_count >= ?`,
-          [removed.affectedRows, removed.affectedRows],
-        );
-        const [ownerReleased] = await connection.query<ResultSetHeader>(
-          `UPDATE synex_idempotency_owner_capacity SET entry_count = entry_count - ?
-           WHERE owner_resource = ? AND entry_count >= ?`,
-          [removed.affectedRows, owner, removed.affectedRows],
-        );
-        const [namespaceReleased] = await connection.query<ResultSetHeader>(
-          `UPDATE synex_idempotency_namespace_capacity SET entry_count = entry_count - ?
-           WHERE namespace = ? AND owner_resource = ? AND entry_count >= ?`,
-          [removed.affectedRows, namespace, owner, removed.affectedRows],
-        );
-        assert.equal(globalReleased.affectedRows, 1);
-        assert.equal(ownerReleased.affectedRows, 1);
-        assert.equal(namespaceReleased.affectedRows, 1);
+      if (capacityTablesReady) {
+        await connection.beginTransaction();
+        try {
+          await connection.query(
+            `SELECT entry_count FROM synex_idempotency_capacity
+             WHERE singleton_id = 1 FOR UPDATE`,
+          );
+          await connection.query(
+            `SELECT entry_count FROM synex_idempotency_owner_capacity
+             WHERE owner_resource = ? FOR UPDATE`,
+            [owner],
+          );
+          await connection.query(
+            `SELECT entry_count FROM synex_idempotency_namespace_capacity
+             WHERE namespace = ? FOR UPDATE`,
+            [namespace],
+          );
+          const [removed] = await connection.query<ResultSetHeader>(
+            'DELETE FROM synex_idempotency_keys WHERE namespace = ?',
+            [namespace],
+          );
+          if (removed.affectedRows > 0) {
+            const [globalReleased] = await connection.query<ResultSetHeader>(
+              `UPDATE synex_idempotency_capacity SET entry_count = entry_count - ?
+               WHERE singleton_id = 1 AND entry_count >= ?`,
+              [removed.affectedRows, removed.affectedRows],
+            );
+            const [ownerReleased] = await connection.query<ResultSetHeader>(
+              `UPDATE synex_idempotency_owner_capacity SET entry_count = entry_count - ?
+               WHERE owner_resource = ? AND entry_count >= ?`,
+              [removed.affectedRows, owner, removed.affectedRows],
+            );
+            const [namespaceReleased] = await connection.query<ResultSetHeader>(
+              `UPDATE synex_idempotency_namespace_capacity SET entry_count = entry_count - ?
+               WHERE namespace = ? AND owner_resource = ? AND entry_count >= ?`,
+              [removed.affectedRows, namespace, owner, removed.affectedRows],
+            );
+            assert.equal(globalReleased.affectedRows, 1);
+            assert.equal(ownerReleased.affectedRows, 1);
+            assert.equal(namespaceReleased.affectedRows, 1);
+          }
+          await connection.query(
+            `DELETE FROM synex_idempotency_namespace_capacity
+             WHERE namespace = ? AND entry_count = 0`,
+            [namespace],
+          );
+          await connection.query(
+            `DELETE FROM synex_idempotency_owner_capacity
+             WHERE owner_resource = ? AND entry_count = 0`,
+            [owner],
+          );
+          await connection.commit();
+        } catch (error) {
+          await connection.rollback();
+          throw error;
+        }
       }
-      await connection.query(
-        `DELETE FROM synex_idempotency_namespace_capacity
-         WHERE namespace = ? AND entry_count = 0`,
-        [namespace],
-      );
-      await connection.query(
-        `DELETE FROM synex_idempotency_owner_capacity
-         WHERE owner_resource = ? AND entry_count = 0`,
-        [owner],
-      );
-      await connection.commit();
-    } catch (error) {
-      await connection.rollback();
-      throw error;
+    } finally {
+      await connection.end();
     }
-    await connection.end();
   }
 });

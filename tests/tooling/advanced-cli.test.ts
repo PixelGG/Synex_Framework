@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import test from "node:test";
 import { tmpdir } from "node:os";
@@ -17,6 +17,7 @@ import {
 import {
   compareAppliedMigrations,
   compareDatabaseShape,
+  compareMigrationControls,
   deriveExpectedDatabaseShape,
   extractDatabaseShape,
 } from "../../tools/cli/src/database-doctor.js";
@@ -317,6 +318,69 @@ ALTER TABLE \`synex_probe\`
   assert.deepEqual(migrationDelta.pending, []);
   assert.deepEqual(migrationDelta.checksumMismatches, []);
   assert.deepEqual(migrationDelta.unknownApplied, ["synex_core:999_unknown"]);
+
+  const correctedMigration = compareAppliedMigrations(
+    {
+      "synex_core:021_worker_queue_scalability":
+        "5add0fed6935b83e7fd0905c188c1e534a6636d5d935fea1a28a145f7b533b7c",
+    },
+    [[
+      "synex_core:021_worker_queue_scalability",
+      "6d314f977f47fa39125c9597172e75fa05d80bfbd310aaf6be4c5584f6823b59",
+    ]],
+  );
+  assert.deepEqual(correctedMigration.checksumMismatches, []);
+  const wrongIdentity = compareAppliedMigrations(
+    {
+      "synex_other:021_worker_queue_scalability":
+        "5add0fed6935b83e7fd0905c188c1e534a6636d5d935fea1a28a145f7b533b7c",
+    },
+    [[
+      "synex_other:021_worker_queue_scalability",
+      "6d314f977f47fa39125c9597172e75fa05d80bfbd310aaf6be4c5584f6823b59",
+    ]],
+  );
+  assert.deepEqual(wrongIdentity.checksumMismatches, ["synex_other:021_worker_queue_scalability"]);
+
+  const migrationIdentity = "synex_core:021_worker_queue_scalability";
+  const previousChecksum = "6d314f977f47fa39125c9597172e75fa05d80bfbd310aaf6be4c5584f6823b59";
+  const currentChecksum = "5add0fed6935b83e7fd0905c188c1e534a6636d5d935fea1a28a145f7b533b7c";
+  const unknownChecksum = "f".repeat(64);
+  const expected = { [migrationIdentity]: currentChecksum };
+  const applied = [[migrationIdentity, previousChecksum] as const];
+  const validControls = compareMigrationControls(
+    expected,
+    applied,
+    [{ identity: migrationIdentity, checksum: previousChecksum, state: "applied" }],
+    [{ identity: migrationIdentity, checksum: currentChecksum, state: "applied" }],
+  );
+  assert.deepEqual(validControls, {
+    checksumMismatches: [],
+    inconsistentStates: [],
+    unknownEntries: [],
+  });
+
+  const invalidControls = compareMigrationControls(
+    expected,
+    applied,
+    [{ identity: migrationIdentity, checksum: unknownChecksum, state: "applying" }],
+    [{ identity: migrationIdentity, checksum: unknownChecksum, state: "applied" }],
+  );
+  assert.deepEqual(invalidControls.checksumMismatches, [
+    `attempt:${migrationIdentity}`,
+    `fence:${migrationIdentity}`,
+  ]);
+  assert.deepEqual(invalidControls.inconsistentStates, [`fence:${migrationIdentity}`]);
+  assert.deepEqual(invalidControls.unknownEntries, []);
+
+  const markerlessControls = compareMigrationControls(
+    expected,
+    [],
+    [{ identity: migrationIdentity, checksum: previousChecksum, state: "indeterminate" }],
+    [],
+  );
+  assert.deepEqual(markerlessControls.checksumMismatches, [`fence:${migrationIdentity}`]);
+  assert.deepEqual(markerlessControls.inconsistentStates, [`fence:${migrationIdentity}`]);
 });
 
 test("benchmark baseline comparison emits reproducible regression warnings", () => {
@@ -374,6 +438,7 @@ test("targeted upgrade checks compare only the matching baseline resource and ha
       synex: { apiVersion: "1.0.0" },
     }, null, 2);
     await cp(join(process.cwd(), "schemas"), join(repository, "schemas"), { recursive: true });
+    await cp(join(process.cwd(), "schemas"), join(baseline, "schemas"), { recursive: true });
     await writeFile(join(repository, "package.json"), `${packageMetadata}\n`, "utf8");
     await writeFile(join(baseline, "package.json"), `${packageMetadata}\n`, "utf8");
     const currentTarget = await writeFixtureResource(
@@ -389,6 +454,105 @@ test("targeted upgrade checks compare only the matching baseline resource and ha
     const report = await upgradeCheck(repository, currentTarget, baseline);
     assert.ok(report.blockers.some((blocker) => /synex_a migration 001_init changed checksum/u.test(blocker)));
     assert.equal(report.deltas.resources.some((delta) => /synex_b/u.test(delta)), false);
+  } finally {
+    await removeFixture(repository);
+    await removeFixture(baseline);
+  }
+});
+
+test("upgrade checks allow only the registered migration 021 checksum correction", async () => {
+  const repository = await mkdtemp(join(tmpdir(), "synex-upgrade-correction-current-"));
+  const baseline = await mkdtemp(join(tmpdir(), "synex-upgrade-correction-baseline-"));
+  try {
+    const packageMetadata = JSON.stringify({
+      name: "synex-fixture",
+      version: "0.1.0",
+      synex: { apiVersion: "1.0.0" },
+    }, null, 2);
+    await Promise.all([
+      cp(join(process.cwd(), "schemas"), join(repository, "schemas"), { recursive: true }),
+      cp(join(process.cwd(), "schemas"), join(baseline, "schemas"), { recursive: true }),
+      writeFile(join(repository, "package.json"), `${packageMetadata}\n`, "utf8"),
+      writeFile(join(baseline, "package.json"), `${packageMetadata}\n`, "utf8"),
+    ]);
+
+    const resourceName = "synex_core";
+    const migrationId = "021_worker_queue_scalability";
+    const migrationPath = `migrations/${migrationId}.sql`;
+    const manifest = fixtureManifest(resourceName);
+    manifest.migrations = [{ id: migrationId, path: migrationPath, transactional: false }];
+    const currentTarget = await writeFixtureResource(repository, resourceName, manifest);
+    await writeFixtureResource(baseline, resourceName, manifest);
+
+    const currentMigration = (await readFile(
+      join(process.cwd(), "core", "synex_core", migrationPath),
+      "utf8",
+    )).replace(/\r\n?/gu, "\n");
+    const previousMigration = currentMigration.replace(
+      `            AND \`IS_NULLABLE\` = 'YES'\n            AND (\`COLUMN_DEFAULT\` IS NULL\n                OR CAST(\`COLUMN_DEFAULT\` AS BINARY) = CAST('NULL' AS BINARY))`,
+      `            AND \`IS_NULLABLE\` = 'YES' AND \`COLUMN_DEFAULT\` IS NULL`,
+    );
+    assert.notEqual(previousMigration, currentMigration);
+    await writeFile(join(currentTarget, migrationPath), currentMigration, "utf8");
+    await writeFile(join(baseline, "resources", resourceName, migrationPath), previousMigration, "utf8");
+
+    const report = await upgradeCheck(repository, currentTarget, baseline);
+    assert.equal(report.blockers.some((blocker) =>
+      blocker.includes(`${resourceName} migration ${migrationId} changed checksum`)
+    ), false);
+    assert.ok(report.warnings.some((warning) =>
+      warning === `${resourceName} migration ${migrationId} applies a registered checksum correction.`
+    ));
+  } finally {
+    await removeFixture(repository);
+    await removeFixture(baseline);
+  }
+});
+
+test("upgrade checks validate historical manifests with their baseline schema", async () => {
+  const repository = await mkdtemp(join(tmpdir(), "synex-upgrade-schema-current-"));
+  const baseline = await mkdtemp(join(tmpdir(), "synex-upgrade-schema-baseline-"));
+  try {
+    const packageMetadata = JSON.stringify({
+      name: "synex-fixture",
+      version: "0.1.0",
+      synex: { apiVersion: "1.0.0" },
+    }, null, 2);
+    await Promise.all([
+      cp(join(process.cwd(), "schemas"), join(repository, "schemas"), { recursive: true }),
+      cp(join(process.cwd(), "schemas"), join(baseline, "schemas"), { recursive: true }),
+      writeFile(join(repository, "package.json"), `${packageMetadata}\n`, "utf8"),
+      writeFile(join(baseline, "package.json"), `${packageMetadata}\n`, "utf8"),
+    ]);
+
+    const baselineSchemaPath = join(baseline, "schemas", "resource.schema.json");
+    const baselineSchema = JSON.parse(await readFile(baselineSchemaPath, "utf8")) as {
+      required?: unknown;
+    };
+    assert.ok(Array.isArray(baselineSchema.required));
+    baselineSchema.required = baselineSchema.required.filter(
+      (entry): entry is string => typeof entry === "string" && entry !== "events" && entry !== "hooks",
+    );
+    await writeFile(baselineSchemaPath, `${JSON.stringify(baselineSchema, null, 2)}\n`, "utf8");
+
+    const resourceName = "synex_schema_evolution";
+    const currentTarget = await writeFixtureResource(
+      repository,
+      resourceName,
+      fixtureManifest(resourceName),
+    );
+    const historicalManifest = fixtureManifest(resourceName);
+    delete historicalManifest.events;
+    delete historicalManifest.hooks;
+    await writeFixtureResource(baseline, resourceName, historicalManifest);
+
+    const report = await upgradeCheck(repository, currentTarget, baseline);
+    assert.equal(report.blockers.some((blocker) =>
+      blocker.includes("Baseline:") && blocker.includes("resource-schema")
+    ), false);
+    assert.equal(report.deltas.resources.some((delta) =>
+      delta === `Resource ${resourceName} was added.`
+    ), false);
   } finally {
     await removeFixture(repository);
     await removeFixture(baseline);

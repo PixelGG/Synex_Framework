@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
@@ -19,7 +20,7 @@ test('migration 021 installs and exactly verifies every worker queue index', asy
   );
   assert.match(
     migration,
-    /`COLUMN_NAME` = 'response_compaction_at'[\s\S]*?LOWER\(`DATA_TYPE`\) = 'datetime'[\s\S]*?`DATETIME_PRECISION` = 6[\s\S]*?`IS_NULLABLE` = 'YES'[\s\S]*?`COLUMN_DEFAULT` IS NULL[\s\S]*?COALESCE\(`EXTRA`, ''\) = ''/u,
+    /`COLUMN_NAME` = 'response_compaction_at'[\s\S]*?LOWER\(`DATA_TYPE`\) = 'datetime'[\s\S]*?`DATETIME_PRECISION` = 6[\s\S]*?`IS_NULLABLE` = 'YES'[\s\S]*?\(`COLUMN_DEFAULT` IS NULL[\s\S]*?OR CAST\(`COLUMN_DEFAULT` AS BINARY\) = CAST\('NULL' AS BINARY\)\)[\s\S]*?COALESCE\(`EXTRA`, ''\) = ''/u,
   );
   assert.match(
     migration,
@@ -76,6 +77,20 @@ test('migration 021 installs and exactly verifies every worker queue index', asy
   assert.equal((migration.match(/DROP PROCEDURE IF EXISTS/gu) ?? []).length, 2);
   assert.equal((migration.match(/CREATE PROCEDURE/gu) ?? []).length, 1);
   assert.equal((migration.match(/CALL `synex_migrate_021_worker_queue_scalability`\(\)/gu) ?? []).length, 1);
+
+  const currentChecksum = createHash('sha256')
+    .update(migration.replace(/\r\n?/gu, '\n'))
+    .digest('hex');
+  const previousChecksum = '6d314f977f47fa39125c9597172e75fa05d80bfbd310aaf6be4c5584f6823b59';
+  assert.equal(currentChecksum, '5add0fed6935b83e7fd0905c188c1e534a6636d5d935fea1a28a145f7b533b7c');
+  for (const compatibilitySource of await Promise.all([
+    source('core/synex_core/server/persistence.lua'),
+    source('tools/cli/src/migration-compatibility.ts'),
+  ])) {
+    assert.match(compatibilitySource, /synex_core:021_worker_queue_scalability/u);
+    assert.match(compatibilitySource, new RegExp(previousChecksum, 'u'));
+    assert.match(compatibilitySource, new RegExp(currentChecksum, 'u'));
+  }
 });
 
 test('saga recovery uses bounded state cycles, exact keyset ranges, and Lua selector filtering', async () => {

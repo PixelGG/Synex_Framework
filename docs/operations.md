@@ -218,7 +218,7 @@ Migration `025_cluster_lease_capacity` must follow `024` under the same full-sto
 
 If startup reports `MIGRATION_INDETERMINATE` or loses its migration lease after submitting a statement, leave the affected fence intact and keep every Core instance stopped. The block means the database outcome cannot be proven from the adapter response. Inspect the exact statement boundary against a restored/tested copy and use the operator's backup/recovery procedure; deleting the attempt or fence and restarting can execute an already-applied DDL statement again.
 
-Back up and test restore procedures before every deployment that introduces migration files. Never edit a migration already recorded in `synex_schema_migrations` or its attempt history; Synex will reject the checksum mismatch. Attempt state records `applying`, `applied`, or legacy `failed`; the authoritative fence can additionally report `indeterminate`. Both legacy `failed` and indeterminate/incomplete execution are fail-closed and require operator reconciliation rather than automatic retry. See [Migrations](migrations.md).
+Back up and test restore procedures before every deployment that introduces migration files. Never edit a migration already recorded in `synex_schema_migrations` or its attempt history; Synex rejects checksum mismatches except for the one exact, registered metadata-only correction to `synex_core/021_worker_queue_scalability`. That correction is accepted only when its earlier checksum already has an authoritative applied marker. A marker-less, `applying`, legacy `failed`, or `indeterminate` earlier `021` remains fail-closed and requires operator reconciliation rather than automatic retry. See [Migrations](migrations.md).
 
 ## Production readiness gate
 

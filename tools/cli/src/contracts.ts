@@ -617,6 +617,22 @@ function contractTypePrefixes(contracts: RuntimeContractDescriptor[]): Map<strin
   );
 }
 
+function stableContractTypeBases(contracts: RuntimeContractDescriptor[]): Map<string, string> {
+  const namesByBase = new Map<string, Set<string>>();
+  for (const contract of contracts) {
+    const base = contractTypePrefix(contract);
+    const names = namesByBase.get(base) ?? new Set<string>();
+    names.add(contract.name);
+    namesByBase.set(base, names);
+  }
+  return new Map(
+    contracts
+      .filter((contract, index) => contracts.findIndex((candidate) => candidate.name === contract.name) === index)
+      .filter((contract) => namesByBase.get(contractTypePrefix(contract))?.size === 1)
+      .map((contract) => [contract.name, contractTypePrefix(contract)] as const),
+  );
+}
+
 function latestContracts(contracts: RuntimeContractDescriptor[]): RuntimeContractDescriptor[] {
   const latest = new Map<string, RuntimeContractDescriptor>();
   for (const contract of contracts) {
@@ -632,6 +648,7 @@ function latestContracts(contracts: RuntimeContractDescriptor[]): RuntimeContrac
 
 function renderTypeScriptContracts(registry: RuntimeContractRegistry): string {
   const typePrefixes = contractTypePrefixes(registry.contracts);
+  const stableTypeBases = stableContractTypeBases(registry.contracts);
   const latest = latestContracts(registry.contracts);
   const lines = [
     `export const GENERATED_SOURCE_HASH = ${JSON.stringify(registry.sourceHash)};`,
@@ -660,6 +677,18 @@ function renderTypeScriptContracts(registry: RuntimeContractRegistry): string {
       `export type ${prefix}Input = ${schemaType(contract.input)};`,
       `export type ${prefix}Output = ${schemaType(contract.output)};`,
       `export type ${prefix}Error = ${errors};`,
+      "",
+    );
+  }
+
+  for (const contract of latest) {
+    const prefix = typePrefixes.get(contractIdentity(contract)) ?? contractTypePrefix(contract);
+    const stable = stableTypeBases.get(contract.name);
+    if (!stable || stable === prefix) continue;
+    lines.push(
+      `export type ${stable}Input = ${prefix}Input;`,
+      `export type ${stable}Output = ${prefix}Output;`,
+      `export type ${stable}Error = ${prefix}Error;`,
       "",
     );
   }

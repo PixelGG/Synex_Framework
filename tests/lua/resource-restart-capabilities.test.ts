@@ -364,20 +364,92 @@ test('runtime status history and contract stay bounded and schema-complete', asy
       local contracts = SynexCoreFactories.contracts({
         foundation = foundation, protocol = SynexProtocol, generated = SynexGeneratedContracts
       })
-      local contract = assert(contracts.registry:resolve('synex.runtime.status', '1.0.0'))
-      assert(contracts.registry:validateOutput(contract, snapshot))
+      local versionOne = assert(contracts.registry:resolve('synex.runtime.status', '1.0.0'))
+      local legacy = foundation.copy(snapshot)
+      legacy.playerAdmission = nil
+      assert(contracts.registry:validateOutput(versionOne, legacy))
+      local legacyFull, legacyFullError = contracts.registry:validateOutput(versionOne, snapshot)
+      assert(legacyFull == nil and legacyFullError.code == 'INVALID_PROVIDER_RESPONSE')
+
+      local versionTwo = assert(contracts.registry:resolve('synex.runtime.status', '2.0.0'))
+      assert(contracts.registry:validateOutput(versionTwo, snapshot))
       local incomplete = foundation.copy(snapshot)
       incomplete.playerAdmission = nil
-      local valid, validationError = contracts.registry:validateOutput(contract, incomplete)
+      local valid, validationError = contracts.registry:validateOutput(versionTwo, incomplete)
       assert(valid == nil and validationError.code == 'INVALID_PROVIDER_RESPONSE')
       return table.concat({
         snapshot.revision, #snapshot.recentTransitions,
         snapshot.recentTransitions[1].revision,
         snapshot.recentTransitions[64].revision,
-        validationError.code
+        legacyFullError.code, validationError.code
       }, ':')
     `);
-    assert.equal(result, '88:64:25:88:INVALID_PROVIDER_RESPONSE');
+    assert.equal(result, '88:64:25:88:INVALID_PROVIDER_RESPONSE:INVALID_PROVIDER_RESPONSE');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('runtime status registers compatible v1 and extended v2 handlers', async () => {
+  const engine = await createEngine(['foundation', 'registries', 'bootstrap_api'], true);
+  try {
+    const result = await engine.doString(`
+      local platform = {
+        nowGame = function() return 1000 end,
+        random = function() return 31 end,
+        print = function() end,
+        jsonEncode = function() return '{}' end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      local registries = SynexCoreFactories.registries({ foundation = foundation })
+      registries.owners:activate('synex_core')
+      local registered = {}
+      local contractSystem = {
+        registry = {
+          resolve = function(_, name, version)
+            return { name = name, version = version, provider = 'synex_core' }, nil
+          end
+        }
+      }
+      local messaging = {
+        gateway = {
+          register = function(_, owner, _, contract, handler)
+            assert(owner == 'synex_core')
+            registered[contract.name .. '@' .. contract.version] = handler
+            return contract.version, nil
+          end
+        }
+      }
+      local lifecycle = {
+        core = {
+          snapshot = function()
+            return {
+              state = 'READY', revision = 8, operational = true,
+              playerAdmission = false, reasons = {}, recentTransitions = {}
+            }
+          end
+        }
+      }
+      local api = SynexCoreFactories.bootstrapApi({
+        platform = platform, foundation = foundation, registries = registries,
+        security = {}, identity = {}, contractSystem = contractSystem,
+        messaging = messaging, coreResource = 'synex_core', runtime = {},
+        stateService = {}, lifecycle = lifecycle, reliability = {}, sagaRuntime = {},
+        facadeCache = {}, runtimeGate = {}, ensureOwner = function() return 1 end,
+        defaultConfig = {}
+      })
+      assert(api.registerCoreContracts())
+      local versionOne = assert(registered['synex.runtime.status@1.0.0'])(
+        {}, { version = '1.0.0' })
+      local versionTwo = assert(registered['synex.runtime.status@2.0.0'])(
+        {}, { version = '2.0.0' })
+      assert(versionOne.playerAdmission == nil)
+      assert(versionTwo.playerAdmission == false)
+      local count = 0
+      for _ in pairs(registered) do count = count + 1 end
+      return table.concat({ count, versionOne.revision, tostring(versionTwo.playerAdmission) }, ':')
+    `);
+    assert.equal(result, '7:8:false');
   } finally {
     engine.global.close();
   }

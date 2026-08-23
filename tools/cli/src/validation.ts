@@ -135,6 +135,16 @@ export function isResourceManifest(value: unknown): value is ResourceManifest {
   );
 }
 
+function materializeResourceManifest(value: unknown): ResourceManifest | null {
+  if (!isRecord(value)) return null;
+  const candidate = {
+    ...value,
+    events: value.events ?? { publish: [], subscribe: [] },
+    hooks: value.hooks ?? { register: [], run: [] },
+  };
+  return isResourceManifest(candidate) ? candidate : null;
+}
+
 function lineNumberFor(text: string, pattern: RegExp): number | undefined {
   const match = pattern.exec(text);
   if (!match?.index) return match ? 1 : undefined;
@@ -230,24 +240,34 @@ export async function loadResourceManifests(
       });
       continue;
     }
-    if (!registry.resource(value) || !isResourceManifest(value)) {
+    const schemaValid = registry.resource(value);
+    const manifest = schemaValid ? materializeResourceManifest(value) : null;
+    if (!schemaValid || !manifest) {
       diagnostics.push(
         ...schemaDiagnostics(registry.resource.errors, file, repositoryRoot, "resource-schema"),
       );
+      if (schemaValid && !manifest) {
+        diagnostics.push({
+          level: "error",
+          rule: "resource-schema",
+          file: displayPath(repositoryRoot, file),
+          message: "The schema-valid manifest cannot be represented by this Synex CLI version.",
+        });
+      }
       continue;
     }
-    const previous = names.get(value.name);
+    const previous = names.get(manifest.name);
     if (previous) {
       diagnostics.push({
         level: "error",
         rule: "resource-name-unique",
         file: displayPath(repositoryRoot, file),
-        message: `Resource name ${value.name} is already declared in ${previous}.`,
+        message: `Resource name ${manifest.name} is already declared in ${previous}.`,
       });
     } else {
-      names.set(value.name, displayPath(repositoryRoot, file));
+      names.set(manifest.name, displayPath(repositoryRoot, file));
     }
-    manifests.push({ file, directory: dirname(file), manifest: value });
+    manifests.push({ file, directory: dirname(file), manifest });
   }
 
   manifests.sort((left, right) => compareText(left.manifest.name, right.manifest.name));

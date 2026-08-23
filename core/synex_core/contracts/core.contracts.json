@@ -19,6 +19,34 @@
       "output": {
         "type": "object",
         "additionalProperties": false,
+        "required": ["state", "revision", "operational", "reasons", "recentTransitions"],
+        "properties": {
+          "state": { "type": "string", "maxLength": 32 },
+          "revision": { "type": "integer", "minimum": 0 },
+          "operational": { "type": "boolean" },
+          "reasons": { "type": "object" },
+          "recentTransitions": { "type": "array", "maxItems": 64, "items": { "type": "object" } }
+        }
+      },
+      "errors": ["CAPABILITY_DENIED", "NOT_READY"],
+      "idempotent": true
+    },
+    {
+      "name": "synex.runtime.status",
+      "version": "2.0.0",
+      "kind": "service",
+      "provider": "synex_core",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.runtime.read",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
         "required": ["state", "revision", "operational", "playerAdmission", "reasons", "recentTransitions"],
         "properties": {
           "state": { "type": "string", "maxLength": 32 },

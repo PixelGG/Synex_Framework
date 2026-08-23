@@ -3,6 +3,10 @@ import { join, resolve } from "node:path";
 
 import type { OperationalCheck } from "./operations.ts";
 import { compareText, readTextFile, sha256 } from "./filesystem.ts";
+import {
+  isAcceptedAppliedMigrationChecksum,
+  isAcceptedMigrationControlChecksum,
+} from "./migration-compatibility.ts";
 import { loadSchemaRegistry } from "./schemas.ts";
 import { loadResourceManifests } from "./validation.ts";
 
@@ -26,6 +30,18 @@ export interface MigrationRuntimeDelta {
   pending: string[];
   checksumMismatches: string[];
   unknownApplied: string[];
+}
+
+export interface MigrationControlEntry {
+  identity: string;
+  checksum: string;
+  state: string;
+}
+
+export interface MigrationControlDelta {
+  checksumMismatches: string[];
+  inconsistentStates: string[];
+  unknownEntries: string[];
 }
 
 function splitSqlClauses(body: string): string[] {
@@ -195,13 +211,56 @@ export function compareAppliedMigrations(
   for (const [identity, checksum] of Object.entries(expected)) {
     const actual = applied.get(identity);
     if (actual === undefined) pending.push(identity);
-    else if (actual !== checksum) checksumMismatches.push(identity);
+    else if (!isAcceptedAppliedMigrationChecksum(identity, checksum, actual)) checksumMismatches.push(identity);
   }
   const unknownApplied = [...applied.keys()].filter((identity) => !Object.hasOwn(expected, identity));
   return {
     pending: pending.sort(compareText),
     checksumMismatches: checksumMismatches.sort(compareText),
     unknownApplied: unknownApplied.sort(compareText),
+  };
+}
+
+export function compareMigrationControls(
+  expected: Record<string, string>,
+  appliedEntries: Iterable<readonly [string, string]>,
+  fenceEntries: Iterable<MigrationControlEntry>,
+  attemptEntries: Iterable<MigrationControlEntry>,
+): MigrationControlDelta {
+  const applied = new Map(appliedEntries);
+  const checksumMismatches: string[] = [];
+  const inconsistentStates: string[] = [];
+  const unknownEntries: string[] = [];
+
+  const inspect = (kind: "fence" | "attempt", entries: Iterable<MigrationControlEntry>): void => {
+    for (const entry of entries) {
+      const label = `${kind}:${entry.identity}`;
+      const expectedChecksum = expected[entry.identity];
+      if (expectedChecksum === undefined) {
+        unknownEntries.push(label);
+        continue;
+      }
+      const appliedChecksum = applied.get(entry.identity);
+      if (!isAcceptedMigrationControlChecksum(
+        entry.identity,
+        expectedChecksum,
+        entry.checksum,
+        appliedChecksum,
+      )) {
+        checksumMismatches.push(label);
+      }
+      if (appliedChecksum === undefined || entry.state !== "applied") {
+        inconsistentStates.push(label);
+      }
+    }
+  };
+
+  inspect("fence", fenceEntries);
+  inspect("attempt", attemptEntries);
+  return {
+    checksumMismatches: checksumMismatches.sort(compareText),
+    inconsistentStates: inconsistentStates.sort(compareText),
+    unknownEntries: unknownEntries.sort(compareText),
   };
 }
 
@@ -283,23 +342,52 @@ export async function runDatabaseDoctor(repositoryRoot: string): Promise<Operati
 
     if (tables.has("synex_schema_migrations") && tables.has("synex_schema_migration_attempts")) {
       const appliedRows = await rows(connection, "SELECT `resource_name`, `migration_id`, `checksum_sha256` FROM `synex_schema_migrations` ORDER BY `resource_name`, `migration_id` LIMIT 10001");
-      if (appliedRows.length > 10_000) {
+      const attemptRows = await rows(connection, "SELECT `resource_name`, `migration_id`, `checksum_sha256`, `state` FROM `synex_schema_migration_attempts` ORDER BY `resource_name`, `migration_id` LIMIT 10001");
+      const fenceRows = tables.has("synex_schema_migration_fences")
+        ? await rows(connection, "SELECT `resource_name`, `migration_id`, `checksum_sha256`, `state` FROM `synex_schema_migration_fences` ORDER BY `resource_name`, `migration_id` LIMIT 10001")
+        : [];
+      const inspectionLimitExceeded = appliedRows.length > 10_000
+        || attemptRows.length > 10_000 || fenceRows.length > 10_000;
+      if (inspectionLimitExceeded) {
         checks.push({ name: "migration-runtime", status: "FAIL", detail: "Migration inspection exceeded the 10000-row safety limit." });
       } else {
+        const appliedEntries = appliedRows.map((row) => [
+          `${String(row.resource_name)}:${String(row.migration_id)}`,
+          String(row.checksum_sha256),
+        ] as const);
         const migrationDelta = compareAppliedMigrations(
           expectedShape.migrations,
-          appliedRows.map((row) => [
-            `${String(row.resource_name)}:${String(row.migration_id)}`,
-            String(row.checksum_sha256),
-          ] as const),
+          appliedEntries,
         );
-        const attemptRows = await rows(connection, "SELECT `resource_name`, `migration_id`, `state` FROM `synex_schema_migration_attempts` WHERE `state` <> 'applied' ORDER BY `resource_name`, `migration_id` LIMIT 1001");
+        const controlDelta = compareMigrationControls(
+          expectedShape.migrations,
+          appliedEntries,
+          fenceRows.map((row) => ({
+            identity: `${String(row.resource_name)}:${String(row.migration_id)}`,
+            checksum: String(row.checksum_sha256),
+            state: String(row.state),
+          })),
+          attemptRows.map((row) => ({
+            identity: `${String(row.resource_name)}:${String(row.migration_id)}`,
+            checksum: String(row.checksum_sha256),
+            state: String(row.state),
+          })),
+        );
+        const migrationFenceRequired = appliedEntries.some(([identity]) =>
+          identity === "synex_core:013_migration_fencing"
+        );
+        const missingRequiredControlTables = migrationFenceRequired
+          && !tables.has("synex_schema_migration_fences") ? 1 : 0;
+        const controlFailureCount = controlDelta.checksumMismatches.length
+          + controlDelta.inconsistentStates.length + controlDelta.unknownEntries.length
+          + missingRequiredControlTables;
         checks.push({
           name: "migration-runtime",
-          status: migrationDelta.checksumMismatches.length > 0 || migrationDelta.unknownApplied.length > 0 || attemptRows.length > 0
+          status: migrationDelta.checksumMismatches.length > 0
+              || migrationDelta.unknownApplied.length > 0 || controlFailureCount > 0
             ? "FAIL"
             : migrationDelta.pending.length > 0 ? "WARN" : "PASS",
-          detail: `${migrationDelta.pending.length} pending, ${migrationDelta.checksumMismatches.length} checksum mismatch(es), ${migrationDelta.unknownApplied.length} applied migration(s) absent from local manifests, ${Math.min(attemptRows.length, 1_000)} incomplete/failed attempt(s)${attemptRows.length > 1_000 ? " (safety limit exceeded)" : ""}.`,
+          detail: `${migrationDelta.pending.length} pending, ${migrationDelta.checksumMismatches.length} applied checksum mismatch(es), ${migrationDelta.unknownApplied.length} applied migration(s) absent from local manifests, ${controlDelta.checksumMismatches.length} fence/attempt checksum mismatch(es), ${controlDelta.inconsistentStates.length} inconsistent fence/attempt state(s), ${controlDelta.unknownEntries.length} unknown fence/attempt row(s), ${missingRequiredControlTables} missing required control table(s).`,
         });
       }
     } else {

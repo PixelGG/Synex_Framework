@@ -268,10 +268,10 @@ SynexLuaGeneratedContracts = {
       ["kind"] = "service",
       ["name"] = "synex.runtime.status",
       ["provider"] = "synex_core",
-      ["version"] = "1.0.0"
+      ["version"] = "2.0.0"
     }
   },
-  ["sourceHash"] = "7d823d421d2db0bbbabb2e64171a14c45d0fbcab23a4fd9bc11458c708482795",
+  ["sourceHash"] = "5c35131d99272ec77c0512ce54fdac50322c86f80b29aac076c8e0caf1357248",
   ["versions"] = {
     ["synex.accounts.burn@1.0.0"] = {
       ["kind"] = "rpc",
@@ -542,6 +542,12 @@ SynexLuaGeneratedContracts = {
       ["name"] = "synex.runtime.status",
       ["provider"] = "synex_core",
       ["version"] = "1.0.0"
+    },
+    ["synex.runtime.status@2.0.0"] = {
+      ["kind"] = "service",
+      ["name"] = "synex.runtime.status",
+      ["provider"] = "synex_core",
+      ["version"] = "2.0.0"
     }
   }
 }

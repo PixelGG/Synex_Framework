@@ -579,6 +579,21 @@ factories.persistence = function(deps)
             ('%s migration %s/%s has a different checksum.'):format(context, resourceName, migrationId))
     end
 
+    local migrationChecksumCorrections = {
+        ['synex_core:021_worker_queue_scalability'] = {
+            previous = '6d314f977f47fa39125c9597172e75fa05d80bfbd310aaf6be4c5584f6823b59',
+            current = '5add0fed6935b83e7fd0905c188c1e534a6636d5d935fea1a28a145f7b533b7c'
+        }
+    }
+
+    local function migrationChecksumAccepted(resourceName, migrationId, checksum, actual, applied)
+        if actual == checksum then return true end
+        local correction = migrationChecksumCorrections[resourceName .. ':' .. migrationId]
+        return correction ~= nil and applied ~= nil
+            and applied.checksum_sha256 == correction.previous
+            and checksum == correction.current and actual == correction.previous
+    end
+
     local function claimMigration(resourceName, migrationId, checksum, statementCount)
         return withCurrentMigrationLease(function(query, heldFence)
             local appliedRows = query([[SELECT `checksum_sha256`, `instance_id`
@@ -596,13 +611,16 @@ factories.persistence = function(deps)
                 { resourceName, migrationId }) or {}
             local applied, ownedFence, attempt = appliedRows[1], fenceRows[1], attemptRows[1]
 
-            if applied and applied.checksum_sha256 ~= checksum then
+            if applied and not migrationChecksumAccepted(
+                resourceName, migrationId, checksum, applied.checksum_sha256, applied) then
                 return false, nil, checksumError(resourceName, migrationId, 'Applied')
             end
-            if ownedFence and ownedFence.checksum_sha256 ~= checksum then
+            if ownedFence and not migrationChecksumAccepted(
+                resourceName, migrationId, checksum, ownedFence.checksum_sha256, applied) then
                 return false, nil, checksumError(resourceName, migrationId, 'Fenced')
             end
-            if attempt and attempt.checksum_sha256 ~= checksum then
+            if attempt and not migrationChecksumAccepted(
+                resourceName, migrationId, checksum, attempt.checksum_sha256, applied) then
                 return false, nil, checksumError(resourceName, migrationId, 'Attempted')
             end
 
@@ -610,6 +628,11 @@ factories.persistence = function(deps)
                 if ownedFence and ownedFence.state ~= 'applied' then
                     return false, nil, migrationError('MIGRATION_STATE_INCONSISTENT',
                         ('Migration %s/%s has an applied marker but a non-applied fence.'):format(
+                            resourceName, migrationId))
+                end
+                if attempt and attempt.state ~= 'applied' then
+                    return false, nil, migrationError('MIGRATION_STATE_INCONSISTENT',
+                        ('Migration %s/%s has an applied marker but a non-applied attempt.'):format(
                             resourceName, migrationId))
                 end
                 if not ownedFence then

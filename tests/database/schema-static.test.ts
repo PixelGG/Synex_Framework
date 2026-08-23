@@ -130,6 +130,24 @@ test('migrations are deterministic, forward ordered, and split exactly as the co
   }
 });
 
+test('nullable default metadata gates accept both MySQL and MariaDB SQL NULL representations', async () => {
+  let checked = 0;
+  for (const migration of await loadMigrations()) {
+    for (const match of migration.contents.matchAll(/`COLUMN_DEFAULT`\s+IS\s+NULL/giu)) {
+      const index = match.index ?? 0;
+      const window = migration.contents.slice(Math.max(0, index - 300), index + 300);
+      if (!/`IS_NULLABLE`\s*=\s*'YES'/u.test(window)) continue;
+      checked += 1;
+      assert.match(
+        window,
+        /\(`COLUMN_DEFAULT` IS NULL\s+OR CAST\(`COLUMN_DEFAULT` AS BINARY\) = CAST\('NULL' AS BINARY\)\)/u,
+        migration.relativePath,
+      );
+    }
+  }
+  assert.ok(checked > 0);
+});
+
 test('resource manifests own every table they create and list every migration', async () => {
   for (const resourceName of ['synex_groups', 'synex_accounts'] as const) {
     const resourceDirectory = path.join(repositoryRoot, 'resources', resourceName);

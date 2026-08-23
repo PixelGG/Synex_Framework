@@ -1,6 +1,6 @@
 # Synex Contract Reference
 
-Source hash: `7d823d421d2db0bbbabb2e64171a14c45d0fbcab23a4fd9bc11458c708482795`
+Source hash: `5c35131d99272ec77c0512ce54fdac50322c86f80b29aac076c8e0caf1357248`
 
 | Contract | Version | Kind | Provider | Network | Stability | Capability |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -49,6 +49,7 @@ Source hash: `7d823d421d2db0bbbabb2e64171a14c45d0fbcab23a4fd9bc11458c708482795`
 | `synex.identity.characters.select` | `1.0.0` | service | `synex_core` | none | experimental | `synex.characters.select` |
 | `synex.identity.session.by_source` | `1.0.0` | service | `synex_core` | none | experimental | `synex.identity.read` |
 | `synex.runtime.status` | `1.0.0` | service | `synex_core` | none | experimental | `synex.runtime.read` |
+| `synex.runtime.status` | `2.0.0` | service | `synex_core` | none | experimental | `synex.runtime.read` |
 
 ## `synex.accounts.burn`
 
@@ -3827,6 +3828,62 @@ Source hash: `7d823d421d2db0bbbabb2e64171a14c45d0fbcab23a4fd9bc11458c708482795`
 ## `synex.runtime.status`
 
 - Version: `1.0.0`
+- Provider: `synex_core`
+- Idempotent: yes
+- Errors: `CAPABILITY_DENIED`, `NOT_READY`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {},
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "operational": {
+      "type": "boolean"
+    },
+    "reasons": {
+      "type": "object"
+    },
+    "recentTransitions": {
+      "items": {
+        "type": "object"
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "revision": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "state": {
+      "maxLength": 32,
+      "type": "string"
+    }
+  },
+  "required": [
+    "state",
+    "revision",
+    "operational",
+    "reasons",
+    "recentTransitions"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.runtime.status`
+
+- Version: `2.0.0`
 - Provider: `synex_core`
 - Idempotent: yes
 - Errors: `CAPABILITY_DENIED`, `NOT_READY`
