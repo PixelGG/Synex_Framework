@@ -170,6 +170,147 @@ test('connection terminal ownership is exactly once across an acceptance cleanup
   }
 });
 
+test('connection terminals accept Cfx-style callable funcrefs and userdata', async () => {
+  const engine = await createIdentityEngine();
+  await engine.global.set('cfxDeferrals', {});
+  await engine.global.set('cfxDoneRef', {});
+  try {
+    const result = await engine.doString(`
+      local doneCalls, updateCalls, completionReason = 0, 0, nil
+      local platform = {
+        nowGame = function() return 1000 end, random = function() return 13 end,
+        print = function() end, defer = function() end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      local terminals = SynexCoreFactories.identityConnectionTerminals({
+        platform = platform, foundation = foundation,
+        acceptanceRejection = function() return nil, nil end,
+        logConnectionStage = function() end
+      })
+      local updateRef = setmetatable({ __cfx_functionReference = 'fixture-update' }, {
+        __call = function(_, message)
+          updateCalls = updateCalls + 1
+          assert(message == 'Synex: checking connection...')
+        end
+      })
+      debug.setmetatable(cfxDoneRef, {
+        __metatable = 'protected-cfx-funcref',
+        __call = function(_, reason)
+          doneCalls = doneCalls + 1
+          completionReason = reason
+        end
+      })
+      debug.setmetatable(cfxDeferrals, {
+        __metatable = 'protected-cfx-deferrals',
+        __index = { update = updateRef, done = cfxDoneRef }
+      })
+
+      assert(type(cfxDeferrals) == 'userdata' and type(cfxDoneRef) == 'userdata')
+      assert(type(getmetatable(cfxDeferrals)) == 'string'
+        and type(getmetatable(cfxDoneRef)) == 'string')
+      local terminal, terminalError = terminals:open({ id = 'connection-cfx' }, cfxDeferrals)
+      assert(terminal ~= nil and terminalError == nil)
+      assert(terminal:arm())
+      assert(terminal:update('Synex: checking connection...'))
+      assert(terminal:arm())
+      assert(terminal:finish('Please reconnect.', 'FIXTURE_REJECTED'))
+      assert(doneCalls == 1 and updateCalls == 1 and terminals:count() == 0)
+      assert(terminal.state == 'rejected' and terminal:finish() == false)
+      assert(completionReason:find('[FIXTURE_REJECTED]', 1, true))
+
+      local invalidTable, invalidTableError = terminals:open(
+        { id = 'connection-invalid-table' }, { done = {} })
+      assert(invalidTable == nil and invalidTableError.code == 'INVALID_CONNECTION_TERMINAL')
+      debug.setmetatable(cfxDoneRef, { __metatable = 'protected-noncallable-userdata' })
+      local invalidUserdata, invalidUserdataError = terminals:open(
+        { id = 'connection-invalid-userdata' }, { done = cfxDoneRef })
+      assert(invalidUserdata == nil and invalidUserdataError.code == 'INVALID_CONNECTION_TERMINAL')
+      local privateAccessor = setmetatable({}, {
+        __index = function() error('fixture-private-terminal-accessor') end
+      })
+      local invoked, inaccessible, inaccessibleError = foundation.safeCall(
+        terminals.open, terminals, { id = 'connection-inaccessible' }, privateAccessor)
+      assert(invoked == true and inaccessible == nil
+        and inaccessibleError.code == 'INVALID_CONNECTION_TERMINAL')
+      assert(not tostring(inaccessibleError.message):find('fixture-private', 1, true))
+      assert(terminals:count() == 0)
+      return table.concat({type(cfxDeferrals), type(cfxDoneRef), doneCalls, updateCalls}, ':')
+    `);
+    assert.equal(result, 'userdata:userdata:1:1');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('connection terminal open failures stay structured and finalize the deferred join', async () => {
+  const engine = await createIdentityEngine();
+  try {
+    const result = await engine.doString(`
+      local tickCalls, cfxDeferCalls, doneCalls, cleanupCalls = 0, 0, 0, 0
+      local completionReason = nil
+      local platform = {
+        nowGame = function() return 1000 end, random = function() return 29 end,
+        print = function() end, defer = function() tickCalls = tickCalls + 1 end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      foundation.configureIds('terminal-open-failure-test')
+      local expectedError = foundation.error('CONNECTION_TERMINAL_EXISTS',
+        'The connection already owns a terminal.')
+      local handleConnecting = SynexCoreFactories.identityConnectionConnecting({
+        platform = platform, foundation = foundation,
+        players = {
+          getPending = function() return nil end,
+          removePending = function() return nil end
+        },
+        lifecycle = { core = { canAdmitPlayers = function() return true end } },
+        config = { pendingTtlMs = 120000 },
+        ingress = {
+          begin = function(_, _, deferrals, checkpoint)
+            checkpoint('ingress_deferral')
+            deferrals.defer()
+            checkpoint('ingress_reservation')
+            return {'license:fixture'}, nil
+          end
+        },
+        terminals = { open = function() return nil, expectedError end },
+        authority = { isQuiesced = function() return false end },
+        normalizeIdentifiers = function() return {} end,
+        identifierFingerprint = function() return 'fixture-fingerprint' end,
+        userRepository = {}, accessRepository = {},
+        connectionPriority = function() return 0 end,
+        syncPending = function() return true, nil end,
+        waitForQueue = function() return true, nil end,
+        releaseAdmission = function() end,
+        abandonConnection = function() cleanupCalls = cleanupCalls + 1 end,
+        orderedGates = function() return {} end,
+        invokeOwned = function() return true, true, nil end,
+        releaseConnectionLease = function() return true, nil end,
+        replacements = {}, duplicatePolicy = 'deny_new',
+        logConnectionStage = function() end,
+        pendingIsCurrent = function() return true end,
+        aceAllowed = function() return false end
+      })
+      local connected, connectionError = handleConnecting(-22, 'Private Player', {
+        defer = function() cfxDeferCalls = cfxDeferCalls + 1 end,
+        update = function() end,
+        done = function(reason)
+          doneCalls = doneCalls + 1
+          completionReason = reason
+        end
+      })
+      assert(connected == nil and connectionError == expectedError
+        and connectionError.code == 'CONNECTION_TERMINAL_EXISTS')
+      assert(cfxDeferCalls == 1 and tickCalls == 1 and cleanupCalls == 1 and doneCalls == 1)
+      assert(completionReason:find('[CONNECTION_TERMINAL_EXISTS]', 1, true))
+      assert(not completionReason:find('Private Player', 1, true))
+      return table.concat({connectionError.code, cfxDeferCalls, tickCalls, cleanupCalls, doneCalls}, ':')
+    `);
+    assert.equal(result, 'CONNECTION_TERMINAL_EXISTS:1:1:1:1');
+  } finally {
+    engine.global.close();
+  }
+});
+
 test('connection terminals reject queued updates and recover when a finish tick cannot be scheduled', async () => {
   const engine = await createIdentityEngine();
   try {

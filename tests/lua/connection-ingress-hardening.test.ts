@@ -45,6 +45,11 @@ async function createEngine(): Promise<LuaEngine> {
       local observedKeys, logs = {}, {}
       local databaseCalls, leaseReleases = 0, 0
       local nextTickHook, doneObserver = nil, nil
+      local function cfxFunctionReference(handler)
+        return setmetatable({ __cfx_functionReference = 'fixture' }, {
+          __call = function(_, ...) return handler(...) end
+        })
+      end
       local platform = {
         nowGame = function() return now end,
         random = function() return 41 end,
@@ -194,19 +199,25 @@ async function createEngine(): Promise<LuaEngine> {
       function fixture:advance(milliseconds) now = now + milliseconds end
       function fixture:connect(source, values, doneThrows)
         identifiers[source] = values
-        return pipeline:handleConnecting(source, 'Private Player Name', {
-          defer = function()
-            if options.ingressDeferMode == 'throw' then
-              error('private ingress deferral failure')
-            end
-          end,
-          update = function() end,
-          done = function(...)
-            doneCalls[source] = (doneCalls[source] or 0) + 1
-            reasons[source] = select('#', ...) == 0 and '<accepted>' or select(1, ...)
-            if doneObserver then doneObserver(source, reasons[source]) end
-            if doneThrows then error('private deferral terminal failure') end
+        local defer = function()
+          if options.ingressDeferMode == 'throw' then
+            error('private ingress deferral failure')
           end
+        end
+        local update = function() end
+        local done = function(...)
+          doneCalls[source] = (doneCalls[source] or 0) + 1
+          reasons[source] = select('#', ...) == 0 and '<accepted>' or select(1, ...)
+          if doneObserver then doneObserver(source, reasons[source]) end
+          if doneThrows then error('private deferral terminal failure') end
+        end
+        if options.cfxDeferralFuncrefs == true then
+          defer = cfxFunctionReference(defer)
+          update = cfxFunctionReference(update)
+          done = cfxFunctionReference(done)
+        end
+        return pipeline:handleConnecting(source, 'Private Player Name', {
+          defer = defer, update = update, done = done
         })
       end
       function fixture:pipeline() return pipeline end
@@ -454,6 +465,38 @@ test('ingress reservations release on join, drop, quiesce, and pipeline exceptio
         failureSnapshot.preAuth.active, failed:doneCalls(-9)}, ':')
     `);
     assert.equal(result, '41:1:0:0:1');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('Cfx callable deferral funcrefs complete and release the connection lifecycle', async () => {
+  const engine = await createEngine();
+  try {
+    const result = await engine.doString(`
+      local callable = NewIngressFixture({
+        authMode = 'accept', cfxDeferralFuncrefs = true,
+        maximumConcurrentConnections = 1,
+        connectionRate = 100, connectionBurst = 100
+      })
+      local connected, connectionError = callable:connect(-20, {'license:callable'})
+      assert(connected == true and connectionError == nil)
+      local callableSnapshot = callable:pipeline():snapshot()
+      assert(callable:doneCalls(-20) == 1 and callable:reason(-20) == '<accepted>')
+      assert(callableSnapshot.openDeferrals == 0 and callableSnapshot.preAuth.active == 1)
+      assert(callable:players():summary().pendingConnections == 1)
+      for _, record in ipairs(callable:logs()) do
+        assert(record.message ~= 'connection pipeline failed')
+      end
+      callable:pipeline():handleDropped(-20, 'fixture cleanup')
+      local releasedSnapshot = callable:pipeline():snapshot()
+      assert(releasedSnapshot.preAuth.active == 0 and releasedSnapshot.openDeferrals == 0
+        and releasedSnapshot.admissionReservations == 0)
+      assert(callable:players():summary().pendingConnections == 0)
+      return table.concat({callable:doneCalls(-20), callableSnapshot.openDeferrals,
+        callableSnapshot.preAuth.active, releasedSnapshot.preAuth.active}, ':')
+    `);
+    assert.equal(result, '1:0:1:0');
   } finally {
     engine.global.close();
   }

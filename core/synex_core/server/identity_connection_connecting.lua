@@ -50,6 +50,7 @@ factories.identityConnectionConnecting = function(deps)
             expiresAt = receivedAt + (config.pendingTtlMs or 120000), staff = false
         }
         local terminal = nil
+        local pipelineError = nil
         local failureStage = 'connection_created'
         local function checkpoint(stage) failureStage = stage end
         local function finish(...) return terminal and terminal:finish(...) end
@@ -80,7 +81,27 @@ factories.identityConnectionConnecting = function(deps)
             local rawIdentifiers = ingress:begin(connection, deferrals, checkpoint)
             if not rawIdentifiers then return end
             checkpoint('terminal_open')
-            terminal = assert(terminals:open(connection, deferrals))
+            local openedTerminal, terminalError = terminals:open(connection, deferrals)
+            if not openedTerminal then
+                pipelineError = terminalError or foundation.error('INVALID_CONNECTION_TERMINAL',
+                    'The Cfx connection deferral terminal could not be opened.')
+                abandonConnection(connection)
+                checkpoint('terminal_open_rejection_tick')
+                platform.defer()
+                checkpoint('terminal_open_rejection')
+                local rejectionCode = foundation.failureCode(
+                    pipelineError, 'INVALID_CONNECTION_TERMINAL'):sub(1, 48)
+                local rejected = foundation.safeCall(function()
+                    deferrals.done(('Synex [%s]: The connection terminal could not be initialized. '
+                        .. 'Please reconnect.'):format(rejectionCode):sub(1, 256))
+                end)
+                if not rejected then
+                    pipelineError = foundation.error('DEFERRAL_TERMINATION_FAILED',
+                        'The invalid Cfx connection deferral could not be finalized.')
+                end
+                return
+            end
+            terminal = openedTerminal
             checkpoint('initial_tick')
             platform.defer()
             checkpoint('initial_authority')
@@ -345,6 +366,7 @@ factories.identityConnectionConnecting = function(deps)
                 details = { stage = failureStage, runtimeType = type(runtimeError) }
             })
         end
+        if pipelineError then return nil, pipelineError end
         if terminal and terminal.state == 'failed' then
             return nil, foundation.error('DEFERRAL_TERMINATION_FAILED',
                 'The Cfx connection deferral could not be finalized.')

@@ -18,8 +18,22 @@ factories.identityConnectionTerminals = function(deps)
     local stoppingCode = 'CORE_STOPPING'
 
     function terminals:open(connection, deferrals)
+        -- Cfx function references are callable tables or userdata, not plain Lua functions.
+        local deferralRead, deferralDone = foundation.safeCall(function()
+            return deferrals.done
+        end)
+        local deferralDoneMetatable = deferralRead and getmetatable(deferralDone) or nil
+        if deferralRead and type(deferralDone) ~= 'function'
+            and type(deferralDoneMetatable) ~= 'table'
+            and type(debug) == 'table' and type(debug.getmetatable) == 'function' then
+            local metatableRead, rawMetatable = foundation.safeCall(debug.getmetatable, deferralDone)
+            if metatableRead then deferralDoneMetatable = rawMetatable end
+        end
+        local deferralDoneCallable = type(deferralDone) == 'function'
+            or (type(deferralDoneMetatable) == 'table'
+                and type(rawget(deferralDoneMetatable, '__call')) == 'function')
         if type(connection) ~= 'table' or type(connection.id) ~= 'string'
-            or type(deferrals) ~= 'table' or type(deferrals.done) ~= 'function' then
+            or not deferralRead or not deferralDoneCallable then
             return nil, foundation.error('INVALID_CONNECTION_TERMINAL',
                 'A connection identity and Cfx deferral terminal are required.')
         end
@@ -54,12 +68,12 @@ factories.identityConnectionTerminals = function(deps)
             local safeCode = nil
             local invoked = nil
             if terminal.acceptance then
-                invoked = foundation.safeCall(deferrals.done)
+                invoked = foundation.safeCall(deferralDone)
             else
                 safeCode = type(code) == 'string' and code:match('^[A-Z0-9_]+$') and code:sub(1, 48)
                     or 'CONNECTION_REJECTED'
                 local safeReason = tostring(reason):gsub('[%z\1-\31\127]', ' '):sub(1, 180)
-                invoked = foundation.safeCall(deferrals.done,
+                invoked = foundation.safeCall(deferralDone,
                     ('Synex [%s]: %s'):format(safeCode, safeReason):sub(1, 256))
             end
             foundation.safeCall(onFinalized, connection, terminal.acceptance, invoked == true)
