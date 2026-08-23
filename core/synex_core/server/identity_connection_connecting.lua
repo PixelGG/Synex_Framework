@@ -50,6 +50,8 @@ factories.identityConnectionConnecting = function(deps)
             expiresAt = receivedAt + (config.pendingTtlMs or 120000), staff = false
         }
         local terminal = nil
+        local failureStage = 'connection_created'
+        local function checkpoint(stage) failureStage = stage end
         local function finish(...) return terminal and terminal:finish(...) end
         local function continuationIsCurrent()
             local reason, code = nil, nil
@@ -74,19 +76,25 @@ factories.identityConnectionConnecting = function(deps)
             return false
         end
         local ok, runtimeError = foundation.safeCall(function()
-            local rawIdentifiers = ingress:begin(connection, deferrals)
+            checkpoint('ingress_begin')
+            local rawIdentifiers = ingress:begin(connection, deferrals, checkpoint)
             if not rawIdentifiers then return end
+            checkpoint('terminal_open')
             terminal = assert(terminals:open(connection, deferrals))
+            checkpoint('initial_tick')
             platform.defer()
+            checkpoint('initial_authority')
             if not ingress:isCurrent(connection) then
                 terminal:finish('The connection attempt was cancelled. Please reconnect.',
                     'CONNECTION_CANCELLED')
                 terminal:arm()
                 return
             end
+            checkpoint('terminal_arm')
             terminal:arm()
             if terminal.state ~= 'open' then return end
             logConnectionStage(connection, 'received')
+            checkpoint('pre_auth_policy')
             if authority:isQuiesced() then
                 finish('The Synex runtime is stopping. Please reconnect shortly.', 'CORE_STOPPING', true)
                 return
@@ -95,26 +103,36 @@ factories.identityConnectionConnecting = function(deps)
                 finish('The Synex runtime is not ready to admit players. Please reconnect shortly.', 'CORE_NOT_READY')
                 return
             end
+            checkpoint('maintenance_ace')
             local maintenanceBypass = aceAllowed(tempSource, config.maintenanceBypassAce or 'synex.maintenance.bypass')
             if config.maintenanceMode == true and not maintenanceBypass then
                 finish(tostring(config.maintenanceMessage or 'Synex is currently in maintenance mode.'), 'MAINTENANCE')
                 return
             end
+            checkpoint('identifier_normalization')
             local identifiers = normalizeIdentifiers(rawIdentifiers)
+            checkpoint('identifier_fingerprint')
             connection.identityFingerprint = identifierFingerprint(identifiers)
+            checkpoint('queue_staff_ace')
             connection.staff = maintenanceBypass or aceAllowed(tempSource, config.queueStaffAce or 'synex.queue.staff')
+            checkpoint('pending_registration')
             local created = players:createPending(tempSource, connection)
             if not created then
                 finish('A previous connection attempt is still being cleaned up. Please wait a moment and reconnect.',
                     'PENDING_CONNECTION_EXISTS')
                 return
             end
+            checkpoint('deferral_authentication_update')
             terminal:update('Synex: authenticating connection...')
+            checkpoint('authentication_tick')
             platform.defer()
             terminal:afterTick()
             if terminal.state ~= 'open' then return end
+            checkpoint('pending_authority')
             if not continuationIsCurrent() then return end
+            checkpoint('identity_authentication')
             local user, authError = userRepository:authenticate(rawIdentifiers)
+            checkpoint('pending_authority')
             if not continuationIsCurrent() then return end
             if not user then
                 players:removePending(tempSource)
@@ -126,7 +144,9 @@ factories.identityConnectionConnecting = function(deps)
                 return
             end
             logConnectionStage(connection, 'identity_ok')
+            checkpoint('access_check')
             local allowed, accessError = accessRepository:check(user.id, identifiers)
+            checkpoint('pending_authority')
             if not continuationIsCurrent() then return end
             if not allowed then
                 players:removePending(tempSource)
@@ -142,7 +162,9 @@ factories.identityConnectionConnecting = function(deps)
             end
             logConnectionStage(connection, 'access_ok')
             connection.userId = user.id
+            checkpoint('connection_priority')
             connection.priority = connectionPriority(connection, user.id)
+            checkpoint('pending_sync_connecting')
             local synced, syncError = syncPending(connection)
             if not synced then
                 players:removePending(tempSource)
@@ -152,7 +174,9 @@ factories.identityConnectionConnecting = function(deps)
                 finish('Synex could not maintain the pending connection state.', 'PENDING_STATE_FAILED')
                 return
             end
+            checkpoint('queue_admission')
             local admitted, queueError = waitForQueue(connection, terminal)
+            checkpoint('pending_authority')
             if not continuationIsCurrent() then return end
             if not admitted then
                 releaseAdmission(connection)
@@ -161,6 +185,7 @@ factories.identityConnectionConnecting = function(deps)
                 return
             end
             connection.state = 'AUTHENTICATING'
+            checkpoint('pending_sync_authenticating')
             local authenticating, authenticatingError = syncPending(connection)
             if not authenticating then
                 abandonConnection(connection)
@@ -171,6 +196,7 @@ factories.identityConnectionConnecting = function(deps)
                 finish('Synex could not maintain the pending authentication state.', 'PENDING_STATE_FAILED')
                 return
             end
+            checkpoint('connection_gates')
             for _, gate in ipairs(orderedGates()) do
                 terminal:update(('Synex: %s...'):format(gate.name))
                 platform.defer()
@@ -196,7 +222,9 @@ factories.identityConnectionConnecting = function(deps)
                     return
                 end
             end
+            checkpoint('admission_gate')
             local gated, gateError = authority:acquireAdmissionGate(connection, user.id, terminal)
+            checkpoint('pending_authority')
             if not continuationIsCurrent() then return end
             if not gated then
                 releaseAdmission(connection)
@@ -210,6 +238,7 @@ factories.identityConnectionConnecting = function(deps)
                     'ADMISSION_GATE_UNAVAILABLE')
                 return
             end
+            checkpoint('pending_sync_admission')
             local gateSynced, gateSyncError = syncPending(connection)
             if not gateSynced then
                 abandonConnection(connection)
@@ -220,9 +249,12 @@ factories.identityConnectionConnecting = function(deps)
                 finish('Synex could not maintain account admission authority.', 'LEASE_STATE_FAILED')
                 return
             end
+            checkpoint('duplicate_policy')
             local policy = duplicatePolicy()
             if policy == 'kick_old' then
+                checkpoint('duplicate_replacement')
                 local replaced, replaceError = replacements:replace(user.id)
+                checkpoint('pending_authority')
                 if not continuationIsCurrent() then return end
                 if not replaced then
                     releaseAdmission(connection)
@@ -235,7 +267,9 @@ factories.identityConnectionConnecting = function(deps)
                     return
                 end
             end
+            checkpoint('duplicate_lease')
             local leased, leaseError = authority:acquireDuplicate(connection, user.id, terminal, policy)
+            checkpoint('pending_authority')
             if not continuationIsCurrent() then return end
             if not leased then
                 releaseAdmission(connection)
@@ -260,6 +294,7 @@ factories.identityConnectionConnecting = function(deps)
                 return
             end
             logConnectionStage(connection, 'lease_acquired')
+            checkpoint('pending_sync_lease')
             local leaseSynced, leaseSyncError = syncPending(connection)
             if not leaseSynced then
                 abandonConnection(connection)
@@ -273,6 +308,7 @@ factories.identityConnectionConnecting = function(deps)
             connection.state = 'AUTHENTICATED'
             connection.acceptedAt = foundation.monotonicMs()
             connection.expiresAt = connection.acceptedAt + (config.pendingTtlMs or 120000)
+            checkpoint('pending_sync_accepted')
             local accepted, acceptanceError = syncPending(connection)
             if not accepted then
                 abandonConnection(connection)
@@ -283,24 +319,30 @@ factories.identityConnectionConnecting = function(deps)
                 finish('Synex could not finalize the pending connection.', 'PENDING_STATE_FAILED')
                 return
             end
+            checkpoint('deferral_acceptance')
             finish()
         end)
         if not ok then
+            foundation.safeCall(logger.error, logger, 'connection pipeline failed', {
+                correlationId = connection.id, code = 'CONNECTION_PIPELINE_FAILED',
+                stage = failureStage, failureType = type(runtimeError)
+            })
             if not (terminal and terminal.attempted and terminal.acceptance) then
                 local pending = players:getPending(tempSource)
-                if pending and pending.id == connection.id then pending = players:removePending(tempSource) else pending = nil end
+                if pending and pending.id == connection.id then
+                    pending = players:removePending(tempSource)
+                else
+                    pending = nil
+                end
                 abandonConnection(pending or connection)
             end
-            foundation.safeCall(logger.error, logger, 'connection pipeline failed', {
-                correlationId = connection.id, code = 'CONNECTION_PIPELINE_FAILED'
-            })
             if terminal and not terminal.attempted then
                 foundation.safeCall(finish,
                     'An internal connection error occurred. Please retry. If it persists, contact the server team.',
                     'CONNECTION_PIPELINE_FAILED')
             end
             return nil, foundation.error('CONNECTION_PIPELINE_FAILED', 'The connection pipeline raised an exception.', {
-                details = { runtimeType = type(runtimeError) }
+                details = { stage = failureStage, runtimeType = type(runtimeError) }
             })
         end
         if terminal and terminal.state == 'failed' then

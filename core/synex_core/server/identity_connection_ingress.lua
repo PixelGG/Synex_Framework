@@ -180,14 +180,19 @@ factories.identityConnectionIngress = function(deps)
         return true, nil
     end
 
-    function ingress:begin(connection, deferrals)
+    function ingress:begin(connection, deferrals, checkpoint)
+        checkpoint = type(checkpoint) == 'function' and checkpoint or function() end
+        checkpoint('ingress_deferral')
         deferrals.defer()
+        checkpoint('ingress_identifiers')
         local identifiersRead, rawIdentifiers = foundation.safeCall(
             platform.getPlayerIdentifiers, connection.tempSource)
         if not identifiersRead or type(rawIdentifiers) ~= 'table' then rawIdentifiers = {} end
+        checkpoint('ingress_reservation')
         local allowed, ingressError = self:acquire(connection, rawIdentifiers)
         if allowed then return rawIdentifiers, nil end
 
+        checkpoint('ingress_rejection_tick')
         platform.defer()
         local rejectionCode = type(ingressError) == 'table'
             and ingressError.code or 'CONNECTION_BUSY'
@@ -201,6 +206,7 @@ factories.identityConnectionIngress = function(deps)
             or (rejectionCode == 'CORE_STOPPING'
                 and 'The Synex runtime is stopping. Please reconnect shortly.'
                 or 'The server is processing the maximum number of connections. Please reconnect shortly.')
+        checkpoint('ingress_rejection_terminal')
         local rejected = foundation.safeCall(deferrals.done,
             ('Synex [%s]: %s'):format(rejectionCode, rejectionReason):sub(1, 256))
         self:logStage(connection, 'rejected', rejectionCode, 'warn')

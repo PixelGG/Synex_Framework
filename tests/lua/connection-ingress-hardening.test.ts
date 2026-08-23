@@ -113,6 +113,10 @@ async function createEngine(): Promise<LuaEngine> {
       function userRepository:authenticate()
         databaseCalls = databaseCalls + 1
         if options.authMode == 'throw' then error('private authentication failure') end
+        if options.authMode == 'throw_table' then
+          error({ code = 'PRIVATE_AUTHENTICATION_FAILURE', identifiers = {'license:private'},
+            playerName = 'Private Player Name' })
+        end
         if options.authMode ~= 'accept' then
           return nil, foundation.error('IDENTIFIER_REQUIRED', 'fixture rejection')
         end
@@ -191,7 +195,11 @@ async function createEngine(): Promise<LuaEngine> {
       function fixture:connect(source, values, doneThrows)
         identifiers[source] = values
         return pipeline:handleConnecting(source, 'Private Player Name', {
-          defer = function() end,
+          defer = function()
+            if options.ingressDeferMode == 'throw' then
+              error('private ingress deferral failure')
+            end
+          end,
           update = function() end,
           done = function(...)
             doneCalls[source] = (doneCalls[source] or 0) + 1
@@ -392,6 +400,56 @@ test('ingress reservations release on join, drop, quiesce, and pipeline exceptio
       assert(failureSnapshot.preAuth.active == 0 and failureSnapshot.openDeferrals == 0)
       assert(failed:players():summary().pendingConnections == 0)
       assert(failed:reason(-9):find('[CONNECTION_PIPELINE_FAILED]', 1, true))
+
+      local function failureLog(fixture)
+        local matched = nil
+        for _, record in ipairs(fixture:logs()) do
+          if record.message == 'connection pipeline failed' then
+            assert(matched == nil)
+            matched = record
+          end
+        end
+        return assert(matched)
+      end
+      local function assertSafeFailure(fixture, stage, failureType)
+        local record = failureLog(fixture)
+        local allowed = { correlationId = true, code = true, stage = true, failureType = true }
+        local count = 0
+        for key, value in pairs(record.fields) do
+          count = count + 1
+          assert(allowed[key] == true)
+          local rendered = tostring(value)
+          assert(not rendered:find('private', 1, true)
+            and not rendered:find('license:', 1, true)
+            and not rendered:find('Private Player Name', 1, true))
+        end
+        assert(count == 4 and record.level == 'error')
+        assert(record.fields.code == 'CONNECTION_PIPELINE_FAILED')
+        assert(record.fields.stage == stage and record.fields.failureType == failureType)
+      end
+      assertSafeFailure(failed, 'identity_authentication', 'string')
+
+      local ingressFailed = NewIngressFixture({
+        ingressDeferMode = 'throw', maximumConcurrentConnections = 1,
+        connectionRate = 100, connectionBurst = 100
+      })
+      local ingressConnected, ingressError = ingressFailed:connect(-10, {'license:ingress-private'})
+      assert(ingressConnected == nil and ingressError.code == 'CONNECTION_PIPELINE_FAILED')
+      local ingressSnapshot = ingressFailed:pipeline():snapshot()
+      assert(ingressSnapshot.preAuth.active == 0 and ingressSnapshot.openDeferrals == 0)
+      assert(ingressFailed:players():summary().pendingConnections == 0)
+      assert(ingressFailed:databaseCalls() == 0 and ingressFailed:doneCalls(-10) == 0)
+      assertSafeFailure(ingressFailed, 'ingress_deferral', 'string')
+
+      local tableFailed = NewIngressFixture({
+        authMode = 'throw_table', maximumConcurrentConnections = 1,
+        connectionRate = 100, connectionBurst = 100
+      })
+      local tableConnected, tableError = tableFailed:connect(-11, {'license:table-private'})
+      assert(tableConnected == nil and tableError.code == 'CONNECTION_PIPELINE_FAILED')
+      assert(tableFailed:pipeline():snapshot().preAuth.active == 0)
+      assert(tableFailed:players():summary().pendingConnections == 0)
+      assertSafeFailure(tableFailed, 'identity_authentication', 'table')
       return table.concat({joined.source, queue.peak, stopped.preAuth.active,
         failureSnapshot.preAuth.active, failed:doneCalls(-9)}, ':')
     `);

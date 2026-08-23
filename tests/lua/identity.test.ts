@@ -857,6 +857,7 @@ test('connection exceptions reject once with a stable code and release pending a
     const result = await engine.doString(`
       local now, completionCalls, completionArity, completionReason, released = 1000, 0, nil, nil, 0
       local deferCalls = 0
+      local failureLogs = {}
       local platform = {
         nowGame = function() now = now + 1 return now end,
         random = function(_, maximum) return math.min(maximum or 1, 19) end,
@@ -873,7 +874,24 @@ test('connection exceptions reject once with a stable code and release pending a
           assert(type(fields.correlationId) == 'string')
           assert(fields.source == nil and fields.userId == nil and fields.identifiers == nil
             and fields.playerName == nil and fields.error == nil)
+        elseif message == 'connection pipeline failed' then
+          failureLogs[#failureLogs + 1] = foundation.copy(fields)
         end
+      end
+      local function assertFailureLog(fields, expectedStage)
+        local allowed = { correlationId = true, code = true, stage = true, failureType = true }
+        local count = 0
+        for key, value in pairs(fields) do
+          count = count + 1
+          assert(allowed[key] == true)
+          local rendered = tostring(value)
+          assert(not rendered:find('fixture-private', 1, true)
+            and not rendered:find('license:fixture', 1, true)
+            and not rendered:find('Fixture', 1, true))
+        end
+        assert(count == 4 and type(fields.correlationId) == 'string')
+        assert(fields.code == 'CONNECTION_PIPELINE_FAILED')
+        assert(fields.stage == expectedStage and fields.failureType == 'string')
       end
       local registries = SynexCoreFactories.registries({ foundation = foundation })
       local players, owners = registries.players, registries.owners
@@ -926,6 +944,8 @@ test('connection exceptions reject once with a stable code and release pending a
       assert(not completionReason:find('fixture-private', 1, true))
       assert(players:getPending(-2) == nil and released == 0)
       assert(connection:snapshot().admissionReservations == 0)
+      assert(#failureLogs == 1)
+      assertFailureLog(failureLogs[1], 'connection_gates')
 
       local beforeUpdateFailure = deferCalls
       completionCalls, completionArity, completionReason = 0, nil, nil
@@ -946,6 +966,8 @@ test('connection exceptions reject once with a stable code and release pending a
       assert(players:getPending(-3) == nil and released == 0)
       assert(connection:snapshot().openDeferrals == 0
         and connection:snapshot().admissionReservations == 0)
+      assert(#failureLogs == 2)
+      assertFailureLog(failureLogs[2], 'deferral_authentication_update')
 
       return completionReason
     `);
