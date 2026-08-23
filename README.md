@@ -38,6 +38,7 @@
   <img alt="Target: FiveM" src="https://img.shields.io/badge/target-FiveM-5ed7ff?style=flat-square&amp;labelColor=111827">
   <img alt="Release: 0.1.0 experimental" src="https://img.shields.io/badge/release-0.1.0%20experimental-8b73ff?style=flat-square&amp;labelColor=111827">
   <img alt="API: 1.0.0 experimental" src="https://img.shields.io/badge/API-1.0.0%20experimental-45c9a5?style=flat-square&amp;labelColor=111827">
+  <a href="./LICENSE"><img alt="License: AGPL-3.0-only" src="https://img.shields.io/badge/license-AGPL--3.0--only-45c9a5?style=flat-square&amp;labelColor=111827"></a>
 </p>
 
 <p align="center">
@@ -169,6 +170,10 @@ There is no React/Vite application, external telemetry service, hosted control A
 - [Groups](./docs/reference/groups.md) and [accounts/ledger](./docs/reference/accounts.md)
 - [Compatibility and migration](./docs/compatibility/README.md)
 - [Discord notification automation](./docs/discord-notifications.md)
+
+## License
+
+Copyright &copy; 2026 PixelGG. Synex is licensed under the [GNU Affero General Public License v3.0 only](./LICENSE).
 
 ## Repository structure
 

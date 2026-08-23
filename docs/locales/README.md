@@ -11,4 +11,6 @@ The current landing pages describe Synex `0.1.0` as experimental and keep implem
 | `es` | Español | [Spanish translation](./es/README.md) |
 | `pt-BR` | Português Brasileiro | [Brazilian Portuguese translation](./pt-BR/README.md) |
 
-Translations keep release maturity, resource status, runtime requirements, commands, and documentation links synchronized. Detailed technical documentation remains canonical English under [`docs/`](../README.md).
+Translations keep release maturity, resource status, runtime requirements, commands, license, and documentation links synchronized. Detailed technical documentation remains canonical English under [`docs/`](../README.md).
+
+Copyright &copy; 2026 PixelGG. Synex is licensed under the [GNU Affero General Public License v3.0 only](../../LICENSE).

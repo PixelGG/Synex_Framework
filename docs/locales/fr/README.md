@@ -23,6 +23,7 @@
 <p align="center">
   <img alt="Cible : FiveM" src="https://img.shields.io/badge/target-FiveM-5ed7ff?style=flat-square&amp;labelColor=111827">
   <img alt="Version : 0.1.0 experimental" src="https://img.shields.io/badge/release-0.1.0%20experimental-8b73ff?style=flat-square&amp;labelColor=111827">
+  <a href="../../../LICENSE"><img alt="Licence : AGPL-3.0-only" src="https://img.shields.io/badge/license-AGPL--3.0--only-45c9a5?style=flat-square&amp;labelColor=111827"></a>
 </p>
 
 <p align="center">
@@ -83,6 +84,10 @@ L'anglais reste la source technique canonique.
 - [Opérations](../../operations.md)
 - [Tests et CI](../../testing.md)
 - [Compatibilité](../../compatibility/README.md)
+
+## Licence
+
+Copyright &copy; 2026 PixelGG. Synex est distribué exclusivement sous la [GNU Affero General Public License v3.0](../../../LICENSE).
 
 ---
 
