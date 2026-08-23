@@ -277,7 +277,7 @@ test('live migration 022 rejects changed and unenforced named capacity checks', 
 
     await connection.query(
       `ALTER TABLE synex_idempotency_capacity
-       DROP CHECK chk_idempotency_capacity_owner_limit,
+       DROP CONSTRAINT chk_idempotency_capacity_owner_limit,
        ADD CONSTRAINT chk_idempotency_capacity_owner_limit
          CHECK (owner_limit > 0 AND (owner_limit <= global_limit OR 1 = 1))`,
     );
@@ -288,7 +288,7 @@ test('live migration 022 rejects changed and unenforced named capacity checks', 
     );
     await connection.query(
       `ALTER TABLE synex_idempotency_capacity
-       DROP CHECK chk_idempotency_capacity_owner_limit,
+       DROP CONSTRAINT chk_idempotency_capacity_owner_limit,
        ADD CONSTRAINT chk_idempotency_capacity_owner_limit
          CHECK (owner_limit > 0 AND owner_limit <= global_limit)`,
     );
@@ -316,7 +316,7 @@ test('live migration 022 rejects changed and unenforced named capacity checks', 
     if (maliciousCheckInstalled) {
       await connection.query(
         `ALTER TABLE synex_idempotency_capacity
-         DROP CHECK chk_idempotency_capacity_owner_limit,
+         DROP CONSTRAINT chk_idempotency_capacity_owner_limit,
          ADD CONSTRAINT chk_idempotency_capacity_owner_limit
            CHECK (owner_limit > 0 AND owner_limit <= global_limit)`,
       );

@@ -182,7 +182,7 @@ test('live migration 024 backfills every session-control state and enforces exac
     try {
       await connection.query(
         `ALTER TABLE synex_session_control_capacity
-         DROP CHECK chk_session_control_capacity_requester_limit,
+         DROP CONSTRAINT chk_session_control_capacity_requester_limit,
          ADD CONSTRAINT chk_session_control_capacity_requester_limit
            CHECK (requester_limit > 0 AND (requester_limit <= global_limit OR 1 = 1))`,
       );
@@ -195,7 +195,7 @@ test('live migration 024 backfills every session-control state and enforces exac
       if (maliciousCheckInstalled) {
         await connection.query(
           `ALTER TABLE synex_session_control_capacity
-           DROP CHECK chk_session_control_capacity_requester_limit,
+           DROP CONSTRAINT chk_session_control_capacity_requester_limit,
            ADD CONSTRAINT chk_session_control_capacity_requester_limit
              CHECK (requester_limit > 0 AND requester_limit <= global_limit)`,
         );
