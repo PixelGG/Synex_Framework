@@ -34,7 +34,14 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-const result = spawnSync(process.execPath, ['--test', ...files], {
+const testArguments = ['--test'];
+if (scope === 'database'
+  || (scope === undefined && process.env.SYNEX_TEST_DATABASE_LIVE === '1')) {
+  testArguments.push('--test-concurrency=1');
+}
+testArguments.push(...files);
+
+const result = spawnSync(process.execPath, testArguments, {
   cwd: process.cwd(),
   env: process.env,
   stdio: 'inherit',

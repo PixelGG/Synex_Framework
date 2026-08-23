@@ -204,17 +204,17 @@ test('live migration 024 backfills every session-control state and enforces exac
     await applyMigrations(connection, [migration]);
 
     const [foreignKeys] = await connection.query<RowDataPacket[]>(
-      `SELECT usage.ordinal_position, usage.column_name, usage.referenced_table_schema,
-              usage.referenced_table_name, usage.referenced_column_name,
-              reference.update_rule, reference.delete_rule
-       FROM information_schema.key_column_usage AS usage
-       INNER JOIN information_schema.referential_constraints AS reference
-         ON reference.constraint_schema = usage.constraint_schema
-        AND reference.table_name = usage.table_name
-        AND reference.constraint_name = usage.constraint_name
-       WHERE usage.constraint_schema = DATABASE()
-         AND usage.table_name = 'synex_session_control_requester_capacity'
-         AND usage.constraint_name = 'fk_session_control_requester_capacity_instance'`,
+      `SELECT kcu.ordinal_position, kcu.column_name, kcu.referenced_table_schema,
+              kcu.referenced_table_name, kcu.referenced_column_name,
+              rc.update_rule, rc.delete_rule
+       FROM information_schema.key_column_usage AS kcu
+       INNER JOIN information_schema.referential_constraints AS rc
+         ON rc.constraint_schema = kcu.constraint_schema
+        AND rc.table_name = kcu.table_name
+        AND rc.constraint_name = kcu.constraint_name
+       WHERE kcu.constraint_schema = DATABASE()
+         AND kcu.table_name = 'synex_session_control_requester_capacity'
+         AND kcu.constraint_name = 'fk_session_control_requester_capacity_instance'`,
     );
     assert.equal(foreignKeys.length, 1);
     assert.equal(Number(foreignKeys[0]?.ordinal_position), 1);
