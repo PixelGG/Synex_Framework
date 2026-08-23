@@ -435,7 +435,7 @@ factories.lifecycle = function(deps)
             return nil, foundation.error('INVALID_ARGUMENT',
                 'Schedule delay is outside the supported range.')
         end
-        if type(handler) ~= 'function' then
+        if not foundation.isCallable(handler) then
             return nil, foundation.error('INVALID_ARGUMENT', 'Schedule handler is required.')
         end
         if options ~= nil and (type(options) ~= 'table' or getmetatable(options) ~= nil) then

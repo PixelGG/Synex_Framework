@@ -306,7 +306,9 @@ factories.messaging = function(deps)
             return nil, foundation.error('STALE_RESOURCE',
                 'The contract provider restarted.', { retryable = true })
         end
-        if type(handler) ~= 'function' then return nil, foundation.error('INVALID_HANDLER', 'A contract handler function is required.') end
+        if not foundation.isCallable(handler) then
+            return nil, foundation.error('INVALID_HANDLER', 'A callable contract handler is required.')
+        end
         if type(contract) ~= 'table' or getmetatable(contract) ~= nil
             or rawget(contract, 'provider') ~= owner then
             return nil, foundation.error('PROVIDER_MISMATCH', 'The contract provider does not match the resource owner.')
@@ -495,7 +497,8 @@ factories.messaging = function(deps)
     end
     function eventBus:subscribe(owner, epoch, topic, handler, options)
         if type(topic) ~= 'string' or #topic < 3 or #topic > 128
-            or not topic:match('^[a-z][a-z0-9_]*%.[a-z][a-z0-9_.]*$') or type(handler) ~= 'function' then
+            or not topic:match('^[a-z][a-z0-9_]*%.[a-z][a-z0-9_.]*$')
+            or not foundation.isCallable(handler) then
             return nil, foundation.error('INVALID_SUBSCRIPTION', 'Topic and handler are invalid.')
         end
         if not owners:isCurrent(owner, epoch) then
@@ -704,7 +707,8 @@ factories.messaging = function(deps)
     end
     function hookRegistry:register(owner, epoch, name, handler, options)
         if type(name) ~= 'string' or #name < 3 or #name > 128
-            or not name:match('^[a-z][a-z0-9_]*%.[a-z][a-z0-9_.]*$') or type(handler) ~= 'function' then
+            or not name:match('^[a-z][a-z0-9_]*%.[a-z][a-z0-9_.]*$')
+            or not foundation.isCallable(handler) then
             return nil, foundation.error('INVALID_HOOK', 'Hook names must be bounded namespaced identifiers and include a handler.')
         end
         if not owners:isCurrent(owner, epoch) then
@@ -1046,8 +1050,10 @@ factories.messaging = function(deps)
                     'A service may expose at most 64 methods.')
             end
             if type(method) ~= 'string' or #method < 1 or #method > 64
-                or not method:match('^[a-z][a-zA-Z0-9_]*$') or type(handler) ~= 'function' then
-                return nil, foundation.error('INVALID_SERVICE_METHOD', 'Service methods must map valid names to functions.')
+                or not method:match('^[a-z][a-zA-Z0-9_]*$')
+                or not foundation.isCallable(handler) then
+                return nil, foundation.error('INVALID_SERVICE_METHOD',
+                    'Service methods must map valid names to callable handlers.')
             end
             local capability = type(definition.capabilities) == 'table' and definition.capabilities[method] or nil
             if capability ~= nil and not validCapabilityName(capability) then

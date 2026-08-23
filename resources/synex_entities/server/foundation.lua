@@ -69,6 +69,20 @@ function SynexEntityFoundation.create(options)
         return table.unpack(values, 1, values.n)
     end
 
+    function foundation.isCallable(value)
+        local valueType = type(value)
+        if valueType == 'function' then return true end
+        if valueType ~= 'table' and valueType ~= 'userdata' then return false end
+        local metatable = getmetatable(value)
+        if type(metatable) ~= 'table'
+            and type(debug) == 'table' and type(debug.getmetatable) == 'function' then
+            local readable, rawMetatable = pcall(debug.getmetatable, value)
+            if readable then metatable = rawMetatable end
+        end
+        return type(metatable) == 'table'
+            and type(rawget(metatable, '__call')) == 'function'
+    end
+
     function foundation.getCaller(context)
         if type(context) ~= 'table' then
             return foundation.failure('FORBIDDEN', 'A Core invocation context is required', false, context)

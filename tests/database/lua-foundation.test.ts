@@ -69,6 +69,42 @@ for (const [resource, expectedFactories] of [
   });
 }
 
+for (const resource of ['synex_groups', 'synex_accounts'] as const) {
+  test(`${resource} accepts genuine Cfx-callable API references without trusting markers`, async () => {
+    const engine = await new LuaFactory().createEngine();
+    await engine.global.set('cfxCallable', {});
+    try {
+      await engine.doString('SYNEX_TEST_MODE = true');
+      const result = await engine.doString(`
+        ${await luaBootstrap(resource)}
+        local Foundation = require 'server.foundation'
+        local tableRef = setmetatable({ __cfx_functionReference = 'table-fixture' }, {
+          __metatable = 'protected-cfx-table',
+          __call = function(_, value) return 'table:' .. value end
+        })
+        debug.setmetatable(cfxCallable, {
+          __metatable = 'protected-cfx-userdata',
+          __call = function(_, value) return 'userdata:' .. value end
+        })
+        assert(Foundation.isCallable(function() end))
+        assert(Foundation.isCallable(tableRef) and tableRef('ok') == 'table:ok')
+        assert(type(cfxCallable) == 'userdata')
+        assert(Foundation.isCallable(cfxCallable) and cfxCallable('ok') == 'userdata:ok')
+        assert(not Foundation.isCallable({ __cfx_functionReference = 'marker-only' }))
+        assert(not Foundation.isCallable(setmetatable({}, {
+          __metatable = 'protected-invalid-call', __call = true
+        })))
+        debug.setmetatable(cfxCallable, { __metatable = 'protected-noncallable-userdata' })
+        assert(not Foundation.isCallable(cfxCallable))
+        return type(tableRef) .. ':' .. type(cfxCallable)
+      `);
+      assert.equal(result, 'table:userdata');
+    } finally {
+      engine.global.close();
+    }
+  });
+}
+
 for (const [resource, eventType] of [
   ['synex_groups', 'synex.groups.created'],
   ['synex_accounts', 'synex.accounts.transferred'],

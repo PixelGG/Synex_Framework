@@ -36,6 +36,20 @@ local function isSubjectId(value)
         and value:match('^[a-z0-9][a-z0-9_%-]*$') ~= nil
 end
 
+local function isCallable(value)
+    local valueType = type(value)
+    if valueType == 'function' then return true end
+    if valueType ~= 'table' and valueType ~= 'userdata' then return false end
+    local metatable = getmetatable(value)
+    if type(metatable) ~= 'table'
+        and type(debug) == 'table' and type(debug.getmetatable) == 'function' then
+        local readable, rawMetatable = pcall(debug.getmetatable, value)
+        if readable then metatable = rawMetatable end
+    end
+    return type(metatable) == 'table'
+        and type(rawget(metatable, '__call')) == 'function'
+end
+
 local function characterLength(value)
     local length = utf8.len(value)
     return length or -1
@@ -145,6 +159,7 @@ return {
     uuidV4 = uuidV4,
     isUuid = isUuid,
     isSubjectId = isSubjectId,
+    isCallable = isCallable,
     characterLength = characterLength,
     evaluateCapabilityRules = evaluateCapabilityRules,
     validateShape = validateShape,

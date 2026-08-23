@@ -134,9 +134,9 @@ for _, definition in ipairs(definitions) do
     end
 end
 
-if not api.Ids or type(api.Ids.next) ~= 'function'
-    or not api.Events or type(api.Events.publishOutbox) ~= 'function'
-    or not api.Scheduler or type(api.Scheduler.every) ~= 'function' then
+if not api.Ids or not Foundation.isCallable(api.Ids.next)
+    or not api.Events or not Foundation.isCallable(api.Events.publishOutbox)
+    or not api.Scheduler or not Foundation.isCallable(api.Scheduler.every) then
     error('synex_groups requires the Core ID, event, and scheduler APIs')
 end
 local scheduled, scheduleError = api.Scheduler.every(1000, function()

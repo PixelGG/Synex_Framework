@@ -43,7 +43,7 @@ function SynexEntityApplication.create(options)
             end
             api = coreRef.value
         end
-        if type(api.Services) ~= 'table' or type(api.Services.provide) ~= 'function' then
+        if type(api.Services) ~= 'table' or not foundation.isCallable(api.Services.provide) then
             return foundation.failure('UNAVAILABLE', 'The Core service registry is unavailable', true)
         end
 
@@ -72,7 +72,7 @@ function SynexEntityApplication.create(options)
         end
         serviceToken = tokenOrError
 
-        if type(api.RPC) ~= 'table' or type(api.RPC.registerServer) ~= 'function' then
+        if type(api.RPC) ~= 'table' or not foundation.isCallable(api.RPC.registerServer) then
             return foundation.failure('UNAVAILABLE', 'The Core contract registry is unavailable', true)
         end
         local encoded = ports.loadResourceFile(resourceName, 'contracts/entities.contracts.json')
@@ -128,7 +128,7 @@ function SynexEntityApplication.create(options)
     local function registerCoreIntegrations()
         local api = coreRef.value
         if not api or not api.Characters
-            or type(api.Characters.registerLifecycleParticipant) ~= 'function' then
+            or not foundation.isCallable(api.Characters.registerLifecycleParticipant) then
             return foundation.failure('UNAVAILABLE', 'The Core character lifecycle is unavailable', true)
         end
         local token, participantError = api.Characters.registerLifecycleParticipant({
@@ -194,7 +194,7 @@ function SynexEntityApplication.create(options)
         if not token then return nil, participantError end
         participantToken = token
 
-        if not api.Scheduler or type(api.Scheduler.every) ~= 'function' then
+        if not api.Scheduler or not foundation.isCallable(api.Scheduler.every) then
             return foundation.failure('UNAVAILABLE', 'The Core scheduler is unavailable', true)
         end
         local scheduleToken, scheduleError = api.Scheduler.every(

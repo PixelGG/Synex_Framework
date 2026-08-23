@@ -22,18 +22,8 @@ factories.identityConnectionTerminals = function(deps)
         local deferralRead, deferralDone = foundation.safeCall(function()
             return deferrals.done
         end)
-        local deferralDoneMetatable = deferralRead and getmetatable(deferralDone) or nil
-        if deferralRead and type(deferralDone) ~= 'function'
-            and type(deferralDoneMetatable) ~= 'table'
-            and type(debug) == 'table' and type(debug.getmetatable) == 'function' then
-            local metatableRead, rawMetatable = foundation.safeCall(debug.getmetatable, deferralDone)
-            if metatableRead then deferralDoneMetatable = rawMetatable end
-        end
-        local deferralDoneCallable = type(deferralDone) == 'function'
-            or (type(deferralDoneMetatable) == 'table'
-                and type(rawget(deferralDoneMetatable, '__call')) == 'function')
         if type(connection) ~= 'table' or type(connection.id) ~= 'string'
-            or not deferralRead or not deferralDoneCallable then
+            or not deferralRead or not foundation.isCallable(deferralDone) then
             return nil, foundation.error('INVALID_CONNECTION_TERMINAL',
                 'A connection identity and Cfx deferral terminal are required.')
         end

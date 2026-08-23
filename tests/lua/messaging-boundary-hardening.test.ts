@@ -186,8 +186,16 @@ test('provider errors are copied, closed, declared, and always release RPC ingre
       local returnedError = foundation.error('DECLARED_FAILURE', 'A declared failure.', {
         retryable = true, details = { reason = 'bounded' }
       })
+      local declaredCalls = 0
+      local declaredHandler = setmetatable({ __cfx_functionReference = 'fixture-rpc-declared' }, {
+        __metatable = 'protected-cfx-funcref',
+        __call = function()
+          declaredCalls = declaredCalls + 1
+          return nil, returnedError
+        end
+      })
       local handlersByName = {
-        declared = function() return nil, returnedError end,
+        declared = declaredHandler,
         undeclared = function()
           return nil, foundation.error('UNDECLARED_FAILURE', 'Must not escape.')
         end,
@@ -219,7 +227,7 @@ test('provider errors are copied, closed, declared, and always release RPC ingre
         return responses[#responses]
       end
       local declared = invoke('declared')
-      assert(declared.error.code == 'DECLARED_FAILURE'
+      assert(declared.error.code == 'DECLARED_FAILURE' and declaredCalls == 1
         and declared.error.retryable == true and returnedError.traceId == nil)
       for _, name in ipairs({'undeclared', 'readonly', 'unknown', 'raised'}) do
         local response = invoke(name)

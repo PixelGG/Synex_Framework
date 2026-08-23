@@ -401,7 +401,7 @@ function SynexEntityService.create(options)
                 or previousDrift.generationMismatches ~= generationMismatches
                 or previousDrift.duplicatePersistentKeys ~= duplicatePersistentKeys
                 or previousDrift.inactiveOwners ~= inactiveOwnerCount
-            if changed and api and api.Audit and type(api.Audit.append) == 'function' then
+            if changed and api and api.Audit and foundation.isCallable(api.Audit.append) then
                 local invoked, auditResult = foundation.protect('drift.audit', function()
                     return api.Audit.append({
                         action = 'entities.drift_detected',

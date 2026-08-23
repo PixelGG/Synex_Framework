@@ -57,7 +57,7 @@ function SynexEntityOperations.create(options)
                 end
 
                 local api = coreRef.value
-                if not api or type(api.Ids) ~= 'table' or type(api.Ids.next) ~= 'function' then
+                if not api or type(api.Ids) ~= 'table' or not foundation.isCallable(api.Ids.next) then
                     return foundation.failure(
                         'UNAVAILABLE',
                         'The Core ID service is unavailable',

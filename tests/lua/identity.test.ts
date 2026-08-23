@@ -1194,7 +1194,7 @@ test('playerJoining rejects cross-pending hijack, replay, and source-local flood
   const engine = await createIdentityEngine();
   try {
     const result = await engine.doString(`
-      local now, released, persisted, identityReads = 1000, 0, 0, 0
+      local now, released, persisted, identityReads, gateRuns = 1000, 0, 0, 0, 0
       local sourceIdentities, lookupReuse, renewReuse, releaseReuse = {}, nil, nil, nil
       local sameIdentityReuse, sameIdentityResult = nil, nil
       local drops, dropOwners, rateBuckets, purgedRateKeys = {}, {}, {}, {}
@@ -1219,7 +1219,7 @@ test('playerJoining rejects cross-pending hijack, replay, and source-local flood
       local foundation = SynexCoreFactories.foundation({ platform = platform })
       foundation.configureIds('join-boundary-test')
       local registries = SynexCoreFactories.registries({ foundation = foundation })
-      registries.owners:activate('synex_core')
+      local coreEpoch = registries.owners:activate('synex_core')
       local players = registries.players
       local rateLimiter = {}
       function rateLimiter:consume(key)
@@ -1295,7 +1295,10 @@ test('playerJoining rejects cross-pending hijack, replay, and source-local flood
           close = function() return true, nil end
         },
         accessRepository = { check = function() return true, nil end },
-        invokeOwned = function() return true, true, nil end, normalizeIdentifiers = normalize,
+        invokeOwned = function(_, handler, ...)
+          return foundation.safeCall(handler, ...)
+        end,
+        normalizeIdentifiers = normalize,
         sessionTransitions = { SELECTING_CHARACTER = { DISCONNECTING = true } },
         transition = function(session, target)
           session.state = target
@@ -1303,6 +1306,17 @@ test('playerJoining rejects cross-pending hijack, replay, and source-local flood
           return session, nil
         end
       })
+      local gateHandler = setmetatable({ __cfx_functionReference = 'fixture-connection-gate' }, {
+        __metatable = 'protected-cfx-funcref',
+        __call = function(_, context)
+          gateRuns = gateRuns + 1
+          assert(type(context) == 'table' and context.user.id == 'user-victim')
+          return true, nil
+        end
+      })
+      assert(connection:registerGate('synex_core', coreEpoch, {
+        name = 'fixture callable gate', priority = 0, timeoutMs = 1000, run = gateHandler
+      }))
       local doneArity = nil
       local connected, connectError = connection:handleConnecting(-2, 'Victim', {
         defer = function() end, update = function() end,
@@ -1310,7 +1324,7 @@ test('playerJoining rejects cross-pending hijack, replay, and source-local flood
       })
       assert(connected, connectError and connectError.code)
       local accepted = assert(players:getPending(-2))
-      assert(doneArity == 0 and accepted.userId == 'user-victim')
+      assert(doneArity == 0 and accepted.userId == 'user-victim' and gateRuns == 1)
 
       local sameUser, sameUserError = connection:handleJoining(98, -2)
       assert(sameUser == nil and sameUserError.code == 'JOIN_IDENTITY_MISMATCH')

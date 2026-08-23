@@ -73,7 +73,8 @@ factories.sagaRuntime = function(deps)
                 name = true, run = true, compensate = true, timeoutMs = true,
                 maxAttempts = true, compensationAttempts = true, retryDelayMs = true
             }) or not validName(step.name, 96) or names[step.name]
-                or type(step.run) ~= 'function' or type(step.compensate) ~= 'function' then
+                or not foundation.isCallable(step.run)
+                or not foundation.isCallable(step.compensate) then
                 return nil, foundation.error('INVALID_SAGA_DEFINITION', ('Saga step %d is invalid.'):format(index))
             end
             local timeoutMs = integer(step.timeoutMs, 10000, 100, 30000)

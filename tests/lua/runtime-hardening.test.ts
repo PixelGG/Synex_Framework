@@ -1895,10 +1895,18 @@ test('required character participant deadlines fail closed for load and unload',
         end
       }))
       local requiredEpoch = registries.owners:activate('synex_required_load')
-      local loadRollbacks = 0
+      local loadRollbacks, requiredPrepareCalls = 0, 0
+      local requiredPrepare = setmetatable({ __cfx_functionReference = 'fixture-character-prepare' }, {
+        __metatable = 'protected-cfx-funcref',
+        __call = function()
+          requiredPrepareCalls = requiredPrepareCalls + 1
+          now = now + 101
+          return { prepared = true }
+        end
+      })
       assert(characters:registerParticipant('synex_required_load', requiredEpoch, {
         name = 'required_load', timeoutMs = 100,
-        prepare = function() now = now + 101 return { prepared = true } end,
+        prepare = requiredPrepare,
         rollback = function(prepared)
           assert(prepared and prepared.prepared)
           loadRollbacks = loadRollbacks + 1
@@ -1907,7 +1915,8 @@ test('required character participant deadlines fail closed for load and unload',
       }))
       local loaded, loadError = characters:select('session-a', 'character-a')
       assert(loaded == nil and loadError.code == 'PARTICIPANT_TIMEOUT')
-      assert(session.state == 'SELECTING_CHARACTER' and session.characterId == nil and loadRollbacks == 1)
+      assert(session.state == 'SELECTING_CHARACTER' and session.characterId == nil
+        and requiredPrepareCalls == 1 and loadRollbacks == 1)
       registries.owners:purge('synex_required_load', requiredEpoch, 'fixture')
       local optionalEpoch = registries.owners:activate('synex_optional_load')
       assert(characters:registerParticipant('synex_optional_load', optionalEpoch, {
@@ -2109,12 +2118,17 @@ test('recurring scheduler entries expose bounded worker health and recover after
       local lifecycle = SynexCoreFactories.lifecycle({
         platform = platform, foundation = foundation, owners = registries.owners
       })
-      assert(lifecycle.scheduler:every('synex_fixture', epoch, 100, function()
-        attempts = attempts + 1
-        now = now + 5
-        if attempts <= 3 then return nil, { code = 'FIXTURE_FAILURE' } end
-        return true, nil
-      end, { name = 'fixture.worker' }))
+      local schedulerHandler = setmetatable({ __cfx_functionReference = 'fixture-scheduler' }, {
+        __metatable = 'protected-cfx-funcref',
+        __call = function()
+          attempts = attempts + 1
+          now = now + 5
+          if attempts <= 3 then return nil, { code = 'FIXTURE_FAILURE' } end
+          return true, nil
+        end
+      })
+      assert(lifecycle.scheduler:every(
+        'synex_fixture', epoch, 100, schedulerHandler, { name = 'fixture.worker' }))
       for index = 1, 3 do now = now + 100 callbacks[index]() end
       local unhealthy = lifecycle.scheduler:snapshot()[1]
       assert(unhealthy.health == 'UNHEALTHY' and unhealthy.runs == 3 and unhealthy.lastError == 'FIXTURE_FAILURE')
@@ -3503,7 +3517,8 @@ test('durable saga runtime resumes with leases, retries, deadlines, and reverse 
   try {
     const result = await engine.doString(`
       local now, saga, sequence = 1000, nil, 0
-      local runs, compensations, leasesAcquired, leasesReleased, leaseRenewals, audits = 0, {}, 0, 0, 0, 0
+      local runs, reserveRuns, compensations = 0, 0, {}
+      local leasesAcquired, leasesReleased, leaseRenewals, audits = 0, 0, 0, 0
       local leaseOwners = {}
       local platform = {
         nowGame = function() return now end, random = function() return 1 end,
@@ -3593,14 +3608,21 @@ test('durable saga runtime resumes with leases, retries, deadlines, and reverse 
         name = 'fixture.purchase', timeoutMs = 60000, steps = {
           {
             name = 'reserve', maxAttempts = 2, retryDelayMs = 100,
-            run = function(context)
-              context.reserved = true
-              return { context = context, output = { reservation = 'opaque' } }, nil
-            end,
-            compensate = function()
-              compensations[#compensations + 1] = 'reserve'
-              return { output = { released = true } }, nil
-            end
+            run = setmetatable({ __cfx_functionReference = 'fixture-saga-reserve' }, {
+              __metatable = 'protected-cfx-funcref',
+              __call = function(_, context)
+                reserveRuns = reserveRuns + 1
+                context.reserved = true
+                return { context = context, output = { reservation = 'opaque' } }, nil
+              end
+            }),
+            compensate = setmetatable({ __cfx_functionReference = 'fixture-saga-release' }, {
+              __metatable = 'protected-cfx-funcref',
+              __call = function()
+                compensations[#compensations + 1] = 'reserve'
+                return { output = { released = true } }, nil
+              end
+            })
           },
           {
             name = 'commit', maxAttempts = 2, retryDelayMs = 100,
@@ -3628,7 +3650,7 @@ test('durable saga runtime resumes with leases, retries, deadlines, and reverse 
         local report, dispatchError = runtime:dispatchBatch(10)
         assert(report and dispatchError == nil)
       end
-      assert(saga.state == 'failed' and runs == 2)
+      assert(saga.state == 'failed' and runs == 2 and reserveRuns == 1)
       assert(#compensations == 2 and compensations[1] == 'commit' and compensations[2] == 'reserve')
       assert(leasesAcquired == 5 and leasesReleased == 5)
       local forwardFailures = 0

@@ -84,6 +84,21 @@ local function validCallbackName(value)
         and value:match('^[A-Za-z0-9_:%-%.]+$') ~= nil
 end
 
+local function isCallable(value)
+    if type(value) == 'function' then return true end
+    local valueType = type(value)
+    if valueType ~= 'table' and valueType ~= 'userdata' then return false end
+    local metatable = getmetatable(value)
+    if type(metatable) ~= 'table'
+        and type(debug) == 'table' and type(debug.getmetatable) == 'function' then
+        local readable, rawMetatable = pcall(debug.getmetatable, value)
+        if readable then metatable = rawMetatable end
+    end
+    return type(metatable) == 'table' and type(rawget(metatable, '__call')) == 'function'
+end
+
+Native.isCallable = isCallable
+
 function Native.create(options)
     assert(type(options) == 'table', 'native bridge options are required')
     local framework = assert(boundedString(options.framework, 16), 'framework is invalid')
@@ -301,7 +316,7 @@ function Native.create(options)
     function adapter:registerCallback(consumer, name, handler)
         local allowed, authorizationError = authorize(consumer, 'callbacks', 'callback.register')
         if not allowed then return nil, authorizationError end
-        if not validCallbackName(name) or type(handler) ~= 'function' then
+        if not validCallbackName(name) or not isCallable(handler) then
             return nil, bridgeError('INVALID_CALLBACK', 'Callback name or handler is invalid.')
         end
         local previous = callbacks[name]

@@ -283,7 +283,8 @@ factories.identityConnections = function(deps)
     })
     function connectionPipeline:registerGate(owner, epoch, definition)
         if type(definition) ~= 'table' or type(definition.name) ~= 'string' or #definition.name < 3 or #definition.name > 96
-            or definition.name:find('[%z\1-\31\127]') or type(definition.run) ~= 'function' then
+            or definition.name:find('[%z\1-\31\127]')
+            or not foundation.isCallable(definition.run) then
             return nil, foundation.error('INVALID_GATE', 'Connection gate name and handler are required.')
         end
         local priority = definition.priority == nil and 0 or definition.priority

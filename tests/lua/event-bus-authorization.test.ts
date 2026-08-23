@@ -107,12 +107,16 @@ test('event and hook authority is manifest-declared, namespace-owned, and restar
       }))
 
       local deliveries = 0
-      assert(messaging.events:subscribe(
-        'synex_observer', observerEpoch, 'synex.accounts.changed', function(payload, context)
+      local eventHandler = setmetatable({ __cfx_functionReference = 'fixture-event-handler' }, {
+        __metatable = 'protected-cfx-funcref',
+        __call = function(_, payload, context)
           assert(payload.value == 1 and context.publisher == 'synex_accounts')
           deliveries = deliveries + 1
           return true, nil
-        end))
+        end
+      })
+      assert(messaging.events:subscribe(
+        'synex_observer', observerEpoch, 'synex.accounts.changed', eventHandler))
       assert(messaging.events:subscribe(
         'synex_error_observer', errorEpoch, 'synex.accounts.changed', function()
           error('subscriber-private-payload')
@@ -139,8 +143,9 @@ test('event and hook authority is manifest-declared, namespace-owned, and restar
       assert(subscriptionLimit == nil and subscriptionLimitError.code == 'SUBSCRIPTION_LIMIT_REACHED')
 
       local hookCalls = 0
-      local foreignRequired, foreignRequiredError = messaging.hooks:register(
-        'synex_observer', observerEpoch, 'synex.characters.before_create', function(value, context)
+      local hookHandler = setmetatable({ __cfx_functionReference = 'fixture-hook-handler' }, {
+        __metatable = 'protected-cfx-funcref',
+        __call = function(_, value, context)
           assert(context.caller == 'synex_core')
           hookCalls = hookCalls + 1
           if value.requestDeny then
@@ -148,18 +153,15 @@ test('event and hook authority is manifest-declared, namespace-owned, and restar
           end
           value.reviewed = true
           return { action = 'patch', value = value }
-        end, { priority = 10, required = true })
+        end
+      })
+      local foreignRequired, foreignRequiredError = messaging.hooks:register(
+        'synex_observer', observerEpoch, 'synex.characters.before_create', hookHandler,
+        { priority = 10, required = true })
       assert(foreignRequired == nil and foreignRequiredError.code == 'HOOK_POLICY_FORBIDDEN')
       assert(messaging.hooks:register(
-        'synex_observer', observerEpoch, 'synex.characters.before_create', function(value, context)
-          assert(context.caller == 'synex_core')
-          hookCalls = hookCalls + 1
-          if value.requestDeny then
-            return { action = 'deny', code = 'FOREIGN_DENIAL', message = 'must be ignored' }
-          end
-          value.reviewed = true
-          return { action = 'patch', value = value }
-        end, { priority = 10 }))
+        'synex_observer', observerEpoch, 'synex.characters.before_create', hookHandler,
+        { priority = 10 }))
       assert(messaging.hooks:register(
         'synex_characters', charactersEpoch, 'synex.characters.before_create', function()
           return { action = 'allow' }

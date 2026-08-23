@@ -221,6 +221,54 @@ test('unexpected failures reach a structured sink without exposing the caught va
   }
 });
 
+test('entity Core consumers recognize protected Cfx-callable tables and userdata', async () => {
+  const engine = await new LuaFactory().createEngine();
+  await engine.global.set('cfxCallable', {});
+  try {
+    for (const file of [validationPath, registryPath, foundationPath]) {
+      await engine.doString(await readFile(file, 'utf8'));
+    }
+    const result = await engine.doString(String.raw`
+      local state = SynexEntityRegistry.newState()
+      local foundation = SynexEntityFoundation.create({
+        errorSink = function() error('error sink should not run') end,
+        health = {},
+        limits = { maxEntities = 8, maxOwnerEntities = 4, maxBucketEntities = 4 },
+        ports = {
+          getGameTimer = function() return 1000 end,
+          getResourceState = function() return 'started' end
+        },
+        registry = state.entities,
+        resourceName = 'synex_entities',
+        state = state,
+        validation = SynexEntityValidation
+      })
+      local tableRef = setmetatable({ __cfx_functionReference = 'table-fixture' }, {
+        __metatable = 'protected-cfx-table',
+        __call = function(_, value) return 'table:' .. value end
+      })
+      debug.setmetatable(cfxCallable, {
+        __metatable = 'protected-cfx-userdata',
+        __call = function(_, value) return 'userdata:' .. value end
+      })
+      assert(foundation.isCallable(function() end))
+      assert(foundation.isCallable(tableRef) and tableRef('ok') == 'table:ok')
+      assert(type(cfxCallable) == 'userdata')
+      assert(foundation.isCallable(cfxCallable) and cfxCallable('ok') == 'userdata:ok')
+      assert(not foundation.isCallable({ __cfx_functionReference = 'marker-only' }))
+      assert(not foundation.isCallable(setmetatable({}, {
+        __metatable = 'protected-invalid-call', __call = true
+      })))
+      debug.setmetatable(cfxCallable, { __metatable = 'protected-noncallable-userdata' })
+      assert(not foundation.isCallable(cfxCallable))
+      return type(tableRef) .. ':' .. type(cfxCallable)
+    `) as string;
+    assert.equal(result, 'table:userdata');
+  } finally {
+    engine.global.close();
+  }
+});
+
 test('repository fails closed on nil, scalar, sparse, and non-table DB results', async () => {
   const engine = await new LuaFactory().createEngine();
   try {

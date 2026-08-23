@@ -41,6 +41,20 @@ local function boundedString(value, maximum)
     return value:sub(1, maximum - 3) .. '...'
 end
 
+local function isCallable(value)
+    local valueType = type(value)
+    if valueType == 'function' then return true end
+    if valueType ~= 'table' and valueType ~= 'userdata' then return false end
+    local metatable = getmetatable(value)
+    if type(metatable) ~= 'table'
+        and type(debug) == 'table' and type(debug.getmetatable) == 'function' then
+        local readable, rawMetatable = pcall(debug.getmetatable, value)
+        if readable then metatable = rawMetatable end
+    end
+    return type(metatable) == 'table'
+        and type(rawget(metatable, '__call')) == 'function'
+end
+
 local function maskIdentifier(value)
     if type(value) ~= 'string' then return '[MASKED]' end
     if #value <= 8 then return '****' end
@@ -123,7 +137,7 @@ local function available(value)
 end
 
 local function readValue(handler)
-    if type(handler) ~= 'function' then return unavailable('NOT_EXPOSED') end
+    if not isCallable(handler) then return unavailable('NOT_EXPOSED') end
     local ok, value, readError = pcall(handler)
     if not ok or value == nil then
         local code = type(readError) == 'table' and readError.code or 'UNAVAILABLE'
@@ -197,7 +211,7 @@ local function traceSearch(api, query)
     local handler = diagnostics and (
         diagnostics.search or diagnostics.searchControl or diagnostics.searchTraces
     )
-    if type(handler) ~= 'function' then return unavailable('NOT_EXPOSED') end
+    if not isCallable(handler) then return unavailable('NOT_EXPOSED') end
     return readValue(function()
         return handler({ kind = query.kind, value = query.value, limit = 64 })
     end)

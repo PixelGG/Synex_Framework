@@ -33,6 +33,88 @@ async function createKernelEngine(files: string[]): Promise<LuaEngine> {
   return engine;
 }
 
+test('foundation recognizes callable Cfx proxies and restores execution context', async () => {
+  const engine = await createKernelEngine(['foundation']);
+  await engine.global.set('cfxCallableUserdata', {});
+  await engine.global.set('cfxPlainUserdata', {});
+  try {
+    const result = await engine.doString(`
+      local foundation = SynexCoreFactories.foundation({ platform = FakePlatform })
+      local function plain(value) return value end
+      local tableCalls, userdataCalls = 0, 0
+      local callableTable = setmetatable({ __cfx_functionReference = 'fixture-table' }, {
+        __metatable = 'protected-cfx-funcref',
+        __call = function(_, left, right)
+          tableCalls = tableCalls + 1
+          local context = assert(foundation.currentContext())
+          assert(context.caller == 'synex_fixture' and context.nested.value == 1)
+          context.nested.value = 99
+          return left, nil, right
+        end
+      })
+      debug.setmetatable(cfxCallableUserdata, {
+        __metatable = 'protected-cfx-userdata',
+        __call = function(_, value)
+          userdataCalls = userdataCalls + 1
+          assert(foundation.currentContext().caller == 'synex_userdata')
+          return value, nil, 'tail'
+        end
+      })
+      debug.setmetatable(cfxPlainUserdata, {
+        __metatable = 'protected-noncallable-userdata'
+      })
+
+      assert(type(cfxCallableUserdata) == 'userdata')
+      assert(foundation.isCallable(plain))
+      assert(foundation.isCallable(callableTable))
+      assert(foundation.isCallable(cfxCallableUserdata))
+      assert(not foundation.isCallable(nil) and not foundation.isCallable(42))
+      assert(not foundation.isCallable({ __cfx_functionReference = 'spoof-only' }))
+      assert(not foundation.isCallable(setmetatable({ __cfx_functionReference = 'spoof-string' }, {
+        __metatable = 'protected-spoof', __call = 'function'
+      })))
+      assert(not foundation.isCallable(setmetatable({}, {
+        __metatable = 'protected-index-spoof', __index = { __call = plain }
+      })))
+      assert(not foundation.isCallable(cfxPlainUserdata))
+
+      local sourceContext = { caller = 'synex_fixture', nested = { value = 1 } }
+      local values = table.pack(foundation.withContext(sourceContext, callableTable, 'first', 'third'))
+      assert(values.n == 3 and values[1] == 'first' and values[2] == nil and values[3] == 'third')
+      assert(sourceContext.nested.value == 1 and foundation.currentContext() == nil)
+
+      local userdataValues = table.pack(foundation.withContext(
+        { caller = 'synex_userdata' }, cfxCallableUserdata, 'userdata-result'))
+      assert(userdataValues.n == 3 and userdataValues[1] == 'userdata-result'
+        and userdataValues[2] == nil and userdataValues[3] == 'tail')
+      assert(foundation.currentContext() == nil)
+
+      local outer = foundation.withContext({ caller = 'synex_outer' }, function()
+        assert(foundation.currentContext().caller == 'synex_outer')
+        local ok, failure = pcall(function()
+          foundation.withContext({ caller = 'synex_inner' }, setmetatable({}, {
+            __call = function()
+              assert(foundation.currentContext().caller == 'synex_inner')
+              error('fixture-context-failure')
+            end
+          }))
+        end)
+        assert(not ok and tostring(failure):find('fixture-context-failure', 1, true))
+        assert(foundation.currentContext().caller == 'synex_outer')
+        return plain('restored')
+      end)
+      assert(outer == 'restored' and foundation.currentContext() == nil)
+      local invalid = pcall(foundation.withContext, {}, { __cfx_functionReference = 'spoof' })
+      assert(not invalid and foundation.currentContext() == nil)
+      assert(tableCalls == 1 and userdataCalls == 1)
+      return table.concat({tableCalls, userdataCalls, outer}, ':')
+    `);
+    assert.equal(result, '1:1:restored');
+  } finally {
+    engine.global.close();
+  }
+});
+
 test('SHA-256 uses a deterministic canonical digest', async () => {
   const engine = await createKernelEngine(['foundation', 'persistence']);
   const digest = await engine.doString(`
@@ -430,6 +512,15 @@ test('service registry injects the real caller and keeps capability-less methods
       lifecycle = lifecycle, dependencies = lifecycle.dependencies,
       protocol = SynexProtocol, config = {}, coreResource = 'synex_core'
     })
+    local serviceCalls = 0
+    local readHandler = setmetatable({ __cfx_functionReference = 'fixture-service-read' }, {
+      __metatable = 'protected-cfx-funcref',
+      __call = function(_, request, context)
+        serviceCalls = serviceCalls + 1
+        assert(type(request) == 'table')
+        return { caller = context.caller }
+      end
+    })
     local invalidService, invalidServiceError = messaging.services:provide('synex_provider', providerEpoch, {
       name = 'synex.fixture..admin', version = '1.0.0', methods = { read = function() return {} end }
     })
@@ -438,7 +529,7 @@ test('service registry injects the real caller and keeps capability-less methods
       name = 'synex.fixture', version = '1.0.0',
       capabilities = { read = 'synex.fixture.read' },
       methods = {
-        read = function(_, context) return { caller = context.caller } end,
+        read = readHandler,
         private = function() return { value = true } end
       }
     }))
@@ -450,7 +541,7 @@ test('service registry injects the real caller and keeps capability-less methods
     local value = assert(messaging.services:call(
       'synex_consumer', consumerEpoch, 'synex.fixture', '^1.0.0', 'read', {}, {}
     ))
-    assert(value.caller == 'synex_consumer')
+    assert(value.caller == 'synex_consumer' and serviceCalls == 1)
     local privateValue, privateError = messaging.services:call(
       'synex_consumer', consumerEpoch, 'synex.fixture', '^1.0.0', 'private', {}, {}
     )

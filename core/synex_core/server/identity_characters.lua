@@ -154,13 +154,14 @@ factories.identityCharacters = function(deps)
         local priority = type(definition) == 'table' and (definition.priority or 0) or nil
         local optionalHandlersValid = type(definition) == 'table'
         for _, field in ipairs({ 'commit', 'rollback', 'unload', 'deletePreflight', 'deleteCommit' }) do
-            if optionalHandlersValid and definition[field] ~= nil and type(definition[field]) ~= 'function' then
+            if optionalHandlersValid and definition[field] ~= nil
+                and not foundation.isCallable(definition[field]) then
                 optionalHandlersValid = false
             end
         end
         if type(definition) ~= 'table' or type(definition.name) ~= 'string' or #definition.name < 1
             or #definition.name > 64 or not definition.name:match('^[a-z][a-z0-9_.%-]*$')
-            or type(definition.prepare) ~= 'function' or not optionalHandlersValid
+            or not foundation.isCallable(definition.prepare) or not optionalHandlersValid
             or type(timeoutMs) ~= 'number' or math.type(timeoutMs) ~= 'integer'
             or timeoutMs < 100 or timeoutMs > 30000
             or type(priority) ~= 'number' or math.type(priority) ~= 'integer'
@@ -375,7 +376,7 @@ factories.identityCharacters = function(deps)
                 end
                 if not participantError then plan.actions[#plan.actions + 1] = {
                     owner = participant.owner, participant = participant.name, action = result.action,
-                    metadata = result.metadata, notify = type(participant.deleteCommit) == 'function'
+                    metadata = result.metadata, notify = foundation.isCallable(participant.deleteCommit)
                 } end
             end
         end

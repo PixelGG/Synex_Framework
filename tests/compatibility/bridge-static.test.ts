@@ -55,6 +55,7 @@ test("native bridge network endpoint is bounded, rate-limited, session-bound, an
   assert.match(server, /GetPlayerName/u);
   assert.match(server, /onResourceStop/u);
   assert.match(server, /playerDropped/u);
+  assert.match(server, /assert\(type\(toLegacyPlayerData\) == 'function'/u);
   assert.doesNotMatch(server, /MySQL\.|oxmysql|SELECT\s|INSERT\s|UPDATE\s|DELETE\s/iu);
 });
 

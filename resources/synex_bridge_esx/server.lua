@@ -176,9 +176,9 @@ end)
 
 AddEventHandler('esx:getSharedObject', function(callback)
     local consumer = GetInvokingResource()
-    if type(callback) ~= 'function' or type(consumer) ~= 'string' then return end
+    if not SynexBridgeNative.isCallable(callback) or type(consumer) ~= 'string' then return end
     local object = sharedObjectFor(consumer)
-    if object then callback(object) end
+    if object then pcall(function() callback(object) end) end
 end)
 
 local lifecycleToken, lifecycleError = adapter:registerLifecycle(playerData, {

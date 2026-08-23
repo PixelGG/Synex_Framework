@@ -149,6 +149,51 @@ test('entity drift and character retention are scheduled, audited, and domain-ow
   assert.match(descriptor, /"synex\.audit\.append"/);
 });
 
+test('official Core API consumers accept only genuine Cfx-callable exports', async () => {
+  const [accountsFoundation, accountsMain, groupsFoundation, groupsMain,
+    entityFoundation, entityBuckets, entityOperations, entityRuntime, entityService,
+    control] = await Promise.all([
+    source('resources/synex_accounts/server/foundation.lua'),
+    source('resources/synex_accounts/server/main.lua'),
+    source('resources/synex_groups/server/foundation.lua'),
+    source('resources/synex_groups/server/main.lua'),
+    source('resources/synex_entities/server/foundation.lua'),
+    source('resources/synex_entities/server/bucket_service.lua'),
+    source('resources/synex_entities/server/entity_service.lua'),
+    source('resources/synex_entities/server/runtime.lua'),
+    source('resources/synex_entities/server/service.lua'),
+    source('resources/synex_control/server/server.lua'),
+  ]);
+
+  for (const helper of [accountsFoundation, groupsFoundation, entityFoundation, control]) {
+    assert.match(helper, /valueType == 'function'/u);
+    assert.match(helper, /valueType ~= 'table' and valueType ~= 'userdata'/u);
+    assert.match(helper, /pcall\(debug\.getmetatable, value\)/u);
+    assert.match(helper, /type\(rawget\(metatable, '__call'\)\) == 'function'/u);
+    assert.doesNotMatch(helper, /__cfx_functionReference/u);
+  }
+
+  assert.match(accountsMain, /Foundation\.isCallable\(api\.Runtime\.getRetentionPolicy\)/u);
+  assert.match(accountsMain, /Foundation\.isCallable\(api\.Ids\.next\)/u);
+  assert.match(accountsMain, /Foundation\.isCallable\(api\.Events\.publishOutbox\)/u);
+  assert.match(accountsMain, /Foundation\.isCallable\(api\.Scheduler\.every\)/u);
+  assert.match(groupsMain, /Foundation\.isCallable\(api\.Ids\.next\)/u);
+  assert.match(groupsMain, /Foundation\.isCallable\(api\.Events\.publishOutbox\)/u);
+  assert.match(groupsMain, /Foundation\.isCallable\(api\.Scheduler\.every\)/u);
+  assert.match(entityBuckets, /foundation\.isCallable\(api\.Ids\.next\)/u);
+  assert.match(entityOperations, /foundation\.isCallable\(api\.Ids\.next\)/u);
+  for (const method of [
+    'api.Services.provide',
+    'api.RPC.registerServer',
+    'api.Characters.registerLifecycleParticipant',
+    'api.Scheduler.every',
+  ]) {
+    assert.ok(entityRuntime.includes(`foundation.isCallable(${method})`));
+  }
+  assert.match(entityService, /foundation\.isCallable\(api\.Audit\.append\)/u);
+  assert.equal((control.match(/if not isCallable\(handler\)/gu) ?? []).length, 2);
+});
+
 test('control plane has every read-only section with ACE, masking, and payload bounds', async () => {
   const [server, limits, client] = await Promise.all([
     source('resources/synex_control/server/server.lua'),

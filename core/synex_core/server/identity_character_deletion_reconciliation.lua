@@ -410,7 +410,7 @@ factories.identityCharacterDeletionReconciliation = function(deps)
                 fenced, fenceError = fence()
                 if not fenced then release() return nil, fenceError end
                 local participant = findParticipant(action)
-                if not participant or type(participant.deleteCommit) ~= 'function' then
+                if not participant or not foundation.isCallable(participant.deleteCommit) then
                     release()
                     return nil, foundation.error('DELETE_PARTICIPANT_UNAVAILABLE',
                         'A character deletion participant is unavailable.', {

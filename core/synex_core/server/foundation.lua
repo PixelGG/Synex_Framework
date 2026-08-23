@@ -68,6 +68,21 @@ factories.foundation = function(deps)
         return false, first
     end
 
+    -- Cfx serializes cross-resource functions as callable table/userdata proxies.
+    local function isCallable(value)
+        local valueType = type(value)
+        if valueType == 'function' then return true end
+        if valueType ~= 'table' and valueType ~= 'userdata' then return false end
+        local metatable = getmetatable(value)
+        if type(metatable) ~= 'table'
+            and type(debug) == 'table' and type(debug.getmetatable) == 'function' then
+            local readable, rawMetatable = safeCall(debug.getmetatable, value)
+            if readable then metatable = rawMetatable end
+        end
+        return type(metatable) == 'table'
+            and type(rawget(metatable, '__call')) == 'function'
+    end
+
     local gameTimerModulo = 0x100000000
     local gameTimerHalfRange = 0x80000000
     local previousGameTimer = nil
@@ -264,7 +279,7 @@ factories.foundation = function(deps)
         return executionContexts[executionKey()]
     end
     local function withContext(context, handler, ...)
-        if type(handler) ~= 'function' then error('execution context handler must be a function', 2) end
+        if not isCallable(handler) then error('execution context handler must be callable', 2) end
         local key = executionKey()
         local previous = executionContexts[key]
         executionContexts[key] = type(context) == 'table' and deepCopy(context) or {}
@@ -433,6 +448,7 @@ factories.foundation = function(deps)
         error = errorResult,
         failureCode = failureCode,
         safeCall = safeCall,
+        isCallable = isCallable,
         nextId = deps.nextId or nextId,
         configureIds = configureIds,
         monotonicMs = deps.monotonicMs or monotonicMs,

@@ -166,7 +166,7 @@ factories.reliability = function(deps)
             or not operation:match('^[a-z][a-z0-9_.%-]*$')
             or operation:match('[._%-]$') or operation:match('[._%-][._%-]')
             or type(key) ~= 'string' or #key < 8 or #key > 36
-            or not key:match('^[A-Za-z0-9_.:%-]+$') or type(handler) ~= 'function' then
+            or not key:match('^[A-Za-z0-9_.:%-]+$') or not foundation.isCallable(handler) then
             return nil, foundation.error('INVALID_IDEMPOTENCY_INPUT', 'Operation, key, and handler are invalid.')
         end
         local namespace = owner .. ':' .. operation

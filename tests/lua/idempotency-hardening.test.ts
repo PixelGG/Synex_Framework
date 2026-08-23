@@ -142,8 +142,11 @@ test('generic idempotency never reclaims an expired or indeterminate execution',
       })
 
       local nestedError = nil
-      local first = assert(reliability.idempotency:run(
-        'synex_fixture', 'slow', '11111111-1111-4111-8111-111111111111', {}, function()
+      local firstHandlerCalls = 0
+      local firstHandler = setmetatable({ __cfx_functionReference = 'fixture-idempotency-handler' }, {
+        __metatable = 'protected-cfx-funcref',
+        __call = function()
+          firstHandlerCalls = firstHandlerCalls + 1
           effects = effects + 1
           lockExpired = true
           local _, err = reliability.idempotency:run(
@@ -153,8 +156,12 @@ test('generic idempotency never reclaims an expired or indeterminate execution',
             end)
           nestedError = err
           return { ok = true }
-        end))
-      assert(first.ok and effects == 1 and nestedError.code == 'IDEMPOTENCY_INDETERMINATE')
+        end
+      })
+      local first = assert(reliability.idempotency:run(
+        'synex_fixture', 'slow', '11111111-1111-4111-8111-111111111111', {}, firstHandler))
+      assert(first.ok and effects == 1 and firstHandlerCalls == 1
+        and nestedError.code == 'IDEMPOTENCY_INDETERMINATE')
       local replay, _, replayMeta = reliability.idempotency:run(
         'synex_fixture', 'slow', '11111111-1111-4111-8111-111111111111', {}, function()
           effects = effects + 100

@@ -3,6 +3,19 @@ local Client = {}
 local MAX_PENDING = 32
 local TIMEOUT_MS = 10000
 
+local function isCallable(value)
+    if type(value) == 'function' then return true end
+    local valueType = type(value)
+    if valueType ~= 'table' and valueType ~= 'userdata' then return false end
+    local metatable = getmetatable(value)
+    if type(metatable) ~= 'table'
+        and type(debug) == 'table' and type(debug.getmetatable) == 'function' then
+        local readable, rawMetatable = pcall(debug.getmetatable, value)
+        if readable then metatable = rawMetatable end
+    end
+    return type(metatable) == 'table' and type(rawget(metatable, '__call')) == 'function'
+end
+
 function Client.create(options)
     assert(type(options) == 'table', 'native bridge client options are required')
     local requestEvent = assert(options.requestEvent, 'requestEvent is required')
@@ -22,17 +35,19 @@ function Client.create(options)
 
     local client = {}
     function client:triggerCallback(name, callback, ...)
-        if type(name) ~= 'string' or #name < 1 or #name > 96 or type(callback) ~= 'function'
+        if type(name) ~= 'string' or #name < 1 or #name > 96 or not isCallable(callback)
             or pendingCount >= MAX_PENDING then return false end
         sequence = (sequence + 1) & 0xffffffff
         local requestId = ('%08x_%08x'):format(GetGameTimer() & 0xffffffff, sequence)
         local arguments = table.pack(...)
         pending[requestId] = function(ok, payload)
+            if not isCallable(callback) then return false end
             if ok and type(payload) == 'table' then
-                callback(table.unpack(payload, 1, payload.n or #payload))
-            else
-                callback(nil, payload)
+                return pcall(function()
+                    callback(table.unpack(payload, 1, payload.n or #payload))
+                end)
             end
+            return pcall(function() callback(nil, payload) end)
         end
         pendingCount = pendingCount + 1
         SetTimeout(TIMEOUT_MS, function()
