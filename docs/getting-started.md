@@ -5,7 +5,7 @@ Synex `0.1.0` is an experimental source release, not a packaged drag-and-drop se
 ## Requirements
 
 - a current Cfx.re FXServer artifact with the `cerulean` resource manifest format;
-- MariaDB or MySQL configured for oxmysql;
+- MariaDB 11.8 or MySQL 8.4 configured for oxmysql;
 - `oxmysql` `2.14.1` or newer for Core; the current `synex_entities` manifest additionally requires a version below `3.0.0`;
 - an oxmysql database session configured and verified to use UTC;
 - OneSync in `on` mode when `synex_entities` is enabled;
@@ -15,9 +15,11 @@ Node.js is a repository-development dependency. The Lua resources do not install
 
 ## Validate the source tree
 
-From the repository root:
+For a fresh checkout:
 
 ```bash
+git clone https://github.com/PixelGG/Synex_Framework.git
+cd Synex_Framework
 npm ci
 npm run check
 npm test
@@ -97,6 +99,7 @@ At Core boot, Synex applies its supported ConVar overrides and validates `config
 The implemented restricted, console-only read commands are:
 
 ```text
+synex overview
 synex status
 synex doctor
 synex resources
@@ -109,7 +112,7 @@ synex entities
 synex access <userId> [limit]
 ```
 
-`synex status` prints the Core lifecycle snapshot. `synex doctor` checks database connectivity and UTC session semantics, incomplete or failed migration attempts, the oxmysql version, service dependency declarations, generated contract registration, and lifecycle state. `synex_status` and `synex_doctor` remain compatibility aliases. Every command is registered as restricted and also rejects player execution explicitly. Access mutation commands and exact argument rules are documented under [Operations](operations.md).
+`synex overview` prints the compact human-readable boot, database, resource, session, worker, cluster, and migration summary. `synex status` prints the structured Core lifecycle snapshot. `synex doctor` checks database connectivity and UTC session semantics, incomplete or failed migration attempts, the oxmysql version, service dependency declarations, generated contract registration, and lifecycle state. `synex_status` and `synex_doctor` remain compatibility aliases. Every command is registered as restricted and also rejects player execution explicitly. Access mutation commands and exact argument rules are documented under [Operations](operations.md).
 
 ## First resource
 
@@ -118,7 +121,7 @@ Study [`examples/synex_example`](../examples/synex_example/) and then follow [Cr
 ## Current platform limits
 
 - There is no packaged release installer or automatic updater.
-- Repository tests do not launch FXServer and do not replace server-specific integration testing.
+- Repository tests do not launch FXServer. Core runtime commit `510053e` passed a manual server-only FXServer/MariaDB acceptance on 2026-08-24, including persisted Saga execution and restart recovery, but the real FiveM client join/disconnect/reconnect sequence remains pending. See [Testing](testing.md#current-acceptance-baseline).
 - Public contracts are marked `experimental`.
 - `synex_control` is an in-game, read-only NUI; no remote HTTP control API is implemented.
 - The planned phone, inventory, banking UI, jobs, shops, vehicle, garage, radio, character-resource, identity-resource, and shared UI directories are not implemented gameplay resources.

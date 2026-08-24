@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./.github/assets/branding/synex-mark.svg" width="88" height="88" alt="Synex mark">
+  <img src="./.github/assets/branding/synex-mark.svg" width="96" height="96" alt="Synex mark">
 </p>
 
 <h1 align="center">Synex</h1>
@@ -26,8 +26,7 @@
 </p>
 
 <p align="center">
-  <a href="#why-synex">Why Synex</a> &middot;
-  <a href="#implemented-foundation">Foundation</a> &middot;
+  <a href="#current-verification">Verification</a> &middot;
   <a href="#architecture">Architecture</a> &middot;
   <a href="#getting-started">Getting started</a> &middot;
   <a href="./docs/README.md">Documentation</a> &middot;
@@ -36,23 +35,29 @@
 
 <p align="center">
   <img alt="Target: FiveM" src="https://img.shields.io/badge/target-FiveM-5ed7ff?style=flat-square&amp;labelColor=111827">
-  <img alt="Release: 0.1.0 experimental" src="https://img.shields.io/badge/release-0.1.0%20experimental-8b73ff?style=flat-square&amp;labelColor=111827">
-  <img alt="API: 1.0.0 experimental" src="https://img.shields.io/badge/API-1.0.0%20experimental-45c9a5?style=flat-square&amp;labelColor=111827">
+  <img alt="Version: 0.1.0" src="https://img.shields.io/badge/version-0.1.0-4b94ff?style=flat-square&amp;labelColor=111827">
+  <img alt="Maturity: experimental" src="https://img.shields.io/badge/maturity-experimental-8b73ff?style=flat-square&amp;labelColor=111827">
+  <a href="https://github.com/PixelGG/Synex_Framework/actions/workflows/framework-ci.yml?query=branch%3Amain"><img alt="Framework CI" src="https://github.com/PixelGG/Synex_Framework/actions/workflows/framework-ci.yml/badge.svg?branch=main"></a>
   <a href="./LICENSE"><img alt="License: AGPL-3.0-only" src="https://img.shields.io/badge/license-AGPL--3.0--only-45c9a5?style=flat-square&amp;labelColor=111827"></a>
 </p>
 
 <p align="center">
-  <a href="https://discord.gg/heJU5t2Hfa">
-    <img src="./.github/assets/readme/discord-community.svg" width="720" alt="Join the official Synex Discord">
-  </a>
-</p>
-
-<p align="center">
-  <img src="./.github/assets/readme/hero.webp" width="1200" alt="Abstract Synex modular network artwork">
+  <img src="./.github/assets/readme/runtime-flow.svg" width="1200" alt="Synex modular runtime flow">
 </p>
 
 > [!CAUTION]
 > **Experimental source release.** Synex `0.1.0` contains runnable foundation resources, generated contracts, migrations, tests, and tooling. Its public contracts are still marked `experimental`; the repository has no stable release, packaged installer, or production-support claim.
+
+## Current verification
+
+The Core runtime at `510053e` completed its server-side acceptance path on 2026-08-24. This is evidence for that tested runtime, not a stable-release or production-readiness claim.
+
+- **PASS — Repository checks.** Generation, validation, headless suites, static security analysis, and dependency audit.
+- **PASS — Live database.** MariaDB 11.8 baseline and all 25 Core migrations.
+- **PASS — Server-only FXServer.** `READY`, caller-bound APIs, persisted Saga execution, probe restart, prepared Core restart, and next-boot recovery.
+- **PENDING — Real FiveM client lifecycle.** Join, disconnect, reconnect, and live player/session/lease cleanup still require a real client.
+
+[Review the exact coverage and remaining client sequence](./docs/testing.md)
 
 ## Why Synex
 
@@ -65,17 +70,19 @@
 
 ## Implemented foundation
 
-| Layer | Resource or package | Verified responsibility | Maturity |
-| --- | --- | --- | --- |
-| Kernel | [`synex_core`](./core/synex_core/) | Boot/session/character lifecycle, contracts, RPC, events, hooks, services, capabilities, persistent RBAC/access policy, state, reliability, audit, metrics, health | Experimental |
-| Groups | [`synex_groups`](./resources/synex_groups/) | Durable groups, grades, grade capability rules, primary selection, and versioned memberships | Experimental |
-| Accounts | [`synex_accounts`](./resources/synex_accounts/) | Currencies, double-entry accounts, holds, access roles, reversals, and integrity read models | Experimental |
-| Entities | [`synex_entities`](./resources/synex_entities/) | Server-authoritative entity identity, persistent resolution, routing buckets, Net ID generation checks | Experimental |
-| Operations | [`synex_control`](./resources/synex_control/) | Read-only in-game operational NUI with bounded Core/domain views, exact audit search, and transparent closed state | Experimental |
-| Contracts | [`packages/contracts`](./packages/contracts/) | Canonical discovery and deterministic generated runtime/docs artifacts | Experimental |
-| SDKs | [`packages/sdk-lua`](./packages/sdk-lua/) / [`packages/sdk-ts`](./packages/sdk-ts/) | Generated contract clients and types; TypeScript transport is host-provided | Experimental |
-| Tooling | [`tools/cli`](./tools/cli/) | Validate, inspect, generate, create, doctor, permissions, scan, certify, benchmark, compatibility, upgrade checks | Experimental |
-| Compatibility | [`synex_bridge`](./libraries/synex_bridge/) | Optional native QB/QBX/ESX transition shims plus review-gated legacy data import | Experimental / deprecated path |
+| Layer | Resource or package | Verified responsibility |
+| --- | --- | --- |
+| Kernel | [`synex_core`](./core/synex_core/) | Boot/session/character lifecycle, contracts, RPC, events, hooks, services, capabilities, persistent RBAC/access policy, state, reliability, audit, metrics, health |
+| Groups | [`synex_groups`](./resources/synex_groups/) | Durable groups, grades, grade capability rules, primary selection, and versioned memberships |
+| Accounts | [`synex_accounts`](./resources/synex_accounts/) | Currencies, double-entry accounts, holds, access roles, reversals, and integrity read models |
+| Entities | [`synex_entities`](./resources/synex_entities/) | Server-authoritative entity identity, persistent resolution, routing buckets, Net ID generation checks |
+| Operations | [`synex_control`](./resources/synex_control/) | Read-only in-game operational NUI with bounded Core/domain views, exact audit search, and transparent closed state |
+| Contracts | [`packages/contracts`](./packages/contracts/) | Canonical discovery and deterministic generated runtime/docs artifacts |
+| SDKs | [`packages/sdk-lua`](./packages/sdk-lua/) / [`packages/sdk-ts`](./packages/sdk-ts/) | Generated contract clients and types; TypeScript transport is host-provided |
+| Tooling | [`tools/cli`](./tools/cli/) | Validate, inspect, generate, create, doctor, permissions, scan, certify, benchmark, compatibility, upgrade checks |
+| Compatibility | [`synex_bridge`](./libraries/synex_bridge/) | Optional native QB/QBX/ESX transition shims plus review-gated legacy data import |
+
+Every implemented foundation above remains experimental. The compatibility path is additionally deprecated for greenfield development.
 
 The compatibility layer is intentionally narrow. It provides bounded callbacks and lifecycle projections plus cash/bank mutations as balanced Synex transfers. It does not expose mutable player objects, direct SQL, offline lookup, inventory, arbitrary currencies, or job/group authorization mutations.
 
@@ -116,9 +123,11 @@ The core separates users, sessions, characters, ephemeral player sources, and so
 
 ## Getting started
 
-Requirements: a current FXServer artifact, MariaDB/MySQL through `oxmysql >= 2.14.1` (and `< 3.0.0` when `synex_entities` is enabled), a stable `synex_instance_id` in strict production, and OneSync `on` for `synex_entities`. Node.js is required for repository generation and tests, not for the Lua runtime.
+Requirements: a current FXServer artifact, MariaDB 11.8 or MySQL 8.4 through `oxmysql >= 2.14.1` (and `< 3.0.0` when `synex_entities` is enabled), a stable `synex_instance_id` in strict production, and OneSync `on` for `synex_entities`. Node.js is required for repository generation and tests, not for the Lua runtime.
 
 ```bash
+git clone https://github.com/PixelGG/Synex_Framework.git
+cd Synex_Framework
 npm ci
 npm run check
 npm test
@@ -150,7 +159,7 @@ Calls return `value, nil` or `nil, error`. The stable error shape contains `code
 ## Technology
 
 - Lua for FiveM runtime resources
-- SQL with MariaDB/MySQL through oxmysql
+- SQL with MariaDB 11.8 or MySQL 8.4 through oxmysql
 - TypeScript and Node.js for contracts, SDKs, CLI, analyzers, and tests
 - Vanilla HTML, CSS, and JavaScript for the read-only operational control NUI
 - JSON Schema for contract, resource-manifest, state, and configuration validation
@@ -170,6 +179,16 @@ There is no React/Vite application, external telemetry service, hosted control A
 - [Groups](./docs/reference/groups.md) and [accounts/ledger](./docs/reference/accounts.md)
 - [Compatibility and migration](./docs/compatibility/README.md)
 - [Discord notification automation](./docs/discord-notifications.md)
+
+## Community
+
+Development discussion, implementation feedback, and framework updates are available in the official Synex community.
+
+<p align="center">
+  <a href="https://discord.gg/heJU5t2Hfa">
+    <img src="./.github/assets/readme/discord-community.svg" width="720" alt="Join the official Synex Discord">
+  </a>
+</p>
 
 ## License
 

@@ -27,6 +27,20 @@ node tools/test-runner.mjs documentation
 
 The test runner fails if the selected compiled suite does not exist. This prevents a missing build or misspelled scope from appearing green.
 
+## Current acceptance baseline
+
+Core runtime commit `510053e` passed its server-side acceptance path on 2026-08-24. The manual FXServer result is recorded separately from CI because repository automation does not launch FXServer, and it does not close the remaining real-client gate.
+
+| Gate | Status | Current evidence |
+| --- | --- | --- |
+| Repository checks | **PASS** | Generation, TypeScript build, validation, headless suites, static security scan, and locked dependency audit |
+| Repository certification | **WARN** | Certification completes with unvendored oxmysql runtime-version warnings, capability review warnings, and 16 default-gated live-database skips; it is not a production guarantee |
+| Live MariaDB | **PASS** | MariaDB 11.8 baseline, 25/25 Core migrations, and the gated database suite |
+| Server-only FXServer | **PASS** | Core reached exactly `READY`; caller-bound APIs, Cfx callables, persisted Saga execution, probe restart, prepared Core restart, and next-boot recovery completed |
+| Real FiveM client lifecycle | **PENDING** | Join, disconnect, reconnect, aborted-deferral cleanup, repeated cycles, active-player restart, and two-instance handoff still require a real client |
+
+This matrix is an acceptance snapshot for the named runtime commit. It is not a stable-release, production-load, external-framework, or deployment-certification claim.
+
 ## Framework CI
 
 [`framework-ci.yml`](../.github/workflows/framework-ci.yml) runs with read-only repository permissions, fully pinned official checkout/setup actions, Node.js 24, and `npm ci`. Its quality job verifies generated consistency, compiles TypeScript, validates manifests and schemas, executes every non-database test scope, runs compatibility and security analysis, certifies the repository, and audits the locked npm graph. Pull requests use the ordinary `pull_request` event; the workflow does not reference repository secrets or execute through `pull_request_target`.
@@ -37,7 +51,7 @@ After the quality job passes, a separate job starts an isolated MariaDB service,
 
 | Suite | Verified behavior |
 | --- | --- |
-| `lua` | SHA-256, migration lease expiry during an in-flight statement with single execution and owner/token marker fencing, persisted source-generation seeding/exhaustion, boot-fenced session leases/inserts/status/cleanup, acquisition-unique runtime worker owners, failed-boot runtime-gate closure and owner/scheduler purge, cluster same-name duplicate handling, global/fixed-kind lease denial, existing-name cap bypass, unknown-name classification, drift/rollback protection and counter-releasing terminal compaction, synchronous connection quiesce, restart-fenced remote controls, session-control exact/foreign replay at quota, global/requester denial, drift/overflow fail-closed behavior, atomic reservation rollback and fair exact terminal compaction, failed-cleanup admission closure, atomic local session-authority cleanup, instance heartbeat status preservation and transient status-write recovery, single-pass queue arbitration with O(1) waiter state, immutable staff priority, reserved-slot skipping, grant timeout and quiesce races, maintenance gating, persistent RBAC, local and cross-instance character activation exclusion, both select/delete commit orders, source-generation and boot/lease swaps across character yields, required-participant compensation, fail-closed partial unload, soft-deleted slot reuse, character-deletion and unload-persistence reconciliation, non-destructive retention batches, owner cleanup/restarts, schema fuzzing, state authority, bounded pending diagnostics, dynamic admission/resource-health parity, operator commands, scheduler health, disconnect cleanup, and durable saga retry/deadline/compensation |
+| `lua` | SHA-256, Cfx JSON containers with decoder-created metatables across persisted Saga redispatch, migration lease expiry during an in-flight statement with single execution and owner/token marker fencing, persisted source-generation seeding/exhaustion, boot-fenced session leases/inserts/status/cleanup, acquisition-unique runtime worker owners, failed-boot runtime-gate closure and owner/scheduler purge, cluster same-name duplicate handling, global/fixed-kind lease denial, existing-name cap bypass, unknown-name classification, drift/rollback protection and counter-releasing terminal compaction, synchronous connection quiesce, restart-fenced remote controls, session-control exact/foreign replay at quota, global/requester denial, drift/overflow fail-closed behavior, atomic reservation rollback and fair exact terminal compaction, failed-cleanup admission closure, atomic local session-authority cleanup, instance heartbeat status preservation and transient status-write recovery, single-pass queue arbitration with O(1) waiter state, immutable staff priority, reserved-slot skipping, grant timeout and quiesce races, maintenance gating, persistent RBAC, local and cross-instance character activation exclusion, both select/delete commit orders, source-generation and boot/lease swaps across character yields, required-participant compensation, fail-closed partial unload, soft-deleted slot reuse, character-deletion and unload-persistence reconciliation, non-destructive retention batches, owner cleanup/restarts, schema fuzzing, state authority, bounded pending diagnostics, dynamic admission/resource-health parity, operator commands, scheduler health, disconnect cleanup, and durable saga retry/deadline/compensation |
 | `core` | bounded owner quiesce/drain, pending-operation abort, reconstructable state handoff, malformed/replayed snapshot rejection, and repeated same-core restarts |
 | `stress` | 1,000 sequential session/index lifecycles through the production registry and 100,000 deterministic transfer commands through the real accounts validation path against an in-memory double-entry model, including nonnegative-total and idempotent-replay properties |
 | `tooling` | deterministic multi-target generation, drift/version metadata, graph and unused-declaration analysis, diagnostics redaction, scaffolding, upgrade/certification artifacts, reload plans/adapters, executable fuzzing, benchmark labeling, and AST security findings |
@@ -67,7 +81,7 @@ GitHub Actions supplies an isolated MariaDB service and enables this gate. A nor
 
 The stress suite is a deterministic, sequential Wasmoon model. It does not run FXServer, OneSync/network scheduling, concurrent Lua threads, or the SQL ledger path, and its operation counts are not benchmark results.
 
-The repository currently does not start FXServer in CI. There is no end-to-end Cfx client/server test, external-framework integration environment, browser automation run, production load test, or database-failure chaos environment. Run those checks against the exact deployment before release.
+The repository currently does not start FXServer in CI. A disposable server-only Core acceptance has been completed manually for the named runtime commit, but there is no automated end-to-end Cfx client/server test, external-framework integration environment, browser automation run, production load test, or database-failure chaos environment. Run those checks against the exact deployment before release.
 
 ## Disposable Core live-test bundle
 
@@ -96,6 +110,9 @@ If the probe persists restart evidence with resource KVP, all direct KVP access 
 Owner epochs are process-local. Assert only that the new owner epoch is greater after restarting `synex_core_probe` while the same Core process remains running. Never compare the numeric epoch across a `synex_core` or FXServer restart; those stages must instead verify stale-facade rejection, a fresh `GetAPI()` facade, and boot/session recovery. Reuse the generated instance ID only for the related multi-boot recovery scenario, after the owner-epoch helper has confirmed cleanup; create a new bundle for an unrelated acceptance run.
 
 ## FXServer join acceptance
+
+> [!IMPORTANT]
+> **Current status: pending.** Server-only acceptance is complete, but the sequence below still requires a real FiveM client and must not be inferred from `READY`, database, Saga, or restart results.
 
 Treat a join fix as live-verified only after the exact deployment has passed this sequence with a real FiveM client:
 

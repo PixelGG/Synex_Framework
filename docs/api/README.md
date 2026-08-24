@@ -129,13 +129,21 @@ Identity, messaging, and state remain facade/contract surfaces in `0.1.0`; manif
 
 ## Operator command surface
 
-The restricted, console-only `synex` command exposes typed read operations for `status`, `doctor`, `resources`, `sessions`, `permissions`, `migrations`, `ledger`, and `entities`. Exact audit lookup uses:
+The restricted, console-only `synex` command exposes `overview`, typed read operations for `status`, `doctor`, `resources`, `sessions`, `permissions`, `migrations`, `ledger`, and `entities`, plus the explicit restart and access surfaces documented below. Exact audit lookup uses:
 
 ```text
 synex trace <trace|character|transaction|resource> <value> [limit]
 ```
 
-The optional limit is `1..64`; output is structured JSON. `synex_status` and `synex_doctor` remain restricted compatibility aliases. The `ledger` and `entities` commands call their read-only service summaries and return a bounded service error when that optional provider is unavailable.
+The optional limit is `1..64`; output is structured JSON. `synex overview` is the bounded human-readable summary for initial runtime verification. `synex_status` and `synex_doctor` remain restricted compatibility aliases. The `ledger` and `entities` commands call their read-only service summaries and return a bounded service error when that optional provider is unavailable.
+
+Prepared Core restarts use the one-way command below while Core is still running:
+
+```text
+synex prepare-restart
+```
+
+Only execute the returned `restart synex_core` command after the result reports `state = "prepared"`. A failed preparation leaves admission fail-closed; see [Operations](../operations.md#resource-restart-boundary-in-010).
 
 Durable access administration is intentionally separate and explicit:
 

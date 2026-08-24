@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 112" fill="none" role="img" aria-labelledby="title desc">
-  <title id="title">Official Synex Discord</title>
-  <desc id="desc">A link banner for the official Synex framework community on Discord.</desc>
+  <title id="title">Synex on Discord</title>
+  <desc id="desc">A language-neutral link banner for the official Synex community on Discord.</desc>
   <defs>
     <linearGradient id="panel" x1="18" y1="10" x2="700" y2="104" gradientUnits="userSpaceOnUse">
       <stop stop-color="#0A1220"/>
@@ -16,10 +16,6 @@
       <stop stop-color="#5ED7FF"/>
       <stop offset=".52" stop-color="#4B94FF"/>
       <stop offset="1" stop-color="#8B73FF"/>
-    </linearGradient>
-    <linearGradient id="button" x1="546" y1="34" x2="688" y2="80" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#5865F2"/>
-      <stop offset="1" stop-color="#745EF2"/>
     </linearGradient>
     <filter id="glow" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
       <feGaussianBlur stdDeviation="6"/>
@@ -42,11 +38,11 @@
 
   <path d="M116 22V90" stroke="#91A4C4" stroke-opacity=".18"/>
 
-  <text x="142" y="49" fill="#F5F8FF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="22" font-weight="700">Official Synex Discord</text>
-  <text x="142" y="73" fill="#A7B5CD" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13">Framework discussion · Development feedback · Community</text>
+  <text x="142" y="51" fill="#F5F8FF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="26" font-weight="700" letter-spacing="1.1">SYNEX / DISCORD</text>
+  <text x="142" y="78" fill="#A7B5CD" font-family="ui-monospace, SFMono-Regular, Consolas, monospace" font-size="20">discord.gg/heJU5t2Hfa</text>
 
-  <circle cx="517" cy="56" r="3" fill="#5ED7FF"/>
-  <path d="M520 56H538" stroke="#5ED7FF" stroke-opacity=".55"/>
-  <rect x="538" y="33" width="154" height="46" rx="10" fill="url(#button)"/>
-  <text x="615" y="61" fill="#FFFFFF" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" font-weight="700" letter-spacing=".6">JOIN DISCORD</text>
+  <path d="M516 56H646" stroke="url(#border)" stroke-width="2" stroke-dasharray="3 9"/>
+  <circle cx="516" cy="56" r="4" fill="#5ED7FF"/>
+  <circle cx="646" cy="56" r="27" fill="#5865F2" fill-opacity=".16" stroke="#7B78FF" stroke-opacity=".72"/>
+  <path d="M637 56H655M649 50L655 56L649 62" stroke="#F5F8FF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

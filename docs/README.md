@@ -2,6 +2,8 @@
 
 This documentation describes the code present in Synex `0.1.0`. The release is experimental: contracts, schemas, migrations, and operational behavior may change before a stable release. Passing repository tests does not by itself certify a production deployment.
 
+Core runtime commit `510053e` passed its server-only FXServer/MariaDB acceptance path on 2026-08-24. Real FiveM client join, disconnect, reconnect, and live cleanup acceptance remains pending; the maintained boundary is recorded under [Current acceptance baseline](testing.md#current-acceptance-baseline).
+
 ## Start here
 
 - [Getting started](getting-started.md) — prerequisites, source checks, resource placement, start order, and runtime verification

@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Synex modular runtime flow</title>
+  <desc id="desc">A restrained animated network showing independent nodes converging on the Synex runtime and continuing to owned resource domains.</desc>
+  <defs>
+    <linearGradient id="background" x1="56" y1="24" x2="1138" y2="338" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#07111F"/>
+      <stop offset=".54" stop-color="#0A1220"/>
+      <stop offset="1" stop-color="#111128"/>
+    </linearGradient>
+    <linearGradient id="route" x1="98" y1="68" x2="1098" y2="296" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5ED7FF"/>
+      <stop offset=".52" stop-color="#4B94FF"/>
+      <stop offset="1" stop-color="#8B73FF"/>
+    </linearGradient>
+    <radialGradient id="core-halo" cx="0" cy="0" r="1" gradientTransform="translate(600 180) rotate(90) scale(146 238)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4B94FF" stop-opacity=".19"/>
+      <stop offset="1" stop-color="#4B94FF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="mark" x1="564" y1="136" x2="636" y2="228" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5ED7FF"/>
+      <stop offset=".52" stop-color="#4B94FF"/>
+      <stop offset="1" stop-color="#8B73FF"/>
+    </linearGradient>
+    <pattern id="grid" width="36" height="36" patternUnits="userSpaceOnUse">
+      <path d="M36 0H0V36" stroke="#9CB2D5" stroke-opacity=".045"/>
+    </pattern>
+    <filter id="soft-glow" x="-80%" y="-80%" width="260%" height="260%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="8"/>
+    </filter>
+    <filter id="node-glow" x="-120%" y="-120%" width="340%" height="340%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="4"/>
+    </filter>
+    <style>
+      .route {
+        stroke-dasharray: 3 15;
+        animation: route-flow 13s linear infinite;
+      }
+      .route.reverse { animation-direction: reverse; }
+      .orbit { animation: orbit-flow 19s linear infinite; transform-origin: 600px 180px; }
+      .pulse { animation: pulse 4.8s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+      .pulse.delay-a { animation-delay: -1.2s; }
+      .pulse.delay-b { animation-delay: -2.4s; }
+      .pulse.delay-c { animation-delay: -3.6s; }
+      .mark-glow { opacity: .18; animation: mark-glow 4.8s ease-in-out infinite; }
+      @keyframes route-flow { to { stroke-dashoffset: -180; } }
+      @keyframes orbit-flow { to { transform: rotate(360deg); } }
+      @keyframes pulse {
+        0%, 100% { opacity: .42; transform: scale(.88); }
+        50% { opacity: 1; transform: scale(1.12); }
+      }
+      @keyframes mark-glow {
+        0%, 100% { opacity: .18; }
+        50% { opacity: .42; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .route, .orbit, .pulse, .mark-glow { animation: none; }
+      }
+    </style>
+  </defs>
+
+  <rect x="1" y="1" width="1198" height="358" rx="28" fill="url(#background)"/>
+  <rect x="1" y="1" width="1198" height="358" rx="28" fill="url(#grid)"/>
+  <rect x="1" y="1" width="1198" height="358" rx="28" stroke="url(#route)" stroke-opacity=".32" stroke-width="2"/>
+
+  <ellipse cx="600" cy="180" rx="238" ry="146" fill="url(#core-halo)"/>
+  <ellipse class="orbit" cx="600" cy="180" rx="176" ry="110" stroke="url(#route)" stroke-opacity=".2" stroke-dasharray="2 13"/>
+  <ellipse cx="600" cy="180" rx="122" ry="76" stroke="#8EA8D2" stroke-opacity=".09"/>
+
+  <g stroke="url(#route)" stroke-width="1.5" stroke-linecap="round">
+    <path class="route" d="M94 83C252 83 314 129 472 164"/>
+    <path class="route reverse" d="M94 180H470"/>
+    <path class="route" d="M94 277C252 277 314 231 472 196"/>
+    <path class="route reverse" d="M728 164C864 134 940 78 1106 78"/>
+    <path class="route" d="M730 180H1106"/>
+    <path class="route reverse" d="M728 196C864 226 940 282 1106 282"/>
+    <path class="route" d="M760 130C856 110 915 112 1014 128" stroke-opacity=".48"/>
+    <path class="route reverse" d="M760 230C856 250 915 248 1014 232" stroke-opacity=".48"/>
+  </g>
+
+  <g fill="#4B94FF" opacity=".24" filter="url(#soft-glow)">
+    <circle cx="600" cy="180" r="74"/>
+  </g>
+  <circle class="mark-glow" cx="600" cy="180" r="54" fill="#4B94FF" filter="url(#soft-glow)"/>
+  <rect x="523" y="103" width="154" height="154" rx="38" fill="#0B1424" fill-opacity=".92" stroke="url(#route)" stroke-opacity=".52"/>
+  <rect x="536" y="116" width="128" height="128" rx="30" stroke="#B7C9E6" stroke-opacity=".08"/>
+
+  <g transform="translate(552 132)">
+    <path d="M76 18H39C27.4 18 18 27.4 18 39s9.4 21 21 21h18c6.1 0 11 4.9 11 11s-4.9 11-11 11H20" stroke="url(#mark)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="70" y="12" width="12" height="12" rx="3" fill="#5ED7FF"/>
+    <rect x="14" y="76" width="12" height="12" rx="3" fill="#8B73FF"/>
+  </g>
+
+  <g>
+    <g transform="translate(94 83)">
+      <circle class="pulse" r="16" fill="#5ED7FF" fill-opacity=".08" stroke="#5ED7FF" stroke-opacity=".36"/>
+      <circle r="4" fill="#5ED7FF"/>
+    </g>
+    <g transform="translate(94 180)">
+      <circle class="pulse delay-b" r="16" fill="#5ED7FF" fill-opacity=".08" stroke="#5ED7FF" stroke-opacity=".36"/>
+      <circle r="4" fill="#5ED7FF"/>
+    </g>
+    <g transform="translate(94 277)">
+      <circle class="pulse delay-c" r="16" fill="#4B94FF" fill-opacity=".08" stroke="#4B94FF" stroke-opacity=".36"/>
+      <circle r="4" fill="#4B94FF"/>
+    </g>
+    <g transform="translate(1106 78)">
+      <circle class="pulse delay-a" r="16" fill="#8B73FF" fill-opacity=".08" stroke="#8B73FF" stroke-opacity=".36"/>
+      <circle r="4" fill="#8B73FF"/>
+    </g>
+    <g transform="translate(1106 180)">
+      <circle class="pulse delay-c" r="16" fill="#8B73FF" fill-opacity=".08" stroke="#8B73FF" stroke-opacity=".36"/>
+      <circle r="4" fill="#8B73FF"/>
+    </g>
+    <g transform="translate(1106 282)">
+      <circle class="pulse delay-b" r="16" fill="#8B73FF" fill-opacity=".08" stroke="#8B73FF" stroke-opacity=".36"/>
+      <circle r="4" fill="#8B73FF"/>
+    </g>
+    <g transform="translate(1014 128)">
+      <circle class="pulse delay-b" r="12" fill="#6C83FF" fill-opacity=".08" stroke="#6C83FF" stroke-opacity=".3"/>
+      <circle r="3" fill="#6C83FF"/>
+    </g>
+    <g transform="translate(1014 232)">
+      <circle class="pulse delay-a" r="12" fill="#7B78FF" fill-opacity=".08" stroke="#7B78FF" stroke-opacity=".3"/>
+      <circle r="3" fill="#7B78FF"/>
+    </g>
+  </g>
+
+  <g fill="#A7BAD9" fill-opacity=".22">
+    <circle cx="214" cy="118" r="2"/><circle cx="276" cy="254" r="2"/><circle cx="352" cy="92" r="2"/>
+    <circle cx="846" cy="267" r="2"/><circle cx="918" cy="88" r="2"/><circle cx="1035" cy="322" r="2"/>
+  </g>
+</svg>

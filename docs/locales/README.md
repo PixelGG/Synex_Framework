@@ -2,6 +2,7 @@
 
 English is the canonical README and the source of truth for every translation.
 The current landing pages describe Synex `0.1.0` as experimental and keep implemented foundation resources separate from scaffold-only ecosystem boundaries.
+They also keep the acceptance boundary from Core runtime commit `510053e` on 2026-08-24 synchronized: server-only verification has passed, while the real FiveM client lifecycle remains pending. Detailed evidence stays canonical in English under [Testing](../testing.md#current-acceptance-baseline).
 
 | Code | Language | README |
 | --- | --- | --- |
