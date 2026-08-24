@@ -1,11 +1,11 @@
 # Compatibility matrix
 
 > [!WARNING]
-> This matrix records the current bridge rework snapshots only. All bridges are unsupported and outside `synex_core` Production-Beta certification; a `Supported` cell below means implemented in the snapshot, not supported for a production deployment.
+> This matrix records the current bridge rework snapshots only. All bridges are unsupported and outside `synex_core` Production-Beta certification. An `Implemented in current snapshot` cell means only that the listed code path exists in this snapshot; it is not a production-support claim.
 
 Status meanings:
 
-- **Supported** — implemented and covered by repository tests within the stated snapshot boundary; not a current deployment-support claim.
+- **Implemented in current snapshot** — present and covered by repository tests within the stated snapshot boundary; not a current deployment-support claim.
 - **Partial** — only the listed subset is implemented; legacy semantics differ.
 - **Unsupported** — rejected or intentionally absent.
 - **Deprecated** — available only as a transition path; native Synex APIs are preferred.
@@ -17,7 +17,7 @@ All three bridge snapshots are currently **Deprecated / Partial**. They are clea
 | Surface | Mapping | Status |
 | --- | --- | --- |
 | Server Core Object | `GetCoreObject()` with `Functions.GetPlayer` and `Functions.CreateCallback` | Partial |
-| Server player lookup | Connected source with an active Synex character | Supported |
+| Server player lookup | Connected source with an active Synex character | Implemented in current snapshot |
 | Player data | Detached identity, `cash`/`bank`, first job, first gang, and Synex metadata projection | Partial |
 | Money | `GetMoney`, `AddMoney`, `RemoveMoney`, `SetMoney`; writes are balanced counterparty transfers | Partial |
 | Job / gang | First matching membership; duty and boss state are not inferred | Partial, read-only |
@@ -51,7 +51,7 @@ The export resource changes from `qbx_core` to `synex_bridge_qbx`.
 | Surface | Mapping | Status |
 | --- | --- | --- |
 | Shared object | `getSharedObject` export and local `esx:getSharedObject` handler | Partial |
-| Player lookup | `GetPlayerFromId` for a connected source with an active character | Supported |
+| Player lookup | `GetPlayerFromId` for a connected source with an active character | Implemented in current snapshot |
 | xPlayer | Detached identifier/name/job/account facade | Partial |
 | Accounts | `money`/`cash` and `bank` reads plus balanced add/remove/set operations | Partial |
 | Job | First Synex `job` membership; duty is not inferred | Partial, read-only |

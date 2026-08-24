@@ -50,11 +50,11 @@
 
 ## Current verification
 
-Development runs have already exercised repository checks, the 26-migration MariaDB chain, isolated FXServer boot, public Core APIs, recovery paths, and a real-client join/disconnect/reconnect sequence. That evidence does **not** certify a different revision. The final decision remains NO-GO until the complete gate is repeated and retained for one clean, immutable candidate.
+Predecessor `888a7326` passed the automated gate and the major server-side stages, including a fresh 26-migration boot, public-API probe, restart/crash recovery, database-outage fencing, backup/restore, and the retained `cd4b3cd5` 25-to-26 upgrade rehearsal. Its planned minimum 120-minute soak failed at the first hourly outbox-retention execution, before the minimum duration completed, so that candidate is rejected.
 
-- **VERIFIED DURING DEVELOPMENT.** Generation, validation, headless suites, static security analysis, dependency audit, live MariaDB regression tests, and earlier FXServer/client stages have passed.
-- **IMPLEMENTED; LIVE RETEST PENDING.** The runtime database-health circuit moves Core to recoverable `DEGRADED` with `operational = true` and player admission closed after a returned probe failure, adapter exception, or the fixed five-second fail-closed watchdog. It suspends ordinary database-backed workers while retaining bounded connection-heartbeat cleanup, and requires two successful probes plus reconciliation before work and admission resume. This behavior has focused headless and Cfx-like coroutine coverage but is not a live PASS until the exact candidate completes the outage/recovery gate.
-- **IN PROGRESS.** Fresh install, upgrade, backup/restore, restart/crash recovery, database outage/recovery, bounded load/soak, security review, documentation audit, and the complete real-client sequence must agree on the same exact revision.
+- **CURRENT RUNTIME TREE.** The fix introduced by `e0cbf45` accepts plain retention policies and trusted Cfx JSON object containers while rejecting arrays and foreign containers. It also adds exact connection-queue capacity coverage. Repository validation passes, but predecessor runtime evidence does not transfer to the post-documentation candidate.
+- **BOUNDED OUTAGE RECOVERY.** During the tested oxmysql lost-callback condition, Core keeps player admission closed. Automatic recovery is not claimed: after database service is restored, operators must restart the complete FXServer process before reopening admission.
+- **IN PROGRESS / NO-GO.** The clean post-documentation revision still needs the complete server gate, a fresh 120-minute soak, and its exact-candidate client lifecycle. This is not yet a production-stable beta.
 - **NOT CERTIFIED.** MySQL and multi-instance operation, including `kick_old`, are outside the first candidate profile.
 - **OUT OF SCOPE.** Every runtime resource, library, bridge, and example downstream of `synex_core` is an experimental rework snapshot or scaffold and is not part of Core certification.
 
@@ -95,7 +95,7 @@ The current certification target is deliberately narrow: **only `core/synex_core
 
 ### Downstream rework boundary
 
-`synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, every other directory under `resources/`, all libraries and bridges under `libraries/` (including `synex_bridge`), and the runnable examples are **experimental rework snapshots or scaffolds**. They are unsupported for the Core beta and must not be started, bundled, or advertised as certified components. OneSync-dependent downstream behavior is likewise outside this Core-only profile.
+`synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, every later or otherwise separate directory under `resources/`, all libraries and bridges under `libraries/` (including `synex_bridge`), and the runnable examples are **experimental rework snapshots or scaffolds**. They are entirely excluded from the Core beta and must not be started, bundled, or advertised as certified components. OneSync-dependent downstream behavior is likewise outside this Core-only profile.
 
 This also applies to the reserved gameplay names `synex_character`, `synex_identity`, `synex_inventory`, `synex_banking`, `synex_phone`, `synex_radio`, `synex_jobs`, `synex_shops`, `synex_vehicles`, `synex_garages`, and `synex_ui`. Directory presence does not imply a finished feature. Character and session behavior that exists in the current candidate belongs to `synex_core`.
 

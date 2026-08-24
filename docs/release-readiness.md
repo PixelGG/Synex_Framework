@@ -1,7 +1,25 @@
 # Core Production-Beta release readiness
 
 > [!IMPORTANT]
-> **Current decision: IN PROGRESS / NO-GO.** This page defines the gate; it does not claim that the gate has passed. A Production-Beta claim is valid only when every mandatory item below has evidence from the same exact candidate revision.
+> **Current decision: IN PROGRESS / NO-GO.** Predecessor `888a7326` failed its planned minimum 120-minute soak at the first hourly outbox-retention execution, before the minimum duration completed. The current runtime tree contains the fix introduced by `e0cbf45`, but a clean immutable post-documentation revision must repeat every applicable gate below. A Production-Beta claim is valid only when all mandatory evidence belongs to that same selected revision.
+
+## Current candidate evidence
+
+| Stage | Status | Boundary |
+| --- | --- | --- |
+| Repository/headless validation | **PASS ON CURRENT RUNTIME TREE** | `check`, 232 Lua tests, 413 repository tests with 19 gated live-database skips, static security, and diff checks pass for the runtime tree introduced by `e0cbf45` |
+| Exact automated Core evidence gate | **PENDING** | Bind a regenerated clean-checkout artifact to the selected post-documentation revision |
+| Fresh boot and public API/probe | **PENDING** | Predecessor evidence does not certify the selected revision |
+| Probe restart protocol | **PENDING** | Repeat both phases and confirm run-scoped KVP cleanup |
+| Restart and crash recovery | **PENDING** | Repeat prepared restart, unprepared recovery, full-process crash, and next-boot reconciliation |
+| Database outage | **PENDING** | Repeat fail-closed fencing and the documented full-process recovery after MariaDB restoration |
+| Backup and restore drill | **PENDING; RELEASE REVIEW PENDING** | Repeat encrypted recovery and parity; operator approval of RPO/RTO is still open |
+| Rehearsal 25-to-26 upgrade | **PENDING** | Repeat the retained baseline rehearsal on the selected revision |
+| Manual Core security/operations review | **PENDING** | Revalidate the exact final Core tree and repository metadata |
+| Minimum 120-minute server-only soak | **PENDING** | Start a new run; the predecessor soak failed and cannot transfer |
+| Real FiveM client join/disconnect/reconnect | **PENDING** | Must run against the selected revision; predecessor client evidence does not transfer |
+
+The checklist below remains the reusable release gate. Its checkboxes are not a second status ledger; the table above records the current candidate. The automated artifact keeps manual-stage fields at `NOT_RUN` by design even when separately retained runtime evidence records a PASS.
 
 ## Supported target
 
@@ -77,13 +95,18 @@ For the first public beta, the accepted pre-candidate revision becomes the upgra
 - [ ] Record operator-approved recovery-point and recovery-time objectives; Synex does not choose them automatically.
 - [ ] Prove that the backup can be decrypted/read by the recovery operator without putting credentials or plaintext dumps in Git.
 
+Predecessor `888a7326` completed the technical drill: the encrypted archive decrypted to the exact original SHA-256, the new isolated schema matched all 36 restored tables and their recorded row counts/metadata, and that predecessor reached `READY` with Doctor `PASS`. The measured 813 ms SQL import is only one component of recovery and is not an RTO. This historical evidence does not satisfy Gate 4 for the next selected revision; operator-approved RPO/RTO objectives also remain open.
+
+Migrations are forward-only. Backout never means running an older Core against the candidate schema or reversing migration `026` in place. Preserve the pre-upgrade schema or restore its verified backup into a separate database, stop the candidate, validate the older Core against only that compatible schema, and switch the operator-owned connection during a controlled maintenance window.
+
 ## Gate 5 — Isolated FXServer and public Core API
 
 - [ ] Prepare a clean disposable live-test bundle as documented in [Testing](testing.md); never grant probe capabilities in the production policy.
 - [ ] Start only the reviewed FXServer base resources, `oxmysql`, `synex_core`, and the isolated server-only probe.
 - [ ] Core reaches exactly `READY`; `synex overview`, `synex status`, `synex migrations`, `synex resources`, and `synex doctor` agree.
 - [ ] GetAPI, Cfx callables, contracts/RPC, services, events, hooks, scheduler, character lifecycle registration, connection gates, idempotency, and Saga registration/execution pass.
-- [ ] Stop the probe and confirm owner registrations, timers, pending callbacks, and run-scoped KVP evidence are cleaned.
+- [ ] Complete the two-phase probe restart protocol. First PASS reports `restartRequired = true` and deliberately retains the run-scoped KVP; restart only the probe in the same Core process, require an increased owner epoch, then require `restartRequired = false` and `kvpCleaned = true`. Every FAIL path must clean the exact run-scoped key.
+- [ ] Stop the probe and confirm owner registrations, timers, and pending callbacks are cleaned.
 
 ## Gate 6 — Real-client connection lifecycle
 
@@ -98,13 +121,16 @@ For the first public beta, the accepted pre-candidate revision becomes the upgra
 - [ ] `synex prepare-restart` passes while idle and while one player is active; only its returned restart command is used.
 - [ ] Prepared restart passes with one pending connection held by disposable database work. Preparation waits for tracked database activity to drain before owner teardown.
 - [ ] An unprepared full FXServer-process termination is recovered on the next boot: old local sessions/control authority are terminal, admission remains closed through recovery, and reconnect receives fresh authority.
-- [ ] With Core still running, stop only the disposable MariaDB process. Once the next runtime health probe starts, a returned failure or its five-second watchdog makes Core `DEGRADED` with `operational = true`, closes player admission, records only the redacted `database-runtime` reason, and visibly suspends ordinary database-backed scheduled workers; an already `UNHEALTHY` worker retains its prior failure. The deliberately exempt connection heartbeat remains active: an existing pending attempt is finalized once, its pending/admission reservation returns to zero, and authority that cannot be renewed fails closed. Let at least three failed probes complete and verify that no retry begins earlier than 5 seconds after the first completed failure, 10 seconds after the second, and the capped 15 seconds after subsequent failures; record normal scheduler delay separately. A deliberately stalled probe proves that the watchdog fences admission without claiming to cancel the driver promise. After MariaDB returns and the outstanding probe settles, one successful probe must not reopen admission; the second consecutive success plus dependency and instance-status reconciliation returns Core to `READY`, admission open, and the persisted instance to `ready` without leaked authority.
+- [ ] With Core still running, stop only the disposable MariaDB process. A returned failure or its five-second watchdog makes Core `DEGRADED` with `operational = true`, closes player admission, records only the redacted `database-runtime` reason, suspends ordinary database-backed workers, and preserves bounded fail-closed connection cleanup. A stalled oxmysql await is never reported as cancelled and must not cause replacement probes or abandoned coroutines to accumulate.
+- [ ] After MariaDB returns, recover through a full FXServer-process restart. The fresh process completes dependency and instance reconciliation, reaches Core `READY`, reopens admission, persists instance `ready`, restores healthy workers, and leaves no leaked session/admission authority. Same-process recovery after an unsettled driver promise is outside the initial supported profile.
 - [ ] The documented unsupported path—an isolated raw Core restart during blocked interactive oxmysql work—is not presented as a graceful restart. Recovery uses a full FXServer-process restart.
 - [ ] Repeated restart stages leave no stale facade, owner registration, timer, pending request, session, or local session/admission lease.
 
 ## Gate 8 — Capacity, load, and soak
 
 Define the intended beta server capacity before running this gate; the evidence must record the workload rather than use an unlabelled synthetic score.
+
+Predecessor `888a7326` failed this gate at the first hourly outbox-retention execution, before the planned minimum duration completed, when the worker reported `INVALID_OUTBOX_RETENTION`. The current runtime tree contains the fix introduced by `e0cbf45`; every item remains open until a new exact-revision run and final invariant review pass. The overall decision remains NO-GO.
 
 - [ ] Exercise configured connection, RPC, idempotency, worker-queue, session-control, and cluster-lease limits at the boundary and one request beyond it; overflow fails closed with stable codes.
 - [ ] Run a minimum two-hour isolated Core/MariaDB soak with repeated API/probe work and scheduled workers.

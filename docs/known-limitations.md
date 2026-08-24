@@ -7,7 +7,7 @@ These boundaries are part of the current `0.1.x` release decision. They must not
 - No production-stable Synex release exists yet. The `synex_core` Production-Beta gate is [in progress](release-readiness.md).
 - The beta target covers `synex_core` only. `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, compatibility bridges, examples, and every other downstream resource/library are experimental rework snapshots or scaffolds. They are unsupported for the Core beta and must not be started or advertised as production-ready components.
 - Public contracts are marked `experimental`; breaking API, schema, and migration changes remain possible before a stable release.
-- There is no packaged installer, automatic updater, supported rollback migration, or zero-downtime upgrade path. Deployments use reviewed resource copies and forward-only migrations.
+- There is no packaged installer, automatic updater, supported rollback migration, in-place downgrade, or zero-downtime upgrade path. Deployments use reviewed resource copies and forward-only migrations. Backout requires a separately preserved or restored schema compatible with the older Core; older code must never run against a schema already advanced to migration `026`.
 
 ## Candidate deployment profile
 
@@ -20,7 +20,8 @@ These boundaries are part of the current `0.1.x` release decision. They must not
 
 - Planned isolated Core restarts require `synex prepare-restart`. A raw Core restart cannot cancel an interactive oxmysql transaction whose callback is already blocked; use a complete FXServer-process restart for that incident path.
 - `database.queryWarnMs` is a slow-operation warning threshold, not a cancellation deadline. Core does not advertise a hard per-query cancellation timeout; operators must monitor database latency and investigate blocked work.
-- A returned runtime database-probe failure, adapter exception, or fixed five-second watchdog closes admission and suspends ordinary database-backed recurring workers. The watchdog does not cancel the oxmysql promise: if that probe never settles, Core remains fenced and cannot automatically begin its two-probe recovery, so the documented full FXServer-process incident recovery is required. The connection heartbeat is deliberately exempt and remains active for pending/session authority cleanup, so existing clients are not guaranteed to remain connected during a database outage; unrenewable authority fails closed.
+- A returned runtime database-probe failure or adapter exception closes admission and suspends ordinary database-backed recurring workers. Because that failure has completed, MariaDB restoration can be reconciled automatically after two consecutive successful probes plus dependency and instance-status reconciliation. The fixed five-second watchdog closes the same fence but cannot cancel an oxmysql `Await`.
+- oxmysql `2.14.1` can lose the Lua callback when pool `getConnection()` rejects. That timed-out probe never settles, so Core deliberately remains fail-closed and does not launch superseding probes. Restore and verify MariaDB, then perform one controlled restart of the complete FXServer process. A raw Core restart, an oxmysql-only restart, or any Core/FXServer restart loop is unsupported. The connection heartbeat remains active for bounded pending/session authority cleanup, so existing clients are not guaranteed to remain connected during an outage; unrenewable authority fails closed.
 - Retention defaults to `retain_forever`. Archive mode mirrors data but does not purge source audit or financial history, so it can increase storage use. Synex does not define an operator's legal retention policy.
 - Backup encryption, off-host copies, recovery-point objectives, recovery-time objectives, database privileges, firewalling, secrets, and disaster-recovery ownership remain operator responsibilities.
 - The repository provides no high-availability, region-failover, orchestration, hosted control plane, support SLA, or uptime guarantee.
@@ -32,3 +33,7 @@ These boundaries are part of the current `0.1.x` release decision. They must not
 - The committed archive/retention behavior is not a legal compliance program. Operators must establish lawful access, retention, erasure, disclosure, and incident-response processes for their jurisdiction.
 
 Use the [release-readiness gate](release-readiness.md) as the canonical decision source and the [backup/restore runbook](backup-and-restore.md) before any candidate deployment.
+
+## Current candidate evidence
+
+Predecessor `888a7326b88b9815983c132855a10f1fe8d6996a` passed outage fencing, controlled complete-process recovery after database restore, backup/restore, and the real `cd4b3cd5a1da9123359e7da8db9ca2a0ab1c4f9f` 25-to-26 migration rehearsal. Its planned minimum soak then failed at the first hourly outbox-retention execution before the minimum duration completed. The current runtime tree contains the trusted Cfx JSON-container fix introduced by `e0cbf45`, but the selected clean post-documentation revision still needs the complete exact server gate, fresh soak, and client acceptance. The current release decision is **NO-GO**.

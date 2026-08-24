@@ -2,9 +2,11 @@
 
 This documentation describes the code present in Synex `0.1.0`. The release is experimental: contracts, schemas, migrations, and operational behavior may change before a stable release. Passing repository tests does not by itself certify a production deployment.
 
-The Production-Beta effort applies to `synex_core` only. Every non-Core resource and library in the current tree is an experimental rework snapshot or scaffold and is unsupported for that beta profile; do not start or advertise those components as production-ready.
+The Production-Beta effort applies to `synex_core` only. `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, every later resource, and all non-Core libraries, bridges, integrations, and examples are experimental rework snapshots or scaffolds. They are entirely excluded from this beta profile; do not start or advertise them as certified components.
 
-The 2026-08-24 Core acceptance build passed its manual FXServer/MariaDB stages, including 26/26 Core migrations, real-client join/disconnect/reconnect, and the pending-database-work prepared-restart drain. The current tree adds restart-retry terminalization, stricter migration-026 verification, and a runtime database-health circuit that keeps diagnostics and bounded connection-heartbeat cleanup operational while admission is fail-closed and ordinary database-backed workers are suspended. The circuit has focused headless coverage, but the combined revision has not yet repeated the complete manual FXServer/client and database-outage/recovery sequence. Multi-instance and `kick_old` verification is a future, explicitly out-of-scope profile and does not block the single-instance Core beta; the maintained boundary is recorded under [Current acceptance baseline](testing.md#current-acceptance-baseline).
+Predecessor `888a7326` passed the automated gate and the major server-side stages, but its planned minimum 120-minute soak failed at the first hourly outbox-retention execution, before the minimum duration completed, and ended **FAIL / NO-GO**. The current runtime tree contains the trusted Cfx JSON-container fix introduced by `e0cbf45` and exact connection-queue capacity coverage. Repository validation passes; the clean post-documentation revision still needs the complete exact server gate, a fresh soak, and its client lifecycle. Acceptance is therefore **IN PROGRESS / NO-GO**, not a production-stable beta.
+
+The tested oxmysql lost-callback condition keeps player admission closed. The documentation does not claim automatic recovery from that condition: restore the database service, then restart the complete FXServer process before reopening admission. Multi-instance and `kick_old` verification remain an explicitly out-of-scope future profile. The maintained boundary is recorded under [Current acceptance baseline](testing.md#current-acceptance-baseline).
 
 ## Start here
 
@@ -37,7 +39,7 @@ The 2026-08-24 Core acceptance build passed its manual FXServer/MariaDB stages, 
 - [Generated contract catalog](../packages/contracts/generated/docs/contracts.md)
 - [Architecture decisions](architecture/decisions/README.md)
 
-## Foundation resources
+## Foundation rework references
 
 These non-Core implementations are development inputs for a planned full rework. They are not supported components of the Core Production-Beta profile.
 

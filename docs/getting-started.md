@@ -1,6 +1,6 @@
 # Getting started
 
-Synex `0.1.0` is an experimental source release, not a packaged drag-and-drop server distribution. The current Production-Beta candidate covers `synex_core` only. Every non-Core resource, library, bridge, SDK integration, and example is an experimental rework snapshot outside that certification boundary.
+Synex `0.1.0` is an experimental source release, not a packaged drag-and-drop server distribution. The current Production-Beta candidate covers `synex_core` only. `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, every later resource, and all non-Core libraries, bridges, SDK integrations, and examples are experimental rework snapshots or scaffolds entirely outside that certification boundary.
 
 This guide installs only the Core candidate. Do not add `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, compatibility bridges, or other downstream modules to a deployment that is intended to match the documented Core acceptance profile.
 
@@ -106,7 +106,9 @@ The current [`examples/synex_example`](../examples/synex_example/) and [resource
 ## Current platform limits
 
 - There is no packaged release installer or automatic updater.
-- Repository tests do not launch FXServer. The 2026-08-24 acceptance build passed manual FXServer/MariaDB stages, including 26/26 Core migrations, persisted Saga execution, restart recovery, real-client join/disconnect/reconnect, and a pending-database-work prepared restart. The current tree then added restart-retry terminalization, stricter migration-026 verification, and the runtime database-health circuit. The first two changes passed repository and live-database regression gates; the circuit has focused headless coverage, but the complete manual FXServer/client and database-outage/recovery sequence has not yet been repeated against the combined revision. The two-instance `kick_old` requester-restart scenario also remains untested. See [Testing](testing.md#current-acceptance-baseline).
+- Repository tests do not launch FXServer. Predecessor `888a7326` passed the automated gate and the major server stages, including the retained `cd4b3cd5` 25-to-26 rehearsal, but its planned minimum soak failed at the first hourly outbox-retention execution before the minimum duration completed. The current runtime tree contains the trusted Cfx JSON-container fix introduced by `e0cbf45`. See [Testing](testing.md#current-acceptance-baseline).
+- Repository validation passes on that runtime tree; the selected clean post-documentation revision still needs its complete exact server gate, fresh 120-minute soak, and client lifecycle. Acceptance therefore remains **IN PROGRESS / NO-GO**; this is not yet a production-stable beta.
+- A lost oxmysql callback does not imply automatic recovery. Admission remains closed; after restoring the database service, restart the complete FXServer process before reopening admission.
 - Public contracts and the consumer API surface remain `experimental` even when the Core runtime reaches Production-Beta acceptance.
 - MySQL, multi-instance operation, `kick_old`, `replace_old`, and `allow` are outside the initial acceptance target. Strict production configuration accepts only `deny_new`.
-- `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, all bridges and libraries, examples, and every downstream module are rework snapshots or scaffolds. None is included in Core Production-Beta certification.
+- `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, all later resources, bridges, libraries, integrations, and examples are rework snapshots or scaffolds. None is included in Core Production-Beta certification.

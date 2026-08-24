@@ -12,7 +12,8 @@ This page documents the Core security model and the architectural rules expected
 - `GetInvokingResource()` attributes server-side export calls but does not sandbox Lua resources.
 - ACE principals and Core RBAC subjects are separate authorization domains. The experimental group capability and account access-role snapshots are separate again; Core does not infer equivalence, and any future mapping must be explicit in a reviewed server-side integration.
 - Database operations use parameters. Dynamic identifiers must be selected from code-owned allowlists.
-- A returned runtime database-health failure, adapter exception, or five-second watchdog closes player admission and suspends ordinary database-backed recurring work without claiming driver-query cancellation. Bounded connection-heartbeat cleanup is deliberately exempt and remains active. Recovery requires two consecutive successful probes and successful lifecycle/instance reconciliation; independent health faults continue to block admission.
+- A returned runtime database-health failure or adapter exception closes player admission and suspends ordinary database-backed recurring work. Because the call completed, two consecutive successful probes plus lifecycle/instance reconciliation can recover it automatically; independent health faults continue to block admission.
+- The five-second watchdog is only a fail-closed fence and cannot cancel a Lua `Await`. If oxmysql `2.14.1` loses the callback for a rejected pool `getConnection()`, Core retains the outstanding probe, admission stays closed, and no superseding-probe or restart loop is started. After MariaDB is restored and independently verified, the safe incident boundary is one controlled restart of the complete FXServer process, not a raw Core or oxmysql-only restart.
 
 ## Capability classes
 
@@ -34,3 +35,11 @@ Timeouts are cooperative in Cfx Lua: late results are discarded, but a blocking 
 ## Sensitive data
 
 Secrets, raw identifiers, tokens, full request bodies, and financial metadata are redacted from routine logs and diagnostics. State bags contain only small, non-sensitive projections. Server-authoritative storage remains the source of truth.
+
+## Current acceptance status
+
+Predecessor `888a7326b88b9815983c132855a10f1fe8d6996a` has **PASS** evidence for database-outage fencing, controlled complete-process recovery after database restore, backup/restore, and the retained `cd4b3cd5a1da9123359e7da8db9ca2a0ab1c4f9f` 25-to-26 upgrade rehearsal.
+
+That exact Core tree also passed a manual static security and operations review with zero release blockers and zero confirmed Critical, High, Medium, or Low findings. The review covered the two client-to-server RPC handlers, caller-bound exports/facades, local Cfx events, contract/capability ownership, every Core persistence call shape, log redaction, resource/player/timer/deferral cleanup, dependency locks, SHA-pinned workflows, secrets, executable/malware indicators, and the absence of NUI or active client-callable contracts. This is not a claim that arbitrary future contracts, downstream resources, provider handlers, or alternate runtime versions are secure without their own review.
+
+That predecessor's planned minimum soak failed at the first hourly outbox-retention execution before the minimum duration completed. The current runtime tree contains the trusted Cfx JSON-container fix introduced by `e0cbf45` and has passed repository security analysis, but the selected clean post-documentation revision still needs its exact-tree manual review, server gate, fresh soak, and client gate. The aggregate release decision therefore remains **NO-GO**.
