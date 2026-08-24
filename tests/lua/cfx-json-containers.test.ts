@@ -90,6 +90,101 @@ test('platform stabilizes constructor-less Cfx decoder metadata across decode ca
   }
 });
 
+test('constructor-less Cfx JSON retention policy reaches outbox compaction and remains fail-closed', async () => {
+  const engine = await new LuaFactory().createEngine();
+  try {
+    await loadCore(engine);
+    const result = await engine.doString(`
+      json = {
+        decode = function(value, position, nullValue, objectMeta, arrayMeta)
+          assert(position == nil or position == 1)
+          assert(nullValue == nil)
+          objectMeta = objectMeta or { __jsontype = 'object' }
+          arrayMeta = arrayMeta or { __jsontype = 'array' }
+          if value == 'retention-array' then
+            return setmetatable({
+              publishedPayloadAfterDays = 30, deadPayloadAfterDays = 365
+            }, arrayMeta)
+          end
+          return setmetatable({
+            retention = setmetatable({
+              outbox = setmetatable({
+                publishedPayloadAfterDays = 30, deadPayloadAfterDays = 365
+              }, objectMeta)
+            }, objectMeta)
+          }, objectMeta)
+        end,
+        encode = function() return '{}' end
+      }
+      assert(json.object == nil and json.array == nil)
+
+      local rawFirst = json.decode('retention-config')
+      local rawSecond = json.decode('retention-config')
+      assert(not rawequal(debug.getmetatable(rawFirst), debug.getmetatable(rawSecond)))
+      assert(not rawequal(debug.getmetatable(rawFirst.retention.outbox),
+        debug.getmetatable(rawSecond.retention.outbox)))
+
+      local platform = SynexCoreFactories.platform({
+        nowGame = function() return 1000 end,
+        random = function() return 11 end,
+        print = function() end
+      })
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      foundation.configureIds('outbox-cfx-retention')
+      local updates = 0
+      local database = { update = function()
+        updates = updates + 1
+        return 0, nil
+      end }
+      local reliability = SynexCoreFactories.reliability({
+        platform = platform, foundation = foundation, database = database,
+        instanceId = 'outbox-cfx-retention', features = { durableEvents = true }
+      })
+
+      local decoded = platform.jsonDecode('retention-config')
+      local policy = decoded.retention.outbox
+      assert(platform.jsonContainerKind(policy) == 'object')
+      local compacted = assert(reliability.outbox:compactTerminal(25, policy))
+      assert(compacted.compacted == 0 and updates == 2)
+
+      local foreignPairs = 0
+      local foreign = setmetatable({
+        publishedPayloadAfterDays = 30, deadPayloadAfterDays = 365
+      }, {
+        __jsontype = 'object',
+        __pairs = function() foreignPairs = foreignPairs + 1 error('foreign pairs trap') end
+      })
+      local foreignResult, foreignError = reliability.outbox:compactTerminal(25, foreign)
+      assert(foreignResult == nil and foreignError.code == 'INVALID_OUTBOX_RETENTION')
+      assert(foreignPairs == 0 and updates == 2)
+
+      local arrayPolicy = platform.jsonDecode('retention-array')
+      assert(platform.jsonContainerKind(arrayPolicy) == 'array')
+      local arrayResult, arrayError = reliability.outbox:compactTerminal(25, arrayPolicy)
+      assert(arrayResult == nil and arrayError.code == 'INVALID_OUTBOX_RETENTION')
+
+      policy.unknown = true
+      local unknownResult, unknownError = reliability.outbox:compactTerminal(25, policy)
+      assert(unknownResult == nil and unknownError.code == 'INVALID_OUTBOX_RETENTION')
+      policy.unknown = nil
+      policy.publishedPayloadAfterDays = 0
+      local ageResult, ageError = reliability.outbox:compactTerminal(25, policy)
+      assert(ageResult == nil and ageError.code == 'INVALID_OUTBOX_RETENTION')
+      assert(updates == 2)
+
+      return table.concat({
+        platform.jsonContainerKind(policy), compacted.compacted,
+        foreignError.code, arrayError.code, unknownError.code, ageError.code, updates
+      }, ':')
+    `);
+    assert.equal(result,
+      'object:0:INVALID_OUTBOX_RETENTION:INVALID_OUTBOX_RETENTION:'
+        + 'INVALID_OUTBOX_RETENTION:INVALID_OUTBOX_RETENTION:2');
+  } finally {
+    engine.global.close();
+  }
+});
+
 test('Cfx JSON container identities survive trusted copies and reject metatable lookalikes', async () => {
   const engine = await new LuaFactory().createEngine();
   try {

@@ -618,11 +618,13 @@ factories.reliability = function(deps)
     function outbox:compactTerminal(maximum, policy)
         local enabled, featureError = requireFeature(features.durableEvents, 'durable events')
         if not enabled then return nil, featureError end
+        local policyKind = type(policy) == 'table'
+            and foundation.jsonContainerKind(policy) or nil
         if type(maximum) ~= 'number' or math.type(maximum) ~= 'integer'
             or maximum < 1 or maximum > 1000
-            or type(policy) ~= 'table' or getmetatable(policy) ~= nil then
+            or (policyKind ~= 'plain' and policyKind ~= 'object') then
             return nil, foundation.error('INVALID_OUTBOX_RETENTION',
-                'Outbox compaction requires a bounded batch and plain retention policy.')
+                'Outbox compaction requires a bounded batch and validated object retention policy.')
         end
         local allowedPolicy = { publishedPayloadAfterDays = true, deadPayloadAfterDays = true }
         for key in pairs(policy) do
