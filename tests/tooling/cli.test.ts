@@ -77,6 +77,7 @@ test("CLI exposes help and a real benchmark command", async () => {
 
   assert.equal(await runCli(["--help"], io), 0);
   assert.match(output.join("\n"), /contract generate/u);
+  assert.match(output.join("\n"), /live-test prepare --probe/u);
   output.length = 0;
 
   assert.equal(await runCli(["benchmark", "--iterations", "1", "--root", process.cwd()], io), 0);

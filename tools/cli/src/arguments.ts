@@ -7,7 +7,7 @@ export interface ParsedArguments {
 }
 
 const BOOLEAN_OPTIONS = new Set(["bundle", "check", "force", "help", "json"]);
-const VALUE_OPTIONS = new Set(["adapter", "against", "baseline", "iterations", "output", "path", "root", "timeout"]);
+const VALUE_OPTIONS = new Set(["adapter", "against", "baseline", "iterations", "output", "path", "probe", "root", "timeout"]);
 
 export function parseArguments(argumentsList: string[]): ParsedArguments {
   const positionals: string[] = [];

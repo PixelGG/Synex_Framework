@@ -69,6 +69,32 @@ The stress suite is a deterministic, sequential Wasmoon model. It does not run F
 
 The repository currently does not start FXServer in CI. There is no end-to-end Cfx client/server test, external-framework integration environment, browser automation run, production load test, or database-failure chaos environment. Run those checks against the exact deployment before release.
 
+## Disposable Core live-test bundle
+
+Privileged cross-resource acceptance probes must never be added to the production capability policy. Synex instead prepares a disposable copy of `synex_core` under the Git-ignored `.temp/live-test/` tree and adds exactly these grants to that copy only:
+
+- `synex.connections.gate`
+- `synex.sagas.read`
+- `synex.sagas.register`
+- `synex.sagas.write`
+
+Keep the probe in a directory named `synex_core_probe` outside the repository. In particular, do not leave it untracked under `tools/live-test/`: repository certification intentionally discovers untracked resource manifests. The probe must be server-only, depend only on `synex_core`, request exactly the four capabilities above, and own no migrations or tables. Contract descriptors are allowed only as explicit local `.contracts.json` files declared identically through `synex_contracts` and the manifest `files` block.
+
+Run the ordinary gates against a clean checkout first, then prepare the isolated bundle:
+
+```bash
+npm run certify
+node --experimental-strip-types tools/cli/src/bin.ts live-test prepare --probe "../synex_core_probe"
+```
+
+The command refuses a dirty revision, in-repository probes, symlinks, non-text payloads, recognized secret patterns, non-Lua executables, known unsafe execution/network/database primitives, wildcard or additional capabilities, and an existing output directory. These bounded static checks complement review of the external probe; they are not proof that arbitrary source is safe. The builder copies only tracked Core and schema files plus the inspected probe into a fresh `.temp/live-test/core-probe_<id>/` bundle, verifies the copied bytes, validates the combined resources, checks the effective grants, runs static security analysis, and verifies that the tracked production policy remains byte-for-byte unchanged. `server-data/live-test.cfg.example` contains the generated server-only probe run ID, an isolated KVP database name, and safe Core ConVars; database credentials and the Cfx license key are intentionally absent.
+
+Use only the bundle's `server-data/resources/synex_core` and `server-data/resources/synex_core_probe` resources with the generated disposable `server-data` profile, a disposable database/schema, and a separate port. Before including the generated fragment, the primary startup configuration must define isolated TCP/UDP endpoints, `sv_licenseKey`, and `mysql_connection_string`, and the resource search path must provide a separately reviewed `oxmysql >= 2.14.1`; none of those operator-owned dependencies or credentials is copied into the bundle. Include `server-data/live-test.cfg.example` from that startup configuration: `sv_kvsName` is startup-only and must not be pasted into a live console. Never copy the derived `capabilities.json` into the repository or a persistent server installation, and remove the bundle after the acceptance run.
+
+If the probe persists restart evidence with resource KVP, all direct KVP access must stay in one reviewed helper. Scope the exact key as `synex_core_probe.owner_epoch.v1:<synex_probe_run_id>`, use synchronous reads/writes, and delete that exact key after both PASS and FAIL. The builder rejects KVP enumeration, external KVP access, and `_NO_SYNC` writes. Its static result proves only that direct KVP calls use the reviewed run-scoped key; at runtime, require the result to echo the generated run ID and confirm KVP cleanup on every terminal path.
+
+Owner epochs are process-local. Assert only that the new owner epoch is greater after restarting `synex_core_probe` while the same Core process remains running. Never compare the numeric epoch across a `synex_core` or FXServer restart; those stages must instead verify stale-facade rejection, a fresh `GetAPI()` facade, and boot/session recovery. Reuse the generated instance ID only for the related multi-boot recovery scenario, after the owner-epoch helper has confirmed cleanup; create a new bundle for an unrelated acceptance run.
+
 ## FXServer join acceptance
 
 Treat a join fix as live-verified only after the exact deployment has passed this sequence with a real FiveM client:

@@ -44,6 +44,7 @@ import {
 import { validateRepository } from "./validation.ts";
 import { runMigratorCli } from "../../migrator/src/migrator.ts";
 import { npmScriptInvocation } from "./package-runner.ts";
+import { prepareCoreLiveTestBundle } from "./live-test-bundle.ts";
 
 function printJson(io: CommandIo, value: unknown): void {
   io.log(JSON.stringify(canonicalize(value), null, 2));
@@ -96,6 +97,7 @@ function helpText(): string {
     "  synex compat scan [path] [--json]",
     "  synex benchmark [--iterations <count>] [--baseline <file>] [--output <file>] [--json]",
     "  synex upgrade-check [path] [--against <repository>] [--json]",
+    "  synex live-test prepare --probe <external-directory> [--output <.temp/live-test/directory>] [--json]",
     "  synex migrate <qb|qbx|esx> --dry-run --source <file> --mapping <file>",
     "",
     "Global option: --root <repository>",
@@ -407,6 +409,25 @@ export async function runCli(
         io.log(`Upgrade check: ${report.status}.`);
       }
       return report.status === "FAIL" ? 1 : 0;
+    }
+
+    if (command === "live-test" && subcommand === "prepare") {
+      if (parsed.positionals[2]) throw new CliError("live-test prepare does not accept positional targets.", 2);
+      const probe = optionString(parsed, "probe");
+      if (!probe) throw new CliError("live-test prepare requires --probe <external-directory>.", 2);
+      const report = await prepareCoreLiveTestBundle(repositoryRoot, probe, optionString(parsed, "output") ?? undefined);
+      if (json) printJson(io, report);
+      else {
+        io.log(`Prepared disposable Core live-test bundle at ${report.bundle}.`);
+        io.log(`Revision ${report.revision}; probe run ${report.runId}; ${report.grants.length} exact test capability grant(s).`);
+        io.log("Not bundled: oxmysql >= 2.14.1, mysql_connection_string, Cfx license, and isolated endpoints.");
+        io.log(`Use ${report.configuration}; never deploy this bundle or its derived capability policy.`);
+      }
+      return 0;
+    }
+
+    if (command === "live-test") {
+      throw new CliError("live-test accepts only the prepare subcommand.", 2);
     }
 
     throw new CliError(`Unknown command.\n\n${helpText()}`, 2);

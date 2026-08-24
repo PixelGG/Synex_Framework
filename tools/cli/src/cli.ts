@@ -40,4 +40,9 @@ export {
 export { buildResourceGraph, renderResourceGraph } from "./graph.ts";
 export { createDiagnosticBundle, redactDiagnosticValue } from "./diagnostic-bundle.ts";
 export { runManagedReload } from "./dev-reload.ts";
+export {
+  CORE_PROBE_CAPABILITIES,
+  prepareCoreLiveTestBundle,
+} from "./live-test-bundle.ts";
+export type { CoreLiveTestBundleReport } from "./live-test-bundle.ts";
 export { runCli } from "./dispatcher.ts";

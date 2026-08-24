@@ -44,6 +44,14 @@ synex certify <repository|resource|path> [--output <file>] [--json]
 
 `doctor --bundle` writes a bounded redacted support artifact containing repository versions, static health/dependency/migration checks, safe configuration projections, and warnings. The static scanner and executable contract fuzzer produce review evidence; neither proves a resource secure. Certification reports `PASS`, `WARN`, or `FAIL` with concrete checks and hashes and makes no marketing score or production guarantee.
 
+## Disposable Core live test
+
+```text
+synex live-test prepare --probe <external-synex_core_probe-directory> [--output <.temp/live-test/directory>] [--json]
+```
+
+This command builds an ignored, deployment-shaped Core acceptance bundle without changing the tracked production capability policy. It accepts only a reviewed, server-only `synex_core_probe` outside the repository that requests the four exact Connection Gate and Saga test capabilities. The output contains `server-data/resources`, schemas, a credential-free startup configuration fragment, hashes, and safeguard evidence. Use it only with isolated infrastructure and remove it after the run. See [Testing](../testing.md#disposable-core-live-test-bundle) for the probe contract and runtime acceptance rules.
+
 ## Compatibility and upgrades
 
 ```text
