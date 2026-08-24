@@ -769,6 +769,9 @@ function renderContractDocs(registry: RuntimeContractRegistry): string {
     "",
     `Source hash: \`${registry.sourceHash}\``,
     "",
+    "> [!WARNING]",
+    "> This generated catalog aggregates source declarations from `synex_core` and downstream rework snapshots. A listed contract, provider, version, or stability value is source metadata, not release support or runtime acceptance. Only Core belongs to the current Production-Beta candidate; do not deploy against downstream entries until their rework receives separate acceptance.",
+    "",
   ];
   if (registry.contracts.length === 0) {
     lines.push("No contract definitions are currently registered.", "");

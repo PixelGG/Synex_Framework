@@ -5,7 +5,7 @@
 <h1 align="center">Synex</h1>
 
 <p align="center">
-  <strong>Um runtime FiveM contract-first e uma fundação para resources com responsabilidades independentes.</strong>
+  <strong>Um Core FiveM contract-first com responsabilidades explícitas e limites fail-closed.</strong>
 </p>
 
 <p align="center">
@@ -33,45 +33,53 @@
 </p>
 
 > [!CAUTION]
-> **Release de código experimental.** Synex `0.1.0` contém resources de fundação executáveis, contracts gerados, migrations, testes e ferramentas. Todos os contracts públicos ainda estão marcados como `experimental`; não há release estável, instalador empacotado ou garantia de suporte em produção.
+> **Candidato Production-Beta do Core — IN PROGRESS / NO-GO.** Synex `0.1.0` continua sendo um release de código experimental. Somente `synex_core` está sendo avaliado para o primeiro perfil Production-Beta, e o candidato exato atual ainda não concluiu todos os gates obrigatórios. Os contracts públicos permanecem `experimental`; não existe release estável nem garantia de suporte em produção para o framework inteiro.
 
 ## Estado atual da validação
 
-O build de aceitação de 24/08/2026 concluiu suas etapas no lado do servidor e com cliente real. O estado atual também inclui duas correções posteriores de hardening verificadas pelos testes do repositório e do banco de dados real; a sequência manual completa de FXServer/cliente ainda não foi repetida nessa revisão combinada. Isso é evidência dentro desses limites, não uma declaração de estabilidade ou prontidão para produção.
+Execuções de desenvolvimento já cobriram os gates do repositório, a cadeia MariaDB com 26 migrations, boot isolado do FXServer, APIs públicas do Core, caminhos de recuperação e uma sequência de join/disconnect/reconnect com cliente real. Essa evidência não certifica outra revisão. A decisão permanece NO-GO até a aceitação completa ser mantida para um único candidato limpo e imutável.
 
-- **PASS — Verificações do repositório.** Geração, validação, suites headless, análise estática de segurança e auditoria de dependências.
-- **PASS — Banco de dados real.** Baseline MariaDB 11.8 e todas as 26 migrations do Core.
-- **PASS — Build de aceitação E2E.** `READY` no lado do servidor, APIs vinculadas ao chamador, execução persistida de Sagas, recuperação após restart, join/disconnect/reconnect com cliente real e restart preparado com trabalho pendente no banco.
-- **FOLLOW-UP VERIFICADO — Hardening atual.** O tratamento terminal das tentativas de restart e a verificação exata da expressão gerada e da usabilidade do índice forçado da migration 026 passaram nas regressões headless e com MariaDB real; a sequência manual completa de FXServer/cliente deve ser repetida antes da aceitação de uma versão.
-- **NÃO TESTADO — Handoff em duas instâncias.** O restart do requester durante `kick_old` ainda requer uma validação multi-instância dedicada.
+- **VERIFICADO DURANTE O DESENVOLVIMENTO.** Geração, validação, suites headless, análise estática de segurança, auditoria de dependências, regressões reais com MariaDB e etapas anteriores de FXServer/cliente passaram.
+- **IMPLEMENTADO; RETESTE AO VIVO PENDENTE.** O circuito de saúde do banco de dados leva o Core a um `DEGRADED` recuperável com `operational = true` e admissão fechada após falha retornada, exceção do adaptador ou expiração do watchdog fail-closed fixo de cinco segundos. Ele suspende os workers comuns dependentes do banco, enquanto mantém deliberadamente ativo o heartbeat limitado de conexões para a limpeza, e exige dois probes bem-sucedidos mais reconciliação antes de retomar o trabalho e a admissão. Há cobertura headless e de corrotinas semelhante ao Cfx, mas isso não é um PASS ao vivo até o candidato exato concluir o gate.
+- **IN PROGRESS.** Instalação limpa, upgrade, backup/restore, recuperação após restart ou crash, falha e recuperação do banco de dados, load/soak limitado, revisão de segurança, auditoria da documentação e sequência completa do cliente devem passar na mesma revisão.
+- **NÃO CERTIFICADO.** MySQL e operação multi-instância, incluindo `kick_old`, ficam fora do primeiro perfil candidato.
+- **FORA DO ESCOPO.** Cada resource, library, bridge e exemplo depois de `synex_core` é um snapshot de rework experimental ou scaffold e não faz parte da certificação do Core.
 
-[Cobertura exata e sequência restante do cliente](../../testing.md)
+[Gate de release](../../release-readiness.md) &middot; [Cobertura de testes](../../testing.md) &middot; [Limitações conhecidas](../../known-limitations.md)
 
-## Fundação implementada
+### Primeiro perfil-alvo de aceitação
 
-| Área | Módulo | Responsabilidade realmente presente |
+| Limite | Valor candidato |
+| --- | --- |
+| Produto | somente `synex_core` |
+| Host | Windows |
+| Runtime | FXServer build `35245` |
+| Adaptador de banco de dados | `oxmysql 2.14.1` |
+| Banco de dados | MariaDB `11.8.8`, horário de sessão UTC |
+| Topologia | uma instância Core ativa |
+| Política de produção | `synex_environment "production"`, `synex_strict "1"`, `synex_duplicate_policy "deny_new"` |
+
+Esses valores definem o candidato; ainda não representam um PASS.
+
+## Escopo da beta do Core
+
+| Área | Caminho | Função atual |
 | --- | --- | --- |
-| Kernel | [`synex_core`](../../../core/synex_core/) | Ciclo de boot/sessão/personagem, contracts, RPC, events, hooks, services, capabilities, RBAC/acesso persistente, state, confiabilidade, auditoria, métricas e health |
-| Grupos | [`synex_groups`](../../../resources/synex_groups/) | Grupos, grades, regras de capability, seleção primária e memberships versionadas |
-| Contas | [`synex_accounts`](../../../resources/synex_accounts/) | Moedas, contas de dupla entrada, holds, papéis de acesso, reversões e modelos de integridade |
-| Entidades | [`synex_entities`](../../../resources/synex_entities/) | Identidade de entidade autoritativa no servidor, resolução persistente e routing buckets |
-| Operações | [`synex_control`](../../../resources/synex_control/) | NUI in-game somente leitura com visões Core/domínio limitadas, busca exata de auditoria e estado fechado transparente |
-| Compatibilidade | [`synex_bridge`](../../../libraries/synex_bridge/) | Adaptadores QB/QBX/ESX opcionais vinculados ao consumidor, com callbacks limitados, transferências cash/bank e importação revisada |
-| Desenvolvimento | [`packages`](../../../packages/) / [`tools`](../../../tools/) | SDKs Lua/TypeScript gerados, CLI, analisadores, certificação e testes |
+| Candidato runtime | [`synex_core`](../../../core/synex_core/) | Boot, conexões, ciclos de sessão/personagem, contracts, RPC, events, hooks, services, capabilities, política de acesso persistente, state, confiabilidade, auditoria, métricas, health e migrations próprias |
+| Pipeline de contracts | [`packages/contracts`](../../../packages/contracts/) | Entradas canônicas e artefatos de runtime/referência gerados deterministicamente para desenvolver o Core |
+| SDKs e ferramentas | [`packages`](../../../packages/) / [`tools`](../../../tools/) | Clients/types gerados, validação, migration, segurança, certificação e testes; não são recursos de servidor certificados separadamente |
 
-Todas as fundações implementadas continuam experimentais. O caminho de compatibilidade também está deprecated para projetos novos.
+Somente `core/synex_core` pode chegar a Production-Beta-ready no ciclo atual. A API pública do Core continua experimental mesmo se o gate beta passar.
 
-Os adaptadores de compatibilidade não expõem objetos mutáveis de jogador legacy. Mudanças de dinheiro passam somente por transferências Synex equilibradas usando contas de contrapartida configuradas; contas ausentes ou ambíguas falham de forma fechada.
+### Limite de rework downstream
 
-Synex vincula cada fachada de API ao resource chamador real e ao seu epoch de inicialização. Contracts JSON definem versão, schema, capability e direção de rede. Cada migration e tabela tem um único dono de domínio. Entradas de cliente e NUI não são confiáveis.
+`synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, todos os demais diretórios em `resources/`, todas as libraries e bridges em `libraries/` (incluindo `synex_bridge`), e os exemplos executáveis são **snapshots de rework experimentais ou scaffolds**. Eles não são suportados pela beta do Core e não devem ser iniciados, empacotados ou anunciados como componentes certificados. O comportamento downstream que depende de OneSync também fica fora deste perfil Core-only.
 
-### Limites apenas reservados
-
-`synex_character`, `synex_identity`, `synex_inventory`, `synex_banking`, `synex_phone`, `synex_radio`, `synex_jobs`, `synex_shops`, `synex_vehicles`, `synex_garages` e `synex_ui` contêm apenas scaffolds e **não são funcionalidades executáveis**. O ciclo de personagem/sessão existente fica em `synex_core`.
+Isso também inclui `synex_character`, `synex_identity`, `synex_inventory`, `synex_banking`, `synex_phone`, `synex_radio`, `synex_jobs`, `synex_shops`, `synex_vehicles`, `synex_garages` e `synex_ui`. A presença de um diretório não comprova uma funcionalidade concluída. O ciclo de personagem/sessão existente pertence ao `synex_core`.
 
 ## Primeiros passos
 
-São necessários um FXServer atual, MariaDB 11.8 ou MySQL 8.4 via `oxmysql >= 2.14.1` (e `< 3.0.0` quando `synex_entities` estiver ativado), um `synex_instance_id` estável em produção estrita e OneSync `on` para `synex_entities`. Node.js é usado pelas ferramentas e testes do repositório, não pelo runtime Lua.
+O primeiro perfil candidato exige Windows, FXServer build `35245`, `oxmysql 2.14.1`, MariaDB `11.8.8`, um `synex_instance_id` estável e único, modo de produção estrito e `deny_new`. Node.js `>=22.12.0` com npm `>=10.0.0` é usado pelas ferramentas e testes do repositório, não pelo runtime Lua.
 
 ```bash
 git clone https://github.com/PixelGG/Synex_Framework.git
@@ -83,19 +91,22 @@ npm run security
 npm run certify
 ```
 
-Este repositório é um monorepo de desenvolvimento, não um pacote de servidor pronto para copiar. O [guia de início](../../getting-started.md) cobre posicionamento, configuração, migrations, ordem de inicialização e limites.
+Esses comandos são gates de desenvolvimento e, sozinhos, não provam uma Production-Beta. O repositório continua sendo um monorepo de desenvolvimento, não um pacote de servidor pronto para copiar. Para o primeiro candidato, faça deploy somente de `oxmysql` e `synex_core`. Consulte o [guia de início](../../getting-started.md), o [exemplo de configuração do Core](../../../examples/server.cfg.example) e o [gate de release](../../release-readiness.md).
 
 ## Documentação
 
 O inglês é a fonte técnica canônica.
 
 - [Índice da documentação](../../README.md)
+- [Gate Production-Beta do Core](../../release-readiness.md)
+- [Limitações conhecidas](../../known-limitations.md)
+- [Backup e restore](../../backup-and-restore.md)
 - [Arquitetura](../../architecture/README.md)
 - [API pública](../../api/README.md)
 - [Segurança](../../security/README.md)
+- [Política de segurança](../../../SECURITY.md)
 - [Operações](../../operations.md)
 - [Testes e CI](../../testing.md)
-- [Compatibilidade](../../compatibility/README.md)
 
 ## Comunidade
 

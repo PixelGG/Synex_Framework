@@ -1,0 +1,6 @@
+# Copy this file to server.local.cfg beside server.cfg.
+# server.local.cfg is ignored by this repository. Never commit the populated copy.
+# Empty values are intentional and must be replaced before FXServer starts.
+
+sv_licenseKey ""
+set mysql_connection_string ""

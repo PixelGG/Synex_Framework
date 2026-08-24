@@ -4,7 +4,7 @@
   "title": "Synex core runtime configuration",
   "type": "object",
   "additionalProperties": false,
-  "required": ["environment", "strict", "instanceId", "database", "connections", "rpc", "events", "logging", "privacy", "retention", "features"],
+  "required": ["environment", "strict", "instanceId", "database", "connections", "rpc", "logging", "retention", "features"],
   "properties": {
     "$schema": { "type": "string" },
     "environment": { "enum": ["development", "staging", "production"] },
@@ -13,11 +13,10 @@
     "database": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["minimumOxmysqlVersion", "queryWarnMs", "queryTimeoutMs", "deadlockRetries", "migrationLeaseSeconds"],
+      "required": ["minimumOxmysqlVersion", "queryWarnMs", "deadlockRetries", "migrationLeaseSeconds"],
       "properties": {
         "minimumOxmysqlVersion": { "type": "string", "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)$", "maxLength": 32 },
         "queryWarnMs": { "type": "integer", "minimum": 1, "maximum": 60000 },
-        "queryTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 60000 },
         "deadlockRetries": { "type": "integer", "minimum": 0, "maximum": 5 },
         "migrationLeaseSeconds": { "type": "integer", "minimum": 10, "maximum": 300 }
       }
@@ -74,12 +73,6 @@
         "burst": { "type": "number", "exclusiveMinimum": 0, "maximum": 10000 }
       }
     },
-    "events": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["maximumQueueDepth"],
-      "properties": { "maximumQueueDepth": { "type": "integer", "minimum": 1, "maximum": 100000 } }
-    },
     "logging": {
       "type": "object",
       "additionalProperties": false,
@@ -87,15 +80,6 @@
       "properties": {
         "level": { "enum": ["trace", "debug", "info", "warn", "error", "fatal"] },
         "pretty": { "const": false }
-      }
-    },
-    "privacy": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["identifierSaltConvar", "diagnosticIdentifierPrefix"],
-      "properties": {
-        "identifierSaltConvar": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]*$", "maxLength": 64 },
-        "diagnosticIdentifierPrefix": { "type": "integer", "minimum": 4, "maximum": 16 }
       }
     },
     "retention": {

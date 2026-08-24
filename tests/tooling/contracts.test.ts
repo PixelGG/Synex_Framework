@@ -449,8 +449,11 @@ test("repository validation enforces cross-field runtime configuration invariant
   context.after(async () => rm(root, { recursive: true, force: true }));
   const configurationPath = join(root, "core", "synex_core", "config", "default.json");
   const configuration = JSON.parse(await readFile(configurationPath, "utf8")) as {
+    environment: string;
+    strict: boolean;
     rpc: { timeoutMs: number; maximumTimeoutMs: number };
     connections: {
+      duplicatePolicy: string;
       queueReservedSlots: number;
       maximumActiveSessions: number;
       clusterSessionLeaseSeconds: number;
@@ -491,4 +494,48 @@ test("repository validation enforces cross-field runtime configuration invariant
   assert.equal(safeHeartbeatValidation.diagnostics.some((entry) =>
     entry.rule === "configuration-semantic" && entry.message.includes("/connections/clusterHeartbeatMs")
   ), false);
+
+  configuration.strict = false;
+  await writeFile(configurationPath, `${JSON.stringify(configuration, null, 2)}\n`, "utf8");
+  const productionStrictValidation = await validateRepository(root);
+  assert.ok(productionStrictValidation.diagnostics.some((entry) =>
+    entry.rule === "configuration-semantic" && entry.message.includes("/strict")
+  ));
+
+  configuration.strict = true;
+  configuration.connections.duplicatePolicy = "kick_old";
+  await writeFile(configurationPath, `${JSON.stringify(configuration, null, 2)}\n`, "utf8");
+  const productionPolicyValidation = await validateRepository(root);
+  assert.ok(productionPolicyValidation.diagnostics.some((entry) =>
+    entry.rule === "configuration-semantic" && entry.message.includes("/connections/duplicatePolicy")
+  ));
+
+  configuration.environment = "staging";
+  configuration.strict = false;
+  await writeFile(configurationPath, `${JSON.stringify(configuration, null, 2)}\n`, "utf8");
+  const stagingPolicyValidation = await validateRepository(root);
+  assert.equal(stagingPolicyValidation.diagnostics.some((entry) =>
+    entry.rule === "configuration-semantic"
+      && (entry.message.includes("/strict") || entry.message.includes("/connections/duplicatePolicy"))
+  ), false);
+});
+
+test("repository validation rejects removed runtime configuration placeholders", async (context) => {
+  const root = await prepareRepository();
+  context.after(async () => rm(root, { recursive: true, force: true }));
+  const configurationPath = join(root, "core", "synex_core", "config", "default.json");
+  const configuration = JSON.parse(await readFile(configurationPath, "utf8")) as Record<string, unknown>;
+  const database = configuration.database as Record<string, unknown>;
+  database.queryTimeoutMs = 5_000;
+  configuration.events = { maximumQueueDepth: 1_024 };
+  configuration.privacy = {
+    identifierSaltConvar: "synex_identifier_salt",
+    diagnosticIdentifierPrefix: 8,
+  };
+  await writeFile(configurationPath, `${JSON.stringify(configuration, null, 2)}\n`, "utf8");
+
+  const validation = await validateRepository(root);
+  const findings = validation.diagnostics.filter((entry) => entry.rule === "configuration-schema");
+  assert.ok(findings.length >= 3);
+  assert.ok(findings.some((entry) => entry.message.includes("/database")));
 });

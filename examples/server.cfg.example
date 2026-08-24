@@ -1,0 +1,31 @@
+# Synex Core Production-Beta configuration example
+# Copy this file into an operator-owned FXServer server-data directory as server.cfg.
+# Do not run the non-Core resources in the initial Core beta profile.
+
+endpoint_add_tcp "0.0.0.0:30120"
+endpoint_add_udp "0.0.0.0:30120"
+
+sv_hostname "Synex Core Beta"
+sets sv_projectName "Synex Core Beta"
+sets sv_projectDesc "Isolated Synex Core beta deployment"
+sv_maxclients 32
+sv_scriptHookAllowed 0
+
+# Keep the Cfx key and database connection in this ignored local file.
+exec "server.local.cfg"
+
+# oxmysql must read this before it creates its connection pool.
+set mysql_transaction_isolation_level "2"
+
+# Use one stable, unique value per Core instance sharing a database.
+set synex_instance_id "core-beta-01"
+set synex_environment "production"
+set synex_strict "1"
+
+# The initial supported beta profile is single-instance and fail-closed.
+set synex_duplicate_policy "deny_new"
+set synex_queue_reserved_slots "0"
+set synex_maintenance "0"
+
+ensure oxmysql
+ensure synex_core

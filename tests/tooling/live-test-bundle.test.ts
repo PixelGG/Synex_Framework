@@ -211,7 +211,7 @@ test("live-test builder derives an exact disposable policy without touching prod
   assert.match(report.resources.probe, /server-data\/resources\/synex_core_probe$/u);
   assert.deepEqual(report.grants, CORE_PROBE_CAPABILITIES);
   assert.deepEqual(report.runtimeRequirements, {
-    resources: [{ name: "oxmysql", version: ">=2.14.1" }],
+    resources: [{ name: "oxmysql", version: "2.14.1" }],
     operatorConfiguration: ["mysql_connection_string", "sv_licenseKey", "endpoint_add_tcp", "endpoint_add_udp"],
   });
   assert.equal(report.probe.kvpStaticKeyScoped, true);
@@ -231,8 +231,9 @@ test("live-test builder derives an exact disposable policy without touching prod
     .split(/\r?\n/u)
     .filter((line) => line.length > 0 && !line.startsWith("#"));
   assert.deepEqual(commands, [
-    'set synex_environment "staging"',
+    'set synex_environment "production"',
     'set synex_strict "1"',
+    'set synex_duplicate_policy "deny_new"',
     `set synex_instance_id "${report.instanceId}"`,
     `set synex_probe_run_id "${report.runId}"`,
     "ensure oxmysql",

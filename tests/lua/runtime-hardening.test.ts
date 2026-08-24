@@ -30,6 +30,9 @@ async function coreEngine(modules: string[]): Promise<LuaEngine> {
         'runtime_persistence_rbac',
       ]) await load(engine, `core/synex_core/server/${dependency}.lua`);
     }
+    if (module === 'bootstrap_lifecycle') {
+      await load(engine, 'core/synex_core/server/runtime_database_health.lua');
+    }
     await load(engine, `core/synex_core/server/${module}.lua`);
   }
   return engine;
@@ -2322,7 +2325,8 @@ test('recurring scheduler entries expose bounded worker health and recover after
         __call = function()
           attempts = attempts + 1
           now = now + 5
-          if attempts <= 3 then return nil, { code = 'FIXTURE_FAILURE' } end
+          if attempts <= 3 or attempts == 5 then return nil, { code = 'FIXTURE_FAILURE' } end
+          if attempts == 4 or attempts == 7 then return lifecycle.scheduler:suspended(), nil end
           return true, nil
         end
       })
@@ -2333,11 +2337,36 @@ test('recurring scheduler entries expose bounded worker health and recover after
       assert(unhealthy.health == 'UNHEALTHY' and unhealthy.runs == 3 and unhealthy.lastError == 'FIXTURE_FAILURE')
       now = now + 100
       callbacks[4]()
+      local unhealthySuspended = lifecycle.scheduler:snapshot()[1]
+      assert(unhealthySuspended.health == 'UNHEALTHY' and unhealthySuspended.runs == 4
+        and unhealthySuspended.lastError == 'FIXTURE_FAILURE')
+      now = now + 100
+      callbacks[5]()
+      local resumedFailure = lifecycle.scheduler:snapshot()[1]
+      assert(resumedFailure.health == 'UNHEALTHY' and resumedFailure.runs == 5
+        and resumedFailure.lastError == 'FIXTURE_FAILURE')
+      now = now + 100
+      callbacks[6]()
       local recovered = lifecycle.scheduler:snapshot()[1]
-      assert(recovered.health == 'HEALTHY' and recovered.runs == 4 and recovered.lastError == nil)
-      return table.concat({unhealthy.health, recovered.health, recovered.durationMs}, ':')
+      assert(recovered.health == 'HEALTHY' and recovered.runs == 6 and recovered.lastError == nil)
+      now = now + 100
+      callbacks[7]()
+      local suspended = lifecycle.scheduler:snapshot()[1]
+      assert(suspended.health == 'DEGRADED' and suspended.runs == 7
+        and suspended.lastError == 'SCHEDULE_SUSPENDED')
+      now = now + 100
+      callbacks[8]()
+      local resumed = lifecycle.scheduler:snapshot()[1]
+      assert(resumed.health == 'HEALTHY' and resumed.runs == 8 and resumed.lastError == nil)
+      return table.concat({
+        unhealthy.health, unhealthySuspended.health, resumedFailure.health,
+        recovered.health, suspended.health, suspended.lastError, resumed.health, recovered.durationMs
+      }, ':')
     `);
-    assert.equal(result, 'UNHEALTHY:HEALTHY:5');
+    assert.equal(
+      result,
+      'UNHEALTHY:UNHEALTHY:UNHEALTHY:HEALTHY:DEGRADED:SCHEDULE_SUSPENDED:HEALTHY:5',
+    );
   } finally {
     engine.global.close();
   }
@@ -2904,6 +2933,1150 @@ test('dependency health refresh clears recovered registry findings without chang
       result,
       'UNHEALTHY:DEGRADED:HEALTHY:HEALTHY:DEGRADED:HEALTHY:DEGRADED:HEALTHY:DEGRADED:HEALTHY:STARTED',
     );
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('runtime database health closes admission, recovers with hysteresis, and preserves independent faults', async () => {
+  const engine = await coreEngine(['foundation', 'lifecycle', 'bootstrap_lifecycle']);
+  try {
+    const result = await engine.doString(`
+      local now, databaseAvailable, validationCalls = 1000, true, 0
+      local probeTimeouts = {}
+      local synchronizationCalls, refreshCalls = 0, 0
+      local platform = {
+        nowGame = function() return now end,
+        random = function() return 1 end,
+        print = function() end,
+        jsonEncode = function() return '{}' end,
+        setTimeout = function(delay, callback)
+          probeTimeouts[#probeTimeouts + 1] = { delay = delay, callback = callback }
+        end
+      }
+      local foundation = SynexCoreFactories.foundation({
+        platform = platform,
+        monotonicMs = function() return now end
+      })
+      local lifecycle = SynexCoreFactories.lifecycle({
+        platform = platform,
+        foundation = foundation,
+        owners = {}
+      })
+      for _, target in ipairs({
+        'CONFIGURING', 'DATABASE_CONNECTING', 'MIGRATING', 'DISCOVERING_RESOURCES',
+        'VALIDATING_CONTRACTS', 'VALIDATING_CAPABILITIES', 'STARTING_SERVICES', 'READY'
+      }) do assert(lifecycle.core:transition(target, 'fixture')) end
+      lifecycle.core:setCriticalFoundationsValidated(true)
+
+      local database = {
+        validateUtcSession = function()
+          validationCalls = validationCalls + 1
+          if databaseAvailable then return true, nil end
+          return nil, foundation.error('DATABASE_ERROR',
+            'private fixture host and credentials must not escape')
+        end
+      }
+      local function synchronizeInstanceHealthStatus()
+        synchronizationCalls = synchronizationCalls + 1
+        return nil
+      end
+      local function refreshDependencyHealth()
+        refreshCalls = refreshCalls + 1
+        local snapshot = lifecycle.core:snapshot()
+        if lifecycle.core:get() == 'DEGRADED' and next(snapshot.reasons) == nil then
+          assert(lifecycle.core:transition('READY', 'fixture recovery'))
+        end
+        snapshot = lifecycle.core:snapshot()
+        lifecycle.core:setCriticalFoundationsValidated(
+          lifecycle.core:get() == 'READY' and next(snapshot.reasons) == nil)
+        return {}, 0, nil
+      end
+      local function completeRecovery(isCurrentProbe)
+        assert(isCurrentProbe())
+        lifecycle.core:setHealth('database-runtime', 'HEALTHY')
+        local _, _, refreshError = refreshDependencyHealth()
+        return refreshError == nil, refreshError
+      end
+      local health = SynexCoreFactories.runtimeDatabaseHealth({
+        foundation = foundation,
+        lifecycle = lifecycle,
+        database = database,
+        synchronizeInstanceHealthStatus = synchronizeInstanceHealthStatus,
+        completeRecovery = completeRecovery,
+        setTimeout = platform.setTimeout
+      })
+
+      assert(health:probe(true))
+      assert(health:isAvailable() and lifecycle.core:canAdmitPlayers())
+
+      databaseAvailable = false
+      local unavailable, unavailableError = health:probe(true)
+      local failed = lifecycle.core:snapshot()
+      assert(unavailable == nil and unavailableError.code == 'DATABASE_RUNTIME_UNAVAILABLE')
+      assert(not unavailableError.message:find('private fixture', 1, true))
+      assert(health:isAvailable() == false and failed.state == 'DEGRADED')
+      assert(failed.playerAdmission == false and failed.reasons['database-runtime'] ~= nil)
+      local skipped, skippedError, skippedState = health:probe()
+      assert(skipped and skippedError == nil and skippedState == 'suspended')
+      assert(validationCalls == 2)
+      local transitionsAfterFirstFailure = #failed.recentTransitions
+      local _, repeatedError = health:probe(true)
+      assert(repeatedError.code == 'DATABASE_RUNTIME_UNAVAILABLE')
+      assert(#lifecycle.core:snapshot().recentTransitions == transitionsAfterFirstFailure)
+
+      databaseAvailable = true
+      assert(health:probe(true))
+      local pending = lifecycle.core:snapshot()
+      assert(health:isAvailable() == false and pending.playerAdmission == false)
+      assert(pending.reasons['database-runtime'] ~= nil and synchronizationCalls == 1)
+      assert(health:probe(true))
+      local recovered = lifecycle.core:snapshot()
+      assert(health:isAvailable() and recovered.state == 'READY')
+      assert(recovered.playerAdmission and recovered.reasons['database-runtime'] == nil)
+      assert(synchronizationCalls == 2 and refreshCalls == 1)
+
+      databaseAvailable = false
+      assert(health:probe(true) == nil)
+      lifecycle.core:setHealth('cluster', 'DEGRADED', 'independent fixture failure')
+      databaseAvailable = true
+      assert(health:probe(true))
+      assert(health:probe(true))
+      local independentlyBlocked = lifecycle.core:snapshot()
+      assert(health:isAvailable() and independentlyBlocked.state == 'DEGRADED')
+      assert(independentlyBlocked.playerAdmission == false)
+      assert(independentlyBlocked.reasons['database-runtime'] == nil)
+      assert(independentlyBlocked.reasons.cluster ~= nil)
+
+      local controllerSnapshot = health:snapshot()
+      assert(controllerSnapshot.probeInProgress == false
+        and controllerSnapshot.probeWatchdogMs == 5000)
+      for _, timeout in ipairs(probeTimeouts) do assert(timeout.delay == 5000) end
+      return table.concat({
+        failed.state,
+        failed.playerAdmission and 'open' or 'blocked',
+        pending.playerAdmission and 'open' or 'blocked',
+        recovered.state,
+        recovered.playerAdmission and 'open' or 'blocked',
+        independentlyBlocked.playerAdmission and 'open' or 'blocked',
+        controllerSnapshot.recoverySuccessThreshold,
+        synchronizationCalls,
+        refreshCalls
+      }, ':')
+    `);
+    assert.equal(result, 'DEGRADED:blocked:blocked:READY:open:blocked:2:4:2');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('runtime database health contains exceptions, enforces backoff, and fail-closes stalled probes', async () => {
+  const engine = await coreEngine(['foundation', 'lifecycle', 'bootstrap_lifecycle']);
+  try {
+    const result = await engine.doString(`
+      local now, validationMode, validationCalls = 1000, 'up', 0
+      local synchronizationMode, refreshMode = 'ok', 'ok'
+      local synchronizationCalls, refreshCalls, timeoutCallbacks = 0, 0, {}
+      local platform = {
+        nowGame = function() return now end,
+        random = function() return 1 end,
+        print = function() end,
+        jsonEncode = function() return '{}' end,
+        setTimeout = function(delay, callback)
+          timeoutCallbacks[#timeoutCallbacks + 1] = { delay = delay, callback = callback }
+        end
+      }
+      local foundation = SynexCoreFactories.foundation({
+        platform = platform,
+        monotonicMs = function() return now end
+      })
+      local lifecycle = SynexCoreFactories.lifecycle({
+        platform = platform,
+        foundation = foundation,
+        owners = {}
+      })
+      for _, target in ipairs({
+        'CONFIGURING', 'DATABASE_CONNECTING', 'MIGRATING', 'DISCOVERING_RESOURCES',
+        'VALIDATING_CONTRACTS', 'VALIDATING_CAPABILITIES', 'STARTING_SERVICES', 'READY'
+      }) do assert(lifecycle.core:transition(target, 'fixture')) end
+      lifecycle.core:setCriticalFoundationsValidated(true)
+
+      local database = {
+        validateUtcSession = function()
+          validationCalls = validationCalls + 1
+          if validationMode == 'throw' then error('private database adapter exception') end
+          if validationMode == 'down' then
+            return nil, foundation.error('DATABASE_ERROR', 'private database endpoint')
+          end
+          if validationMode == 'yield' then return coroutine.yield('probe-pending') end
+          return true, nil
+        end
+      }
+      local function synchronizeInstanceHealthStatus()
+        synchronizationCalls = synchronizationCalls + 1
+        if synchronizationMode == 'throw' then error('private instance status exception') end
+        if synchronizationMode == 'error' then
+          return foundation.error('DATABASE_ERROR', 'private instance status endpoint')
+        end
+        return nil
+      end
+      local function refreshDependencyHealth()
+        refreshCalls = refreshCalls + 1
+        if refreshMode == 'throw' then error('private dependency refresh exception') end
+        if refreshMode == 'error' then
+          return {}, 0, foundation.error('DATABASE_ERROR', 'private dependency refresh endpoint')
+        end
+        local snapshot = lifecycle.core:snapshot()
+        if lifecycle.core:get() == 'DEGRADED' and next(snapshot.reasons) == nil then
+          assert(lifecycle.core:transition('READY', 'fixture recovery'))
+        end
+        snapshot = lifecycle.core:snapshot()
+        lifecycle.core:setCriticalFoundationsValidated(
+          lifecycle.core:get() == 'READY' and next(snapshot.reasons) == nil)
+        return {}, 0, nil
+      end
+      local function completeRecovery(isCurrentProbe)
+        assert(isCurrentProbe())
+        lifecycle.core:setHealth('database-runtime', 'HEALTHY')
+        local _, _, refreshError = refreshDependencyHealth()
+        return refreshError == nil, refreshError
+      end
+      local health = SynexCoreFactories.runtimeDatabaseHealth({
+        foundation = foundation,
+        lifecycle = lifecycle,
+        database = database,
+        synchronizeInstanceHealthStatus = synchronizeInstanceHealthStatus,
+        completeRecovery = completeRecovery,
+        setTimeout = platform.setTimeout
+      })
+
+      validationMode = 'throw'
+      local thrownResult, thrownError = health:probe(true)
+      assert(thrownResult == nil and thrownError.code == 'DATABASE_RUNTIME_UNAVAILABLE')
+      assert(not thrownError.message:find('private', 1, true))
+      assert(not health:isAvailable() and not lifecycle.core:canAdmitPlayers())
+
+      validationMode = 'down'
+      now = 5999
+      local skippedOne, _, skippedOneState = health:probe()
+      assert(skippedOne and skippedOneState == 'suspended' and validationCalls == 1)
+      now = 6000
+      assert(health:probe() == nil and validationCalls == 2)
+      now = 15999
+      local skippedTwo, _, skippedTwoState = health:probe()
+      assert(skippedTwo and skippedTwoState == 'suspended' and validationCalls == 2)
+      now = 16000
+      assert(health:probe() == nil and validationCalls == 3)
+      now = 30999
+      local skippedThree, _, skippedThreeState = health:probe()
+      assert(skippedThree and skippedThreeState == 'suspended' and validationCalls == 3)
+      now = 31000
+      assert(health:probe() == nil and validationCalls == 4)
+      now = 45999
+      local skippedFour, _, skippedFourState = health:probe()
+      assert(skippedFour and skippedFourState == 'suspended' and validationCalls == 4)
+
+      now = 46000
+      validationMode, synchronizationMode = 'up', 'throw'
+      local syncResult, syncError = health:probe()
+      assert(syncResult == nil and syncError.code == 'DATABASE_RUNTIME_UNAVAILABLE')
+      assert(not health:isAvailable() and lifecycle.core:snapshot().reasons['database-runtime'])
+
+      synchronizationMode, refreshMode = 'ok', 'throw'
+      assert(health:probe(true))
+      local refreshThrownResult, refreshThrownError = health:probe(true)
+      assert(refreshThrownResult == nil and refreshThrownError.code == 'DATABASE_RUNTIME_UNAVAILABLE')
+      assert(not health:isAvailable() and lifecycle.core:snapshot().reasons['database-runtime'])
+
+      refreshMode = 'error'
+      assert(health:probe(true))
+      local refreshErrorResult, refreshReturnedError = health:probe(true)
+      assert(refreshErrorResult == nil and refreshReturnedError.code == 'DATABASE_RUNTIME_UNAVAILABLE')
+      assert(not health:isAvailable() and lifecycle.core:snapshot().reasons['database-runtime'])
+
+      refreshMode = 'ok'
+      assert(health:probe(true))
+      assert(health:probe(true))
+      assert(health:isAvailable() and lifecycle.core:canAdmitPlayers())
+
+      validationMode = 'yield'
+      local probeCoroutine = coroutine.create(function()
+        return health:probe(true)
+      end)
+      local started, marker = coroutine.resume(probeCoroutine)
+      assert(started and marker == 'probe-pending')
+      assert(health:snapshot().probeInProgress == true)
+      local concurrent, _, concurrentState = health:probe(true)
+      assert(concurrent and concurrentState == 'suspended')
+      local watchdog = timeoutCallbacks[#timeoutCallbacks]
+      assert(watchdog.delay == 5000)
+      watchdog.callback()
+      local timedOut = lifecycle.core:snapshot()
+      assert(not health:isAvailable() and timedOut.state == 'DEGRADED')
+      assert(timedOut.playerAdmission == false and timedOut.reasons['database-runtime'])
+
+      local resumed, completed, lateError = coroutine.resume(probeCoroutine, true, nil)
+      assert(resumed and completed == nil and lateError.code == 'DATABASE_RUNTIME_UNAVAILABLE')
+      assert(coroutine.status(probeCoroutine) == 'dead')
+      local afterLateCompletion = health:snapshot()
+      assert(not health:isAvailable() and afterLateCompletion.probeInProgress == false)
+      assert(afterLateCompletion.consecutiveRecoverySuccesses == 0)
+      validationMode = 'up'
+      assert(health:probe(true))
+      assert(not health:isAvailable() and not lifecycle.core:canAdmitPlayers())
+      assert(health:probe(true))
+      assert(health:isAvailable() and lifecycle.core:canAdmitPlayers())
+
+      return table.concat({
+        validationCalls,
+        synchronizationCalls,
+        refreshCalls,
+        lifecycle.core:get(),
+        lifecycle.core:canAdmitPlayers() and 'open' or 'blocked',
+        health:snapshot().probeWatchdogMs
+      }, ':')
+    `);
+    assert.equal(result, '14:9:4:READY:open:5000');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('runtime database health ignores late probe completion after the watchdog expires', async () => {
+  const engine = await coreEngine(['foundation', 'lifecycle', 'bootstrap_lifecycle']);
+  try {
+    const result = await engine.doString(`
+      local now, validationMode = 1000, 'up'
+      local validationCalls, synchronizationCalls, refreshCalls = 0, 0, 0
+      local timeoutCallbacks = {}
+      local platform = {
+        nowGame = function() return now end,
+        random = function() return 1 end,
+        print = function() end,
+        jsonEncode = function() return '{}' end,
+        setTimeout = function(delay, callback)
+          timeoutCallbacks[#timeoutCallbacks + 1] = { delay = delay, callback = callback }
+        end
+      }
+      local foundation = SynexCoreFactories.foundation({
+        platform = platform,
+        monotonicMs = function() return now end
+      })
+      local lifecycle = SynexCoreFactories.lifecycle({
+        platform = platform,
+        foundation = foundation,
+        owners = {}
+      })
+      for _, target in ipairs({
+        'CONFIGURING', 'DATABASE_CONNECTING', 'MIGRATING', 'DISCOVERING_RESOURCES',
+        'VALIDATING_CONTRACTS', 'VALIDATING_CAPABILITIES', 'STARTING_SERVICES', 'READY'
+      }) do assert(lifecycle.core:transition(target, 'fixture')) end
+      lifecycle.core:setCriticalFoundationsValidated(true)
+
+      local database = {
+        validateUtcSession = function()
+          validationCalls = validationCalls + 1
+          if validationMode == 'down' then
+            return nil, foundation.error('DATABASE_ERROR', 'private fixture endpoint')
+          end
+          if validationMode == 'yield' then return coroutine.yield('stale-database-probe') end
+          return true, nil
+        end
+      }
+      local function synchronizeInstanceHealthStatus()
+        synchronizationCalls = synchronizationCalls + 1
+        return nil
+      end
+      local function refreshDependencyHealth()
+        refreshCalls = refreshCalls + 1
+        local snapshot = lifecycle.core:snapshot()
+        if lifecycle.core:get() == 'DEGRADED' and next(snapshot.reasons) == nil then
+          assert(lifecycle.core:transition('READY', 'fixture recovery'))
+        end
+        snapshot = lifecycle.core:snapshot()
+        lifecycle.core:setCriticalFoundationsValidated(
+          lifecycle.core:get() == 'READY' and next(snapshot.reasons) == nil)
+        return {}, 0, nil
+      end
+      local function completeRecovery(isCurrentProbe)
+        assert(isCurrentProbe())
+        lifecycle.core:setHealth('database-runtime', 'HEALTHY')
+        local _, _, refreshError = refreshDependencyHealth()
+        return refreshError == nil, refreshError
+      end
+      local health = SynexCoreFactories.runtimeDatabaseHealth({
+        foundation = foundation,
+        lifecycle = lifecycle,
+        database = database,
+        synchronizeInstanceHealthStatus = synchronizeInstanceHealthStatus,
+        completeRecovery = completeRecovery,
+        setTimeout = platform.setTimeout
+      })
+
+      validationMode = 'down'
+      local unavailable, unavailableError = health:probe(true)
+      assert(unavailable == nil and unavailableError.code == 'DATABASE_RUNTIME_UNAVAILABLE')
+      assert(not health:isAvailable() and not lifecycle.core:canAdmitPlayers())
+
+      validationMode = 'yield'
+      local staleProbe = coroutine.create(function() return health:probe(true) end)
+      local started, marker = coroutine.resume(staleProbe)
+      assert(started and marker == 'stale-database-probe')
+      local watchdog = timeoutCallbacks[#timeoutCallbacks]
+      assert(watchdog.delay == 5000)
+      watchdog.callback()
+      local timedOut = health:snapshot()
+      assert(not timedOut.available and timedOut.probeInProgress == true)
+      assert(timedOut.consecutiveRecoverySuccesses == 0)
+
+      validationMode = 'up'
+      local concurrent, concurrentError, concurrentState = health:probe(true)
+      assert(concurrent and concurrentError == nil and concurrentState == 'suspended')
+      assert(validationCalls == 2)
+
+      local resumed = coroutine.resume(staleProbe, true, nil)
+      assert(resumed and coroutine.status(staleProbe) == 'dead')
+      local afterLateCompletion = health:snapshot()
+      assert(not afterLateCompletion.available and not afterLateCompletion.probeInProgress)
+      assert(afterLateCompletion.consecutiveRecoverySuccesses == 0)
+      assert(not lifecycle.core:canAdmitPlayers())
+
+      assert(health:probe(true))
+      local firstFreshRecovery = health:snapshot()
+      assert(not firstFreshRecovery.available)
+      assert(firstFreshRecovery.consecutiveRecoverySuccesses == 1)
+      assert(not lifecycle.core:canAdmitPlayers())
+
+      assert(health:probe(true))
+      local recovered = health:snapshot()
+      assert(recovered.available and recovered.consecutiveRecoverySuccesses == 0)
+      assert(lifecycle.core:get() == 'READY' and lifecycle.core:canAdmitPlayers())
+      assert(synchronizationCalls == 2 and refreshCalls == 1)
+
+      return table.concat({
+        validationCalls,
+        synchronizationCalls,
+        refreshCalls,
+        lifecycle.core:get(),
+        lifecycle.core:canAdmitPlayers() and 'open' or 'blocked'
+      }, ':')
+    `);
+    assert.equal(result, '4:2:1:READY:open');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('database workers wait for a yielding Cfx health probe and resume only after reconciliation', async () => {
+  const engine = await coreEngine([
+    'foundation',
+    'registries',
+    'lifecycle',
+    'bootstrap_restart',
+    'bootstrap_resource_events',
+    'bootstrap_lifecycle',
+  ]);
+  try {
+    const result = await engine.doString(`
+      local now, timers, threads = 1000, {}, {}
+      local yieldProbe, validationCalls, outboxCalls = false, 0, 0
+      local statusWrites = {}
+      local platform = {
+        nowGame = function() return now end,
+        random = function() return 1 end,
+        print = function() end,
+        jsonEncode = function() return '{}' end,
+        resourceState = function() return 'started' end,
+        resourceMetadata = function(name, key)
+          if name == 'oxmysql' and key == 'version' then return '2.14.1' end
+        end,
+        getPlayers = function() return {} end,
+        dropPlayer = function() error('the fixture has no connected players') end,
+        setTimeout = function(delay, callback)
+          timers[#timers + 1] = { dueAt = now + delay, callback = callback }
+        end,
+        createThread = function(callback)
+          threads[#threads + 1] = coroutine.create(callback)
+        end
+      }
+      local function runSchedulerAt(target)
+        now = target
+        local startingThreads, attempts = #threads, 0
+        while #threads == startingThreads do
+          local selected, dueAt = nil, nil
+          for index, timer in ipairs(timers) do
+            if timer.dueAt <= target and (dueAt == nil or timer.dueAt < dueAt) then
+              selected, dueAt = index, timer.dueAt
+            end
+          end
+          assert(selected ~= nil, 'fixture expected a due scheduler timer')
+          table.remove(timers, selected).callback()
+          attempts = attempts + 1
+          assert(attempts <= 16, 'fixture stale timer cleanup must remain bounded')
+        end
+      end
+      local foundation = SynexCoreFactories.foundation({
+        platform = platform,
+        monotonicMs = function() return now end
+      })
+      foundation.configureIds('database-circuit-cfx-concurrency')
+      local registries = SynexCoreFactories.registries({ foundation = foundation })
+      registries.owners:activate('synex_core')
+      registries.resources:upsert('synex_core', {
+        name = 'synex_core', critical = true, services = { provide = {'synex.runtime@1'} }
+      }, 'STARTED')
+      local lifecycle = SynexCoreFactories.lifecycle({
+        platform = platform,
+        foundation = foundation,
+        owners = registries.owners
+      })
+      local database = {
+        validateUtcSession = function()
+          validationCalls = validationCalls + 1
+          if yieldProbe then return coroutine.yield('database-health-probe') end
+          return true, nil
+        end
+      }
+      local instances = {
+        register = function() return true, nil end,
+        terminateLocalSessions = function() return true, nil end,
+        sourceGenerationFloor = function() return 0, nil end,
+        setStatus = function(_, status)
+          statusWrites[#statusWrites + 1] = status
+          return true, nil
+        end
+      }
+      local migrations = {
+        bootstrap = function() return true, nil end,
+        acquireLease = function() return true, nil end,
+        apply = function() return true, nil end,
+        releaseLease = function() return true, nil end
+      }
+      local noop = function() return true, nil end
+      SynexCoreFactories.commands = function() return { bind = function() return true end } end
+      local runtime = {}
+      SynexCoreFactories.bootstrapLifecycle({
+        runtime = runtime,
+        platform = platform,
+        foundation = foundation,
+        runtimeGate = { beginBoot = noop, open = noop, fail = noop, stop = noop },
+        coreResource = 'synex_core',
+        registries = registries,
+        lifecycle = lifecycle,
+        reloadSnapshots = {},
+        facadeCache = {},
+        manifests = { synex_core = { migrations = {} } },
+        reliability = {
+          outbox = {
+            dispatchBatch = function()
+              outboxCalls = outboxCalls + 1
+              return { completed = 0 }, nil
+            end
+          }
+        },
+        sagaRuntime = {},
+        retention = {},
+        messaging = { network = {}, events = { publishOutbox = noop } },
+        identity = {
+          connections = { heartbeat = noop },
+          characters = { reconcileDeletions = noop, reconcileUnloads = noop }
+        },
+        security = { rbac = { hydrate = noop } },
+        persistence = { database = database, migrations = migrations, instances = instances },
+        defaultConfig = {
+          instanceName = 'Instance A', instanceId = 'instance-a',
+          database = { minimumOxmysqlVersion = '2.14.1' },
+          features = { durableEvents = true, sagas = false },
+          retention = { audit = { mode = 'retain_forever' }, workerIntervalMs = 60000 },
+          connections = { clusterHeartbeatMs = 5000 }
+        },
+        api = {
+          getAPIForCaller = noop, invokeForCaller = noop, guarded = noop,
+          registerCoreContracts = noop, registerCoreServices = noop
+        },
+        discovery = {
+          discoverResource = noop, invalidateResource = noop, discoverAll = noop,
+          ensureOwner = noop, supportsStateHandoff = noop,
+          captureStateHandoff = noop, restoreStateHandoff = noop,
+          validateActive = function() return {} end
+        }
+      })
+      assert(runtime:start())
+      assert(lifecycle.core:get() == 'READY' and lifecycle.core:canAdmitPlayers())
+      assert(validationCalls == 1 and statusWrites[1] == 'ready')
+
+      yieldProbe = true
+      runSchedulerAt(2000)
+      assert(#threads == 2)
+      local started, marker = coroutine.resume(threads[1])
+      assert(started and marker == 'database-health-probe')
+      assert(coroutine.resume(threads[2]))
+      assert(coroutine.status(threads[2]) == 'dead' and outboxCalls == 0)
+      local failed = foundation.error('DATABASE_ERROR', 'private fixture endpoint')
+      assert(coroutine.resume(threads[1], nil, failed))
+      assert(coroutine.status(threads[1]) == 'dead')
+      assert(lifecycle.core:get() == 'DEGRADED' and not lifecycle.core:canAdmitPlayers())
+
+      local firstRecoveryThread = #threads + 1
+      runSchedulerAt(7000)
+      local firstRecoveryLastThread = #threads
+      assert(select(2, coroutine.resume(threads[firstRecoveryThread])) == 'database-health-probe')
+      for index = firstRecoveryThread + 1, firstRecoveryLastThread do
+        local workerResumed, workerError = coroutine.resume(threads[index])
+        assert(workerResumed, workerError)
+        assert(coroutine.status(threads[index]) == 'dead')
+      end
+      assert(outboxCalls == 0)
+      assert(coroutine.resume(threads[firstRecoveryThread], true, nil))
+      assert(not lifecycle.core:canAdmitPlayers() and statusWrites[2] == 'degraded')
+
+      local secondRecoveryThread = #threads + 1
+      runSchedulerAt(8000)
+      local secondRecoveryLastThread = #threads
+      assert(select(2, coroutine.resume(threads[secondRecoveryThread])) == 'database-health-probe')
+      for index = secondRecoveryThread + 1, secondRecoveryLastThread do
+        local workerResumed, workerError = coroutine.resume(threads[index])
+        assert(workerResumed, workerError)
+        assert(coroutine.status(threads[index]) == 'dead')
+      end
+      assert(outboxCalls == 0)
+      assert(coroutine.resume(threads[secondRecoveryThread], true, nil))
+      assert(lifecycle.core:get() == 'READY' and lifecycle.core:canAdmitPlayers())
+      assert(statusWrites[3] == 'ready')
+
+      yieldProbe = false
+      local resumedThread = #threads + 1
+      runSchedulerAt(9000)
+      local resumedLastThread = #threads
+      for index = resumedThread, resumedLastThread do
+        local workerResumed, workerError = coroutine.resume(threads[index])
+        assert(workerResumed, workerError)
+        assert(coroutine.status(threads[index]) == 'dead')
+      end
+      assert(outboxCalls == 1 and validationCalls == 5)
+
+      return table.concat({
+        lifecycle.core:get(),
+        lifecycle.core:canAdmitPlayers() and 'open' or 'blocked',
+        outboxCalls,
+        validationCalls,
+        table.concat(statusWrites, ',')
+      }, ':')
+    `);
+    assert.equal(result, 'READY:open:1:5:ready,degraded,ready');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('database recovery holds workers and admission closed through yielding reconciliation', async () => {
+  const engine = await coreEngine([
+    'foundation',
+    'registries',
+    'lifecycle',
+    'bootstrap_restart',
+    'bootstrap_resource_events',
+    'bootstrap_lifecycle',
+  ]);
+  try {
+    const result = await engine.doString(`
+      local now, timers, threads = 1000, {}, {}
+      local validationMode, dependencyMode, readyStatusMode = 'up', 'ok', 'ok'
+      local validationCalls, dependencyCalls, outboxCalls = 0, 0, 0
+      local statusAttempts, persistedStatuses = {}, {}
+      local captureWatchdog, capturedWatchdog = false, nil
+      local platform = {
+        nowGame = function() return now end,
+        random = function() return 1 end,
+        print = function() end,
+        jsonEncode = function() return '{}' end,
+        resourceState = function() return 'started' end,
+        resourceMetadata = function(name, key)
+          if name == 'oxmysql' and key == 'version' then return '2.14.1' end
+        end,
+        getPlayers = function() return {} end,
+        dropPlayer = function() error('the fixture has no connected players') end,
+        setTimeout = function(delay, callback)
+          timers[#timers + 1] = { dueAt = now + delay, callback = callback }
+          if captureWatchdog and delay == 5000 then
+            capturedWatchdog = callback
+            captureWatchdog = false
+          end
+        end,
+        createThread = function(callback)
+          threads[#threads + 1] = coroutine.create(callback)
+        end
+      }
+      local function runSchedulerAt(target)
+        now = target
+        local startingThreads, attempts = #threads, 0
+        while #threads == startingThreads do
+          local selected, dueAt = nil, nil
+          for index, timer in ipairs(timers) do
+            if timer.dueAt <= target and (dueAt == nil or timer.dueAt < dueAt) then
+              selected, dueAt = index, timer.dueAt
+            end
+          end
+          assert(selected ~= nil, 'fixture expected a due scheduler timer')
+          table.remove(timers, selected).callback()
+          attempts = attempts + 1
+          assert(attempts <= 24, 'fixture stale timer cleanup must remain bounded')
+        end
+      end
+      local function resumeWorkers(first, last)
+        for index = first, last do
+          local resumed, workerError = coroutine.resume(threads[index])
+          assert(resumed, workerError)
+          assert(coroutine.status(threads[index]) == 'dead',
+            'a concurrent database worker must suspend instead of starting another probe')
+        end
+      end
+
+      local foundation = SynexCoreFactories.foundation({
+        platform = platform,
+        monotonicMs = function() return now end
+      })
+      foundation.configureIds('database-recovery-reconciliation-race')
+      local registries = SynexCoreFactories.registries({ foundation = foundation })
+      registries.owners:activate('synex_core')
+      registries.resources:upsert('synex_core', {
+        name = 'synex_core', critical = true, services = { provide = {'synex.runtime@1'} }
+      }, 'STARTED')
+      local lifecycle = SynexCoreFactories.lifecycle({
+        platform = platform,
+        foundation = foundation,
+        owners = registries.owners
+      })
+      local database = {
+        validateUtcSession = function()
+          validationCalls = validationCalls + 1
+          if validationMode == 'down' then
+            return nil, foundation.error('DATABASE_ERROR', 'private fixture endpoint')
+          end
+          if validationMode == 'yield' then return coroutine.yield('database-health-probe') end
+          return true, nil
+        end
+      }
+      local instances = {
+        register = function() return true, nil end,
+        terminateLocalSessions = function() return true, nil end,
+        sourceGenerationFloor = function() return 0, nil end,
+        setStatus = function(_, status)
+          statusAttempts[#statusAttempts + 1] = status
+          if status == 'ready' and readyStatusMode == 'yield-fail' then
+            return coroutine.yield('instance-ready-status-failure')
+          end
+          if status == 'ready' and readyStatusMode == 'yield-success' then
+            local synchronized, synchronizationError = coroutine.yield(
+              'instance-ready-status-timeout')
+            if not synchronized then return nil, synchronizationError end
+          end
+          persistedStatuses[#persistedStatuses + 1] = status
+          return true, nil
+        end
+      }
+      local migrations = {
+        bootstrap = function() return true, nil end,
+        acquireLease = function() return true, nil end,
+        apply = function() return true, nil end,
+        releaseLease = function() return true, nil end
+      }
+      local noop = function() return true, nil end
+      SynexCoreFactories.commands = function() return { bind = function() return true end } end
+      local runtime = {}
+      SynexCoreFactories.bootstrapLifecycle({
+        runtime = runtime,
+        platform = platform,
+        foundation = foundation,
+        runtimeGate = { beginBoot = noop, open = noop, fail = noop, stop = noop },
+        coreResource = 'synex_core',
+        registries = registries,
+        lifecycle = lifecycle,
+        reloadSnapshots = {},
+        facadeCache = {},
+        manifests = { synex_core = { migrations = {} } },
+        reliability = {
+          outbox = {
+            dispatchBatch = function()
+              outboxCalls = outboxCalls + 1
+              return { completed = 0 }, nil
+            end
+          }
+        },
+        sagaRuntime = {},
+        retention = {},
+        messaging = { network = {}, events = { publishOutbox = noop } },
+        identity = {
+          connections = { heartbeat = noop },
+          characters = { reconcileDeletions = noop, reconcileUnloads = noop }
+        },
+        security = { rbac = { hydrate = noop } },
+        persistence = { database = database, migrations = migrations, instances = instances },
+        defaultConfig = {
+          instanceName = 'Instance A', instanceId = 'instance-a',
+          database = { minimumOxmysqlVersion = '2.14.1' },
+          features = { durableEvents = true, sagas = false },
+          retention = { audit = { mode = 'retain_forever' }, workerIntervalMs = 60000 },
+          connections = { clusterHeartbeatMs = 5000 }
+        },
+        api = {
+          getAPIForCaller = noop, invokeForCaller = noop, guarded = noop,
+          registerCoreContracts = noop, registerCoreServices = noop
+        },
+        discovery = {
+          discoverResource = noop, invalidateResource = noop, discoverAll = noop,
+          ensureOwner = noop, supportsStateHandoff = noop,
+          captureStateHandoff = noop, restoreStateHandoff = noop,
+          validateActive = function()
+            dependencyCalls = dependencyCalls + 1
+            if dependencyMode == 'yield' then return coroutine.yield('dependency-refresh') end
+            return {}
+          end
+        }
+      })
+      assert(runtime:start())
+      assert(lifecycle.core:get() == 'READY' and lifecycle.core:canAdmitPlayers())
+      assert(table.concat(persistedStatuses, ',') == 'ready')
+
+      validationMode = 'down'
+      runSchedulerAt(2000)
+      resumeWorkers(#threads - 1, #threads)
+      assert(outboxCalls == 0 and not lifecycle.core:canAdmitPlayers())
+      assert(lifecycle.core:snapshot().reasons['database-runtime'])
+
+      validationMode = 'yield'
+      local firstRecoveryThread = #threads + 1
+      runSchedulerAt(7000)
+      local firstRecoveryLastThread = #threads
+      local started, marker = coroutine.resume(threads[firstRecoveryThread])
+      assert(started and marker == 'database-health-probe')
+      resumeWorkers(firstRecoveryThread + 1, firstRecoveryLastThread)
+      assert(coroutine.resume(threads[firstRecoveryThread], true, nil))
+      assert(coroutine.status(threads[firstRecoveryThread]) == 'dead')
+      assert(not lifecycle.core:canAdmitPlayers())
+      assert(table.concat(persistedStatuses, ',') == 'ready,degraded')
+
+      dependencyMode, readyStatusMode = 'yield', 'yield-fail'
+      local secondRecoveryThread = #threads + 1
+      runSchedulerAt(8000)
+      local secondRecoveryLastThread = #threads
+      assert(select(2, coroutine.resume(threads[secondRecoveryThread])) == 'database-health-probe')
+      resumeWorkers(secondRecoveryThread + 1, secondRecoveryLastThread)
+      local validationResumed, dependencyMarker = coroutine.resume(
+        threads[secondRecoveryThread], true, nil)
+      assert(validationResumed and dependencyMarker == 'dependency-refresh')
+      assert(not lifecycle.core:canAdmitPlayers() and validationCalls == 4)
+
+      local dependencyWaitWorker = #threads + 1
+      runSchedulerAt(9000)
+      resumeWorkers(dependencyWaitWorker, #threads)
+      assert(outboxCalls == 0 and validationCalls == 4)
+      assert(dependencyCalls == 3 and not lifecycle.core:canAdmitPlayers())
+
+      dependencyMode = 'ok'
+      local dependencyResumed, statusMarker = coroutine.resume(
+        threads[secondRecoveryThread], {})
+      assert(dependencyResumed and statusMarker == 'instance-ready-status-failure')
+      assert(not lifecycle.core:canAdmitPlayers())
+      assert(table.concat(persistedStatuses, ',') == 'ready,degraded')
+
+      local statusWaitWorker = #threads + 1
+      runSchedulerAt(10000)
+      resumeWorkers(statusWaitWorker, #threads)
+      assert(outboxCalls == 0 and validationCalls == 4)
+      assert(dependencyCalls == 3 and not lifecycle.core:canAdmitPlayers())
+
+      local readyFailure = foundation.error('DATABASE_ERROR', 'private ready status endpoint')
+      local statusResumed = coroutine.resume(
+        threads[secondRecoveryThread], nil, readyFailure)
+      assert(statusResumed)
+      assert(coroutine.status(threads[secondRecoveryThread]) == 'dead')
+      local failed = lifecycle.core:snapshot()
+      assert(failed.state == 'DEGRADED' and failed.playerAdmission == false)
+      assert(failed.reasons['database-runtime'])
+      assert(statusAttempts[#statusAttempts] == 'ready')
+      assert(table.concat(persistedStatuses, ',') == 'ready,degraded')
+
+      validationMode, readyStatusMode = 'up', 'ok'
+      local firstRetryThread = #threads + 1
+      runSchedulerAt(15000)
+      resumeWorkers(firstRetryThread, #threads)
+      assert(not lifecycle.core:canAdmitPlayers())
+      local secondRetryThread = #threads + 1
+      runSchedulerAt(16000)
+      resumeWorkers(secondRetryThread, #threads)
+      assert(lifecycle.core:get() == 'READY' and lifecycle.core:canAdmitPlayers())
+      assert(persistedStatuses[#persistedStatuses] == 'ready')
+      assert(outboxCalls == 1)
+
+      validationMode = 'down'
+      local secondOutageThread = #threads + 1
+      runSchedulerAt(17000)
+      resumeWorkers(secondOutageThread, #threads)
+      assert(not lifecycle.core:canAdmitPlayers())
+
+      validationMode = 'up'
+      local timeoutRecoveryOne = #threads + 1
+      runSchedulerAt(22000)
+      resumeWorkers(timeoutRecoveryOne, #threads)
+      assert(not lifecycle.core:canAdmitPlayers())
+
+      readyStatusMode, captureWatchdog = 'yield-success', true
+      local timeoutRecoveryTwo = #threads + 1
+      runSchedulerAt(23000)
+      local timeoutRecoveryLast = #threads
+      local timeoutStarted, timeoutMarker = coroutine.resume(threads[timeoutRecoveryTwo])
+      assert(timeoutStarted and timeoutMarker == 'instance-ready-status-timeout')
+      assert(capturedWatchdog ~= nil and not lifecycle.core:canAdmitPlayers())
+      resumeWorkers(timeoutRecoveryTwo + 1, timeoutRecoveryLast)
+
+      now = 28000
+      capturedWatchdog()
+      assert(not lifecycle.core:canAdmitPlayers())
+      assert(lifecycle.core:snapshot().reasons['database-runtime'])
+      local lateStatusResumed = coroutine.resume(threads[timeoutRecoveryTwo], true, nil)
+      assert(lateStatusResumed and coroutine.status(threads[timeoutRecoveryTwo]) == 'dead')
+      assert(not lifecycle.core:canAdmitPlayers())
+      assert(lifecycle.core:snapshot().reasons['database-runtime'])
+      assert(persistedStatuses[#persistedStatuses] == 'degraded',
+        'a ready write completing after the watchdog must be rolled back fail-closed')
+      assert(statusAttempts[#statusAttempts - 1] == 'ready')
+      assert(statusAttempts[#statusAttempts] == 'degraded')
+      assert(outboxCalls == 1)
+
+      return table.concat({
+        lifecycle.core:get(),
+        lifecycle.core:canAdmitPlayers() and 'open' or 'blocked',
+        outboxCalls,
+        persistedStatuses[#persistedStatuses]
+      }, ':')
+    `);
+    assert.equal(result, 'DEGRADED:blocked:1:degraded');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('bootstrap database circuit runs first, suspends database workers, and resumes after recovery', async () => {
+  const engine = await coreEngine([
+    'foundation',
+    'registries',
+    'lifecycle',
+    'bootstrap_restart',
+    'bootstrap_resource_events',
+    'bootstrap_lifecycle',
+  ]);
+  try {
+    const result = await engine.doString(`
+      local now, callbacks = 1000, {}
+      local databaseAvailable, healthChecks = true, 0
+      local deletions, unloads, heartbeats = 0, 0, 0
+      local pendingConnections, admissionReservations, pendingFinalizations = 1, 1, 0
+      local statusWrites = {}
+      local platform = {
+        nowGame = function() return now end,
+        random = function() return 1 end,
+        print = function() end,
+        jsonEncode = function() return '{}' end,
+        resourceState = function() return 'started' end,
+        resourceMetadata = function(name, key)
+          if name == 'oxmysql' and key == 'version' then return '2.14.1' end
+        end,
+        getPlayers = function() return {} end,
+        dropPlayer = function() error('the fixture has no connected players') end,
+        setTimeout = function(delay, callback)
+          callbacks[#callbacks + 1] = { dueAt = now + delay, callback = callback }
+        end
+      }
+      local function runUntil(target)
+        now = target
+        local executions = 0
+        while true do
+          local selected, dueAt = nil, nil
+          for index, candidate in ipairs(callbacks) do
+            if candidate.dueAt <= now and (dueAt == nil or candidate.dueAt < dueAt) then
+              selected, dueAt = index, candidate.dueAt
+            end
+          end
+          if selected == nil then break end
+          local callback = table.remove(callbacks, selected).callback
+          callback()
+          executions = executions + 1
+          assert(executions <= 64, 'fixture timer pump must remain bounded')
+        end
+      end
+
+      local foundation = SynexCoreFactories.foundation({
+        platform = platform,
+        monotonicMs = function() return now end
+      })
+      foundation.configureIds('database-circuit-integration')
+      local registries = SynexCoreFactories.registries({ foundation = foundation })
+      registries.owners:activate('synex_core')
+      registries.resources:upsert('synex_core', {
+        name = 'synex_core', critical = true, services = { provide = {'synex.runtime@1'} }
+      }, 'STARTED')
+      local lifecycle = SynexCoreFactories.lifecycle({
+        platform = platform,
+        foundation = foundation,
+        owners = registries.owners
+      })
+      local database = {
+        validateUtcSession = function()
+          healthChecks = healthChecks + 1
+          if databaseAvailable then return true, nil end
+          return nil, foundation.error('DATABASE_ERROR', 'fixture database unavailable')
+        end
+      }
+      local instances = {
+        register = function() return true, nil end,
+        terminateLocalSessions = function() return true, nil end,
+        sourceGenerationFloor = function() return 0, nil end,
+        setStatus = function(_, status)
+          statusWrites[#statusWrites + 1] = status
+          return true, nil
+        end
+      }
+      local migrations = {
+        bootstrap = function() return true, nil end,
+        acquireLease = function() return true, nil end,
+        apply = function() return true, nil end,
+        releaseLease = function() return true, nil end
+      }
+      local connections = {
+        heartbeat = function()
+          heartbeats = heartbeats + 1
+          if not databaseAvailable and pendingConnections > 0 then
+            pendingConnections = 0
+            admissionReservations = 0
+            pendingFinalizations = pendingFinalizations + 1
+          end
+          if not databaseAvailable then
+            return nil, foundation.error('DATABASE_ERROR', 'fixture heartbeat database unavailable')
+          end
+          return true, nil
+        end
+      }
+      local characters = {
+        reconcileDeletions = function()
+          deletions = deletions + 1
+          return true, nil
+        end,
+        reconcileUnloads = function()
+          unloads = unloads + 1
+          return true, nil
+        end
+      }
+      local noop = function() return true, nil end
+      SynexCoreFactories.commands = function() return { bind = function() return true end } end
+      local runtime = {}
+      SynexCoreFactories.bootstrapLifecycle({
+        runtime = runtime,
+        platform = platform,
+        foundation = foundation,
+        runtimeGate = { beginBoot = noop, open = noop, fail = noop, stop = noop },
+        coreResource = 'synex_core',
+        registries = registries,
+        lifecycle = lifecycle,
+        reloadSnapshots = {},
+        facadeCache = {},
+        manifests = { synex_core = { migrations = {} } },
+        reliability = {},
+        sagaRuntime = {},
+        retention = {},
+        messaging = { network = {} },
+        identity = { connections = connections, characters = characters },
+        security = { rbac = { hydrate = noop } },
+        persistence = { database = database, migrations = migrations, instances = instances },
+        defaultConfig = {
+          instanceName = 'Instance A',
+          instanceId = 'instance-a',
+          database = { minimumOxmysqlVersion = '2.14.1' },
+          features = { durableEvents = false, sagas = false },
+          retention = { audit = { mode = 'retain_forever' }, workerIntervalMs = 60000 },
+          connections = { clusterHeartbeatMs = 5000 }
+        },
+        api = {
+          getAPIForCaller = noop,
+          invokeForCaller = noop,
+          guarded = noop,
+          registerCoreContracts = noop,
+          registerCoreServices = noop
+        },
+        discovery = {
+          discoverResource = noop,
+          invalidateResource = noop,
+          discoverAll = noop,
+          ensureOwner = noop,
+          supportsStateHandoff = noop,
+          captureStateHandoff = noop,
+          restoreStateHandoff = noop,
+          validateActive = function() return {} end
+        }
+      })
+
+      assert(runtime:start())
+      assert(lifecycle.core:get() == 'READY' and lifecycle.core:canAdmitPlayers())
+      assert(statusWrites[1] == 'ready' and healthChecks == 1)
+
+      databaseAvailable = false
+      runUntil(6000)
+      local unavailable = lifecycle.core:snapshot()
+      assert(unavailable.state == 'DEGRADED' and unavailable.playerAdmission == false)
+      assert(unavailable.reasons['database-runtime'] ~= nil)
+      assert(healthChecks == 2)
+      assert(deletions == 0 and unloads == 0 and heartbeats == 1)
+      assert(pendingConnections == 0 and admissionReservations == 0 and pendingFinalizations == 1)
+      local unavailableWorkers = lifecycle.scheduler:snapshot()
+      local healthWorker, suspendedWorkers = nil, 0
+      for _, worker in ipairs(unavailableWorkers) do
+        if worker.name == 'core.database.runtime_health' then healthWorker = worker end
+        if worker.lastError == 'SCHEDULE_SUSPENDED' then suspendedWorkers = suspendedWorkers + 1 end
+      end
+      assert(healthWorker and healthWorker.health == 'DEGRADED'
+        and healthWorker.lastError == 'DATABASE_RUNTIME_UNAVAILABLE')
+      assert(suspendedWorkers >= 3)
+
+      databaseAvailable = true
+      runUntil(11000)
+      local recoveryPending = lifecycle.core:snapshot()
+      assert(recoveryPending.playerAdmission == false)
+      assert(recoveryPending.reasons['database-runtime'] ~= nil)
+      assert(statusWrites[2] == 'degraded')
+      assert(deletions == 0 and unloads == 0 and heartbeats == 2)
+      assert(pendingFinalizations == 1)
+
+      runUntil(16000)
+      local recovered = lifecycle.core:snapshot()
+      assert(recovered.state == 'READY' and recovered.playerAdmission == true)
+      assert(recovered.reasons['database-runtime'] == nil)
+      assert(statusWrites[3] == 'ready' and healthChecks == 4)
+      assert(deletions == 1 and unloads == 1 and heartbeats == 3)
+      assert(pendingConnections == 0 and admissionReservations == 0 and pendingFinalizations == 1)
+
+      local workers = lifecycle.scheduler:snapshot()
+      local databaseHealthRuns = 0
+      for _, worker in ipairs(workers) do
+        if worker.name == 'core.database.runtime_health' then
+          databaseHealthRuns = worker.runs
+        end
+      end
+      assert(databaseHealthRuns == 3)
+      return table.concat({
+        unavailable.state,
+        unavailable.playerAdmission and 'open' or 'blocked',
+        recoveryPending.playerAdmission and 'open' or 'blocked',
+        recovered.state,
+        recovered.playerAdmission and 'open' or 'blocked',
+        healthChecks,
+        deletions,
+        unloads,
+        heartbeats,
+        pendingFinalizations,
+        table.concat(statusWrites, ',')
+      }, ':')
+    `);
+    assert.equal(result, 'DEGRADED:blocked:blocked:READY:open:4:1:1:3:1:ready,degraded,ready');
   } finally {
     engine.global.close();
   }

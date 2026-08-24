@@ -1,10 +1,13 @@
 # Groups and memberships
 
-`synex_groups` is an experimental server-only foundation resource for durable groups, grades, grade capability rules, primary selection, and versioned user/character memberships. It is not job gameplay, a payroll system, or a UI.
+> [!WARNING]
+> `synex_groups` is an experimental rework snapshot. It is unsupported, outside the `synex_core` Production-Beta certification boundary, and must not be inferred to be deployment-ready from this reference or its repository tests.
+
+The current snapshot models durable groups, grades, grade capability rules, primary selection, and versioned user/character memberships. It is not job gameplay, a payroll system, or a UI, and its interfaces may change or be replaced during the rework. Everything below is a source catalog, not current integration or deployment guidance.
 
 ## Contracts
 
-The resource provides ten local RPC contracts:
+The checked-in snapshot declares ten local RPC contracts:
 
 - `synex.groups.create`
 - `synex.groups.get`
@@ -32,7 +35,7 @@ The complete schemas, errors, and versions are generated in the [contract catalo
 - Expected versions guard change/remove operations against lost updates.
 - Domain events are written to the resource outbox in the same database transaction as the mutation.
 
-An owner-aware scheduler runs the `synex_groups.outbox_dispatcher` once per second and claims at most 25 ready rows per batch. It publishes them through the capability-gated Core `Events.publishOutbox` surface with the stored `eventId`; subscriber failures are retried with bounded backoff, and the tenth failed attempt moves the row to `dead`. Delivery is at least once, so subscribers deduplicate by `eventId`.
+The checked-in snapshot defines an owner-aware `synex_groups.outbox_dispatcher` scheduled once per second with at most 25 ready rows per batch. Its code publishes through the capability-gated Core `Events.publishOutbox` surface with the stored `eventId`; subscriber failures use bounded backoff, and the tenth failed attempt moves the row to `dead`. This describes snapshot behavior only and is not accepted operational guidance.
 
 The implementation owns only the tables listed in its resource manifest. Its required Core character-lifecycle participant prepares an `anonymize` action, then transactionally replaces character subject references with a generated anonymous reference, updates related actor/snapshot references, invalidates affected read models, records an outbox event, and completes an idempotent deletion journal. Membership and primary-event history is retained rather than cascaded away.
 

@@ -1,10 +1,16 @@
 # Compatibility bridges
 
-Synex compatibility is an optional migration aid. The bridges expose a deliberately small, consumer-bound legacy API shape while executing identity, account, group, callback, and lifecycle work through native Synex services. They do not load or query QBCore, Qbox, or ESX, and native Synex contracts remain the preferred integration model.
+> [!WARNING]
+> Every bridge and its shared library are experimental rework snapshots. They are unsupported and excluded from the `synex_core` Production-Beta deployment, integration, and security certification boundary.
 
-Compatibility is `Partial` and `Deprecated` by design. It is not a claim that an unchanged legacy resource will run: consumers must change their export target from `qb-core`, `qbx_core`, or `es_extended` to the selected Synex bridge and must handle the explicit `(result, error)` return convention.
+The current compatibility snapshots explore an optional migration aid. They expose a deliberately small, consumer-bound legacy API shape while executing identity, account, group, callback, and lifecycle work through native Synex services. They do not load or query QBCore, Qbox, or ESX, and their interfaces may change or be replaced during rework.
 
-## Components
+The current implementation matrix is `Partial` and `Deprecated` by design. Those labels describe only the checked-in snapshot; they are not support levels or a claim that an unchanged legacy resource will run. Consumers would need to change their export target from `qb-core`, `qbx_core`, or `es_extended` to the selected Synex bridge and handle the explicit `(result, error)` return convention.
+
+> [!CAUTION]
+> Every command, capability example, export call, and configuration fragment below is retained only to explain the historical snapshot during rework. It is not current installation or migration guidance. Do not start these bridges or their downstream dependencies in the Core candidate profile.
+
+## Snapshot component catalog
 
 | Resource | Responsibility | Runtime dependencies |
 | --- | --- | --- |
@@ -13,7 +19,7 @@ Compatibility is `Partial` and `Deprecated` by design. It is not a claim that an
 | `synex_bridge_qbx` | Qbox-shaped exports plus a limited Core Object facade | Core, bridge, accounts, groups |
 | `synex_bridge_esx` | ESX shared-object and detached xPlayer facade | Core, bridge, accounts, groups |
 
-Enable only the bridge being migrated. In particular, do not run the QB and QBX bridges together: both intentionally publish the common `QBCore:*` lifecycle event names.
+The checked-in snapshot declared the following dependency order. It is shown for source review only; do not execute it as a deployment recipe. The QB and QBX snapshots also publish the same `QBCore:*` lifecycle event names and were never intended to run together.
 
 ```cfg
 ensure synex_core
@@ -23,7 +29,7 @@ ensure synex_bridge
 ensure synex_bridge_qbx
 ```
 
-## Consumer authorization
+## Historical consumer-authorization design
 
 Every call is bound to Cfx's immediate `GetInvokingResource()` value. A consumer cannot supply or substitute another resource identity. It needs both a manifest declaration and an operator policy grant; denies still win.
 

@@ -3,6 +3,7 @@ game 'gta5'
 
 name 'synex_core'
 description 'Synex framework kernel'
+author 'PixelGG'
 version '0.1.0'
 
 dependency 'oxmysql'
@@ -61,6 +62,7 @@ server_scripts {
     'server/bootstrap_diagnostics.lua',
     'server/bootstrap_restart.lua',
     'server/bootstrap_resource_events.lua',
+    'server/runtime_database_health.lua',
     'server/bootstrap_lifecycle.lua',
     'server/bootstrap.lua',
     'server/main.lua'

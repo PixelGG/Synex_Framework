@@ -12,6 +12,9 @@ All three exports capture the immediate calling resource as the principal. Conso
 
 Every public contract in `0.1.0` is marked `experimental`. The API version is `1.0.0`, but that does not make the framework release stable.
 
+> [!IMPORTANT]
+> The Production-Beta candidate covers the `synex_core` runtime only. Its three ABI exports and caller-bound facade remain experimental integration surfaces. Catalog entries and providers owned by `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, bridges, SDKs, examples, or other downstream modules are rework snapshots outside certification.
+
 ## Facade groups
 
 The caller-bound facade currently includes:
@@ -32,6 +35,8 @@ The caller-bound facade currently includes:
 | `Idempotency`, `Outbox`, `Sagas`, `Audit` | persistence-backed reliability primitives; durable publish, saga, and audit facade operations are capability-gated |
 
 This table is a navigation aid, not a substitute for a contract. Internal factory objects and mutable registries are not public APIs.
+
+`GetRuntimeStatus()` reports lifecycle availability and player admission separately. During a recoverable runtime database outage it can validly return `state = "DEGRADED"`, `operational = true`, and `playerAdmission = false`: Core remains available for bounded diagnostics and recovery, but it is not healthy and must not admit a new player. Consumers must not treat `operational` alone as readiness; only `READY` with `playerAdmission = true` and no health reasons is the healthy admission state. The current `synex.runtime.status@2.0.0` contract includes `playerAdmission`; version `1.0.0` is the legacy shape without that field.
 
 `Idempotency.run` uses a fail-closed, at-most-once execution claim. Its optional settings object is closed and plain: `lockSeconds` is an integer from 5 through 300, `ttlSeconds` is an integer from `lockSeconds` through 604800, and `maximumRequestBytes` / `maximumResponseBytes` are integers from 1 through 65536. Requests and results must be bounded plain JSON before encoding. A completed record is replayed while its tombstone exists; failed or expired pending executions are never automatically reclaimed. They return `IDEMPOTENCY_FAILED` or `IDEMPOTENCY_INDETERMINATE` and require domain reconciliation. `ttlSeconds` bounds response-retention metadata; it does not make reusing an existing key safe. Core intentionally has no automatic tombstone reaper: deleting an expired completed/failed row would make the key executable again without domain-specific proof that reuse is safe.
 
@@ -113,9 +118,9 @@ Generic idempotency keeps every terminal key tombstone so the same namespace/key
 
 Persisted session-control requests use database-authoritative retained-row capacity. An exact valid pending request remains replayable when a limit is reached; only a new request is denied. Completed and expired requests become deletion-eligible after `sessionControlAfterDays`, but pending requests never do, even when their action deadline has elapsed. The authority worker terminalizes those rows first. Request and authority rows are operationally ephemeral after this grace and must not be used as durable audit history; request IDs are never reused.
 
-Core itself registers `synex.runtime@1`; its `status` and `snapshot` methods accept an empty request and require `synex.runtime.read`. The runnable resources in this repository also register these manifest-declared providers when they are started:
+Core itself registers `synex.runtime@1`; its `status` and `snapshot` methods accept an empty request and require `synex.runtime.read`. The source tree also contains the following provider declarations in downstream rework snapshots. This table is a source catalog only: do not start those resources, depend on these methods, or infer release support from a declaration.
 
-| Provider | Read-only methods | Method capability |
+| Snapshot provider declaration | Read-only methods | Method capability |
 | --- | --- | --- |
 | `synex.groups@1` | `get`, `get_read_model`, `list_subject_memberships`, `check_capability`, `get_control_summary` | `synex.groups.read` |
 | `synex.accounts@1` | `get_snapshot`, `list_owner_accounts`, `get_hold` | `synex.accounts.read` |
@@ -126,6 +131,8 @@ Core itself registers `synex.runtime@1`; its `status` and `snapshot` methods acc
 | `synex.example@1` | `echo` | none; optional example provider |
 
 Identity, messaging, and state remain facade/contract surfaces in `0.1.0`; manifests do not advertise unregistered services for them. Service methods are local server calls, not client endpoints. Domain mutations remain versioned RPC contracts so Core preserves the immediate consumer identity and enforces contract and capability policy.
+
+The non-Core rows above may change or disappear during rework. A manifest declaration, generated type, test, or checked-in provider implementation is not evidence that the owning resource is deployment-ready.
 
 ## Operator command surface
 

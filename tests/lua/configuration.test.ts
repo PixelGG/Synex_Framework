@@ -26,7 +26,7 @@ async function engineWith(...modules: string[]): Promise<LuaEngine> {
       return {
         environment = 'production', strict = true, instanceId = '',
         database = {
-          minimumOxmysqlVersion = '2.14.1', queryWarnMs = 250, queryTimeoutMs = 5000,
+          minimumOxmysqlVersion = '2.14.1', queryWarnMs = 250,
           deadlockRetries = 2, migrationLeaseSeconds = 30
         },
         connections = {
@@ -44,9 +44,7 @@ async function engineWith(...modules: string[]): Promise<LuaEngine> {
           timeoutMs = 5000, maximumTimeoutMs = 15000, maximumPendingPerSource = 16,
           maximumPayloadBytes = 32768, rate = 12, burst = 24
         },
-        events = { maximumQueueDepth = 1024 },
         logging = { level = 'info', pretty = false },
-        privacy = { identifierSaltConvar = 'synex_identifier_salt', diagnosticIdentifierPrefix = 8 },
         retention = {
           workerIntervalMs = 3600000, batchSize = 250, sessionControlAfterDays = 30,
           audit = { mode = 'retain_forever', archiveAfterDays = 365 },
@@ -106,10 +104,32 @@ test('runtime configuration rejects unknown keys and invalid cross-field values'
     local _, connectionBurstError = validator:validateRuntime(valid)
     assert(connectionBurstError.details.path == '$.connections.connectionBurst')
     valid = ValidRuntimeConfig()
-    valid.connections.duplicatePolicy = 'kick_old'
-    assert(validator:validateRuntime(valid))
-    valid.connections.duplicatePolicy = 'allow'
-    assert(validator:validateRuntime(valid))
+    valid.strict = false
+    local _, productionStrictError = validator:validateRuntime(valid)
+    assert(productionStrictError.details.path == '$.strict')
+    for _, policy in ipairs({'kick_old', 'replace_old', 'allow'}) do
+      valid = ValidRuntimeConfig()
+      valid.connections.duplicatePolicy = policy
+      local _, productionPolicyError = validator:validateRuntime(valid)
+      assert(productionPolicyError.details.path == '$.connections.duplicatePolicy')
+      valid.environment = 'staging'
+      assert(validator:validateRuntime(valid))
+      valid.environment = 'development'
+      valid.strict = false
+      assert(validator:validateRuntime(valid))
+    end
+    valid = ValidRuntimeConfig()
+    valid.database.queryTimeoutMs = 5000
+    local _, removedDatabaseError = validator:validateRuntime(valid)
+    assert(removedDatabaseError.details.path == '$.database.queryTimeoutMs')
+    valid = ValidRuntimeConfig()
+    valid.events = { maximumQueueDepth = 1024 }
+    local _, removedEventsError = validator:validateRuntime(valid)
+    assert(removedEventsError.details.path == '$.events')
+    valid = ValidRuntimeConfig()
+    valid.privacy = { identifierSaltConvar = 'synex_identifier_salt', diagnosticIdentifierPrefix = 8 }
+    local _, removedPrivacyError = validator:validateRuntime(valid)
+    assert(removedPrivacyError.details.path == '$.privacy')
     valid = ValidRuntimeConfig()
     valid.retention.audit.mode = 'delete'
     local _, retentionModeError = validator:validateRuntime(valid)
@@ -168,6 +188,13 @@ test('effective ConVar configuration is revalidated without silent clamping', as
     overrides.synex_maintenance = '1'
     local valid = assert(effective:apply(configured()))
     assert(valid.connections.maintenanceMode == true and valid.connections.queueReservedSlots == 0)
+    overrides.synex_duplicate_policy = 'kick_old'
+    local rejectedProduction, productionPolicyError = effective:apply(configured())
+    assert(rejectedProduction == nil and productionPolicyError:find('duplicatePolicy', 1, true))
+    local stagingConfig = configured()
+    stagingConfig.environment = 'staging'
+    assert(effective:apply(stagingConfig))
+    overrides.synex_duplicate_policy = nil
     for _, malformed in ipairs({'abc', '1.5', ' 1', '1 '}) do
       overrides.synex_queue_staff_priority = malformed
       local rejected, malformedError = effective:apply(configured())

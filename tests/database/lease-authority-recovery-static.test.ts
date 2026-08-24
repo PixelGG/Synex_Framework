@@ -179,7 +179,7 @@ test('expired authority retirement scans only one indexed bounded domain queue',
   assert.doesNotMatch(retirement, /lease_domain_kind|schema_migrations|synex_sagas|character-delete/iu);
   assert.match(
     lifecycle,
-    /scheduleEvery\(5000,[\s\S]*?retireExpiredAuthority\(250\)[\s\S]*?if retirementError then return nil, retirementError end[\s\S]*?compactTerminal\(250\)[\s\S]*?'core\.leases\.compact_terminal'/u,
+    /scheduleDatabaseEvery\(5000,[\s\S]*?retireExpiredAuthority\(250\)[\s\S]*?if retirementError then return nil, retirementError end[\s\S]*?compactTerminal\(250\)[\s\S]*?'core\.leases\.compact_terminal'/u,
   );
 });
 

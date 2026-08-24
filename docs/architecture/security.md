@@ -2,14 +2,17 @@
 
 Synex assumes the client is hostile, server resources can be buggy, identifiers and network IDs can be stale, and database or provider failures can occur between steps.
 
+This page documents the Core security model and the architectural rules expected of future integrations. The current Production-Beta security target is `synex_core` only; group/account rules, optional-resource endpoints, bridges, libraries, SDKs, and NUI behavior belong to unsupported rework snapshots until separately accepted.
+
 ## Trust boundaries
 
 - Client payloads are untrusted. The shared transport validates envelope shape and size, contract input, session/source generation, and rate; the domain handler must validate current ownership, proximity, and other operation-specific facts.
 - A client cannot assert a server resource identity or invoke arbitrary services.
 - Resource manifests request capabilities; an operator policy grants them. A declaration is never a grant.
 - `GetInvokingResource()` attributes server-side export calls but does not sandbox Lua resources.
-- ACE principals, Core RBAC subjects, group capability rules, and account access roles are separate authorization domains. Core does not infer equivalence; any mapping must be explicit in a reviewed server-side integration.
+- ACE principals and Core RBAC subjects are separate authorization domains. The experimental group capability and account access-role snapshots are separate again; Core does not infer equivalence, and any future mapping must be explicit in a reviewed server-side integration.
 - Database operations use parameters. Dynamic identifiers must be selected from code-owned allowlists.
+- A returned runtime database-health failure, adapter exception, or five-second watchdog closes player admission and suspends ordinary database-backed recurring work without claiming driver-query cancellation. Bounded connection-heartbeat cleanup is deliberately exempt and remains active. Recovery requires two consecutive successful probes and successful lifecycle/instance reconciliation; independent health faults continue to block admission.
 
 ## Capability classes
 

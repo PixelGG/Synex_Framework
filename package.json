@@ -28,6 +28,7 @@
     "migrate": "node --experimental-strip-types tools/migrator/src/bin.ts",
     "security": "node --experimental-strip-types tools/cli/src/bin.ts security scan .",
     "certify": "node --experimental-strip-types tools/cli/src/bin.ts certify repository",
+    "evidence:core-beta": "node --experimental-strip-types tools/core-beta-evidence.ts",
     "benchmark": "node --experimental-strip-types tools/cli/src/bin.ts benchmark"
   },
   "dependencies": {

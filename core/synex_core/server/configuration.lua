@@ -68,7 +68,7 @@ factories.configuration = function(deps)
     function configuration:validateRuntime(config)
         local ok, err = exactObject(config, '$', {
             'environment', 'strict', 'instanceId', 'database', 'connections',
-            'rpc', 'events', 'logging', 'privacy', 'retention', 'features'
+            'rpc', 'logging', 'retention', 'features'
         }, { '$schema' })
         if not ok then return nil, err end
         if config['$schema'] ~= nil then
@@ -83,7 +83,7 @@ factories.configuration = function(deps)
                 return boundedString(config.instanceId, 1, 36, '$.instanceId', '^[A-Za-z0-9_-]+$')
             end,
             function() return exactObject(config.database, '$.database', {
-                'minimumOxmysqlVersion', 'queryWarnMs', 'queryTimeoutMs', 'deadlockRetries', 'migrationLeaseSeconds'
+                'minimumOxmysqlVersion', 'queryWarnMs', 'deadlockRetries', 'migrationLeaseSeconds'
             }) end,
             function()
                 local parsed = foundation.semver(config.database.minimumOxmysqlVersion)
@@ -93,7 +93,6 @@ factories.configuration = function(deps)
                 return true, nil
             end,
             function() return integer(config.database.queryWarnMs, 1, 60000, '$.database.queryWarnMs') end,
-            function() return integer(config.database.queryTimeoutMs, 100, 60000, '$.database.queryTimeoutMs') end,
             function() return integer(config.database.deadlockRetries, 0, 5, '$.database.deadlockRetries') end,
             function() return integer(config.database.migrationLeaseSeconds, 10, 300, '$.database.migrationLeaseSeconds') end,
             function() return exactObject(config.connections, '$.connections', {
@@ -141,17 +140,12 @@ factories.configuration = function(deps)
             function() return integer(config.rpc.maximumPayloadBytes, 1024, 262144, '$.rpc.maximumPayloadBytes') end,
             function() return number(config.rpc.rate, 0, 10000, '$.rpc.rate') end,
             function() return number(config.rpc.burst, 0, 10000, '$.rpc.burst') end,
-            function() return exactObject(config.events, '$.events', { 'maximumQueueDepth' }) end,
-            function() return integer(config.events.maximumQueueDepth, 1, 100000, '$.events.maximumQueueDepth') end,
             function() return exactObject(config.logging, '$.logging', { 'level', 'pretty' }) end,
             function() return oneOf(config.logging.level, { 'trace', 'debug', 'info', 'warn', 'error', 'fatal' }, '$.logging.level') end,
             function()
                 if config.logging.pretty ~= false then return invalid('$.logging.pretty', 'Structured JSON logging cannot be disabled.') end
                 return true, nil
             end,
-            function() return exactObject(config.privacy, '$.privacy', { 'identifierSaltConvar', 'diagnosticIdentifierPrefix' }) end,
-            function() return boundedString(config.privacy.identifierSaltConvar, 1, 64, '$.privacy.identifierSaltConvar', '^[A-Za-z][A-Za-z0-9_]*$') end,
-            function() return integer(config.privacy.diagnosticIdentifierPrefix, 4, 16, '$.privacy.diagnosticIdentifierPrefix') end,
             function() return exactObject(config.retention, '$.retention', {
                 'workerIntervalMs', 'batchSize', 'sessionControlAfterDays',
                 'audit', 'financial', 'outbox'
@@ -179,8 +173,13 @@ factories.configuration = function(deps)
             function() return boolean(config.features.stateReplication, '$.features.stateReplication') end
         })
         if not ok then return nil, err end
-        if config.database.queryWarnMs > config.database.queryTimeoutMs then
-            return invalid('$.database.queryWarnMs', 'Slow-query threshold cannot exceed the query timeout.')
+        if config.environment == 'production' and not config.strict then
+            return invalid('$.strict', 'Production requires strict mode.')
+        end
+        if config.environment == 'production' and config.strict
+            and config.connections.duplicatePolicy ~= 'deny_new' then
+            return invalid('$.connections.duplicatePolicy',
+                'Strict production supports only deny_new until multi-instance acceptance is complete.')
         end
         if config.rpc.timeoutMs > config.rpc.maximumTimeoutMs then
             return invalid('$.rpc.timeoutMs', 'Default RPC timeout cannot exceed the maximum timeout.')

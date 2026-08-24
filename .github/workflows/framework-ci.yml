@@ -2,7 +2,7 @@ name: Synex Framework CI
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
     paths:
       - "core/**"
       - "resources/**"
@@ -14,6 +14,8 @@ on:
       - "examples/**"
       - "docs/**"
       - "README.md"
+      - "SECURITY.md"
+      - "CHANGELOG.md"
       - "package.json"
       - "package-lock.json"
       - ".npmrc"
@@ -34,6 +36,8 @@ on:
       - "examples/**"
       - "docs/**"
       - "README.md"
+      - "SECURITY.md"
+      - "CHANGELOG.md"
       - "package.json"
       - "package-lock.json"
       - ".npmrc"

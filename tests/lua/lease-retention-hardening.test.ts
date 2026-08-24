@@ -404,7 +404,7 @@ test('bootstrap schedules bounded lease and state cleanup maintenance', async ()
   );
   assert.match(
     source,
-    /scheduleEvery\(5000,[\s\S]*?persistence\.leases:retireExpiredAuthority\(250\)[\s\S]*?persistence\.leases:compactTerminal\(250\)[\s\S]*?'core\.leases\.compact_terminal'/u,
+    /scheduleDatabaseEvery\(5000,[\s\S]*?persistence\.leases:retireExpiredAuthority\(250\)[\s\S]*?persistence\.leases:compactTerminal\(250\)[\s\S]*?'core\.leases\.compact_terminal'/u,
   );
   assert.match(
     source,

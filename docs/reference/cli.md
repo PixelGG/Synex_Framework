@@ -44,6 +44,22 @@ synex certify <repository|resource|path> [--output <file>] [--json]
 
 `doctor --bundle` writes a bounded redacted support artifact containing repository versions, static health/dependency/migration checks, safe configuration projections, and warnings. The static scanner and executable contract fuzzer produce review evidence; neither proves a resource secure. Certification reports `PASS`, `WARN`, or `FAIL` with concrete checks and hashes and makes no marketing score or production guarantee.
 
+## Core production-beta evidence
+
+```text
+SYNEX_TEST_DATABASE_LIVE=1
+SYNEX_TEST_DATABASE_URL=mysql://.../synex_test_<name>
+npm run evidence:core-beta
+```
+
+This gate accepts only a clean Git revision and a disposable database named `synex_test_[a-z0-9_]+`. The first production-beta profile requires MariaDB; `mysql://` is the connector URL syntax and does not declare MySQL Server support. The artifact records the exact commit, the tracked `core/synex_core` tree hashes, bounded command timings and hashed output metadata for `check`, live-database tests, the security scan, repository certification, and the high-severity dependency audit. Raw command output and database credentials are not written. Evidence may be created only below the ignored `.temp/` or `artifacts/` roots.
+
+Use `node --experimental-strip-types tools/core-beta-evidence.ts --help` for the optional repository-root and output-path arguments.
+
+The artifact covers the single-instance MariaDB profile of `synex_core` only. Multi-instance/`kick_old`, MySQL Server, and all downstream resources—including `synex_entities`, `synex_accounts`, and `synex_groups`—are explicit out-of-scope items and do not block this profile. Downstream resources remain rework snapshots.
+
+Required manual gates remain `NOT_RUN`: exact-revision FXServer startup, fresh installation, backup/restore followed by the 25-to-26 upgrade, prepared Core restart/recovery, unprepared Core restart/recovery, full FXServer process crash/recovery, database outage/recovery, client join/disconnect/reconnect, and bounded soak/load. The automated artifact never asserts release readiness. Certification warnings are accepted only from the tool's explicit allowlist, while unknown or semantically different warning classes fail the gate.
+
 ## Disposable Core live test
 
 ```text

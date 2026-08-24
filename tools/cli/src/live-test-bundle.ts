@@ -170,7 +170,7 @@ export interface CoreLiveTestBundleReport {
     permissionWarnings: number;
   };
   runtimeRequirements: {
-    resources: Array<{ name: "oxmysql"; version: ">=2.14.1" }>;
+    resources: Array<{ name: "oxmysql"; version: "2.14.1" }>;
     operatorConfiguration: ["mysql_connection_string", "sv_licenseKey", "endpoint_add_tcp", "endpoint_add_udp"];
   };
   hashes: {
@@ -1120,9 +1120,10 @@ export async function prepareCoreLiveTestBundle(
       "# Supply database and license settings separately.",
       "# This file intentionally contains no credentials.",
       "# Execute this fragment from the isolated server's startup configuration.",
-      "# Required beforehand: endpoints, sv_licenseKey, mysql_connection_string, and reviewed oxmysql >= 2.14.1.",
-      "set synex_environment \"staging\"",
+      "# Required beforehand: endpoints, sv_licenseKey, mysql_connection_string, and oxmysql 2.14.1.",
+      "set synex_environment \"production\"",
       "set synex_strict \"1\"",
+      "set synex_duplicate_policy \"deny_new\"",
       `set synex_instance_id \"${instanceId}\"`,
       `set synex_probe_run_id \"${runId}\"`,
       "",
@@ -1182,7 +1183,7 @@ export async function prepareCoreLiveTestBundle(
         permissionWarnings: permissionWarnings.length,
       },
       runtimeRequirements: {
-        resources: [{ name: "oxmysql", version: ">=2.14.1" }],
+        resources: [{ name: "oxmysql", version: "2.14.1" }],
         operatorConfiguration: ["mysql_connection_string", "sv_licenseKey", "endpoint_add_tcp", "endpoint_add_udp"],
       },
       hashes: {

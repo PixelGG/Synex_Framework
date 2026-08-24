@@ -132,6 +132,7 @@ factories.lifecycle = function(deps)
     local maximumPendingTimers = boundedCapacity(
         deps.maximumPendingTimers, 64, 256)
     local scheduler = {}
+    local schedulerSuspended = {}
     local pump
 
     local function deadlineLess(left, right)
@@ -319,7 +320,14 @@ factories.lifecycle = function(deps)
         entry.lastRun = foundation.utcIso()
         entry.durationMs = math.max(0, foundation.monotonicMs() - started)
         entry.runs = entry.runs + 1
-        if not ok or handlerError ~= nil or result == false then
+        if ok and handlerError == nil and result == schedulerSuspended then
+            if entry.consecutiveFailures == 0 then
+                entry.health = 'DEGRADED'
+                entry.lastError = 'SCHEDULE_SUSPENDED'
+            else
+                entry.health = entry.consecutiveFailures >= 3 and 'UNHEALTHY' or 'DEGRADED'
+            end
+        elseif not ok or handlerError ~= nil or result == false then
             local failure = not ok and result or handlerError or 'handler returned false'
             entry.consecutiveFailures = entry.consecutiveFailures + 1
             entry.health = entry.consecutiveFailures >= 3 and 'UNHEALTHY' or 'DEGRADED'
@@ -515,6 +523,9 @@ factories.lifecycle = function(deps)
                 'Recurring schedules must use an integer interval of at least 50 ms.')
         end
         return schedule(owner, epoch, delay, true, handler, options)
+    end
+    function scheduler:suspended()
+        return schedulerSuspended
     end
     function scheduler:cancel(owner, token)
         local entry = schedules[token]

@@ -1,13 +1,18 @@
 # Entity authority and routing buckets
 
-`synex_entities` is the experimental, server-only entity authority for Synex. It creates bounded OneSync entities, maintains short-lived runtime mappings, persists only its own durable entity records, and owns the routing buckets it allocates. It does not claim deterministic client physics, permanent network ownership, or durable network IDs.
+> [!WARNING]
+> `synex_entities` is an experimental rework snapshot. It is unsupported and outside the `synex_core` Production-Beta certification boundary; its OneSync behavior and configuration are not part of the Core acceptance target.
 
-## Runtime requirements
+The current snapshot creates bounded OneSync entities, maintains short-lived runtime mappings, persists only its own durable entity records, and owns the routing buckets it allocates. It does not claim deterministic client physics, permanent network ownership, or durable network IDs, and its interfaces may change during the rework.
 
-- OneSync must be configured with `onesync on`. The resource declares the `/onesync` manifest constraint and repeats the check at runtime.
-- `oxmysql` `>=2.14.1 <3.0.0` and `synex_core` API `^1.0.0` must be available.
-- Start order is `oxmysql`, `synex_core`, then `synex_entities`.
-- The Core migration manager discovers `migrations/001_entities.sql` and owns its checksum. The migration contains one DDL statement and is declared non-transactional because MySQL/MariaDB DDL performs implicit commits.
+Everything below is a source-level description of that snapshot, not installation or API guidance. Do not start `synex_entities`, apply its migration, or build a production integration against these interfaces before its rework receives separate acceptance.
+
+## Historical snapshot assumptions
+
+- The snapshot expects OneSync `on`, declares the `/onesync` manifest constraint, and repeats the check at runtime.
+- Its manifest declares oxmysql `>=2.14.1 <3.0.0` and `synex_core` API `^1.0.0` dependencies.
+- Its historical dependency order is oxmysql, Core, then entities; this is not a current start instruction.
+- Its manifest lists `migrations/001_entities.sql`. The file contains one DDL statement and is marked non-transactional because MySQL/MariaDB DDL performs implicit commits; it is not part of the Core candidate schema.
 
 The resource becomes unhealthy instead of registering its public contracts when OneSync, Core, or persistence is unavailable. `synex.entities.health@1.0.0` reports only the resource's actual state.
 
@@ -24,9 +29,9 @@ An entity reference is the pair `{ entityId, generation }`.
 
 FiveM network IDs are reusable and OneSync ownership can migrate when an entity leaves a player's scope. Durable code must therefore store the Synex ID, not the returned `netId`.
 
-## Public contracts
+## Snapshot contract catalog
 
-Call contracts through `synex_core`; do not call resource events or pass SQL text.
+The following source example records how the snapshot called its local contract through `synex_core`. It is not an accepted integration example and may become invalid during rework.
 
 ```lua
 local entity, entityError = exports.synex_core:Invoke(

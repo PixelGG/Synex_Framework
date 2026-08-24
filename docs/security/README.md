@@ -1,5 +1,7 @@
 # Capability policy and resource security
 
+Private vulnerability reporting, supported versions, and disclosure guidance are defined in the repository [Security policy](../../SECURITY.md). The current Production-Beta security target is `synex_core` only; non-Core resources and libraries are experimental rework snapshots and unsupported for that deployment profile.
+
 Synex applies two checks before a resource can use a protected core facade:
 
 1. the caller's validated `synex.resource.json` must request the exact capability;

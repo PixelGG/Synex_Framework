@@ -1,13 +1,16 @@
 # Compatibility matrix
 
+> [!WARNING]
+> This matrix records the current bridge rework snapshots only. All bridges are unsupported and outside `synex_core` Production-Beta certification; a `Supported` cell below means implemented in the snapshot, not supported for a production deployment.
+
 Status meanings:
 
-- **Supported** — implemented and covered by repository tests within the stated boundary.
+- **Supported** — implemented and covered by repository tests within the stated snapshot boundary; not a current deployment-support claim.
 - **Partial** — only the listed subset is implemented; legacy semantics differ.
 - **Unsupported** — rejected or intentionally absent.
 - **Deprecated** — available only as a transition path; native Synex APIs are preferred.
 
-All three bridges are currently **Deprecated / Partial**. They are clean-room, Synex-native shims and do not depend on an installed legacy framework.
+All three bridge snapshots are currently **Deprecated / Partial**. They are clean-room, Synex-native shims and do not depend on an installed legacy framework, but none is included in the Core Production-Beta profile.
 
 ## QBCore-shaped surface
 

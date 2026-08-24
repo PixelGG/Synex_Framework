@@ -61,7 +61,6 @@ export function configurationSemanticDiagnostics(
   repositoryRoot: string,
 ): Diagnostic[] {
   if (!isRecord(value)) return [];
-  const database = isRecord(value.database) ? value.database : {};
   const connections = isRecord(value.connections) ? value.connections : {};
   const rpc = isRecord(value.rpc) ? value.rpc : {};
   const diagnostics: Diagnostic[] = [];
@@ -73,9 +72,16 @@ export function configurationSemanticDiagnostics(
       message: `${path} ${message}`,
     });
   };
-  if (typeof database.queryWarnMs === "number" && typeof database.queryTimeoutMs === "number"
-    && database.queryWarnMs > database.queryTimeoutMs) {
-    add("/database/queryWarnMs", "must not exceed /database/queryTimeoutMs.");
+  if (value.environment === "production" && value.strict === false) {
+    add("/strict", "must be true when /environment is production.");
+  }
+  if (value.environment === "production" && value.strict === true
+    && typeof connections.duplicatePolicy === "string"
+    && connections.duplicatePolicy !== "deny_new") {
+    add(
+      "/connections/duplicatePolicy",
+      "must be deny_new in strict production until multi-instance acceptance is complete.",
+    );
   }
   if (typeof rpc.timeoutMs === "number" && typeof rpc.maximumTimeoutMs === "number"
     && rpc.timeoutMs > rpc.maximumTimeoutMs) {

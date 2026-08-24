@@ -1,5 +1,8 @@
 # Synex Lua SDK
 
+> [!WARNING]
+> This SDK is an experimental consumer surface outside the `synex_core` Production-Beta certification boundary. The account call below targets the current `synex_accounts` rework snapshot and is not a supported deployment example.
+
 The Lua SDK is a server-side, generated-contract client for Synex resources.
 Load `generated/contracts.lua` before `synex.lua`, then bind the SDK from the
 calling resource. The underlying `synex_core` export captures that immediate

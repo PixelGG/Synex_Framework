@@ -261,6 +261,7 @@ test("framework CI pins official actions and runs the required untrusted-safe ga
   }
 
   assert.match(workflow, /^permissions:\s*\n\s+contents: read$/mu);
+  assert.match(workflow, /^\s{2}push:\s*\n\s{4}branches: \["\*\*"\]$/mu);
   assert.match(workflow, /^\s{2}pull_request:\s*$/mu);
   assert.doesNotMatch(workflow, /pull_request_target/gu);
   assert.doesNotMatch(workflow, /\$\{\{\s*secrets\./gu);

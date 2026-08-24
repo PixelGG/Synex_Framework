@@ -2,6 +2,9 @@
 
 Generated SDK artifacts share one canonical contract source hash. `npm run generate` updates them; `npm run generate:check` fails when committed outputs drift.
 
+> [!WARNING]
+> The SDKs and generated consumer integrations are experimental rework surfaces outside `synex_core` Production-Beta certification. Examples that call accounts or other domain contracts describe the current snapshot only and may change with those resources.
+
 ## Lua SDK
 
 The Lua SDK is server-side and calls the core exports under the immediate consumer resource identity. Load its generated registry before `synex.lua` in a resource manifest, then connect:

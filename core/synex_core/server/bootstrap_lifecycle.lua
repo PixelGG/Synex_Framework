@@ -50,6 +50,7 @@ factories.bootstrapLifecycle = function(deps)
     local instanceStatusInitialized = false
     local instanceRegisteredDuringBoot = false
     local lastInstanceStatus = nil
+    local databaseRuntimeHealth = nil
     local function raiseBootFailure(failure, fallbackCode)
         if type(failure) == 'table' then error(failure, 0) end
         error(foundation.error(fallbackCode, 'The current core boot step failed.'), 0)
@@ -145,9 +146,9 @@ factories.bootstrapLifecycle = function(deps)
         return 'ready'
     end
 
-    local function synchronizeInstanceHealthStatus()
+    local function synchronizeInstanceHealthStatus(desiredStatusOverride)
         if not instanceStatusInitialized then return nil end
-        local desiredStatus = desiredInstanceHealthStatus()
+        local desiredStatus = desiredStatusOverride or desiredInstanceHealthStatus()
         if not desiredStatus then return nil end
         local synchronizationPending = lifecycle.core:snapshot().reasons['instance-status'] ~= nil
         if desiredStatus == lastInstanceStatus and not synchronizationPending then return nil end
@@ -168,7 +169,7 @@ factories.bootstrapLifecycle = function(deps)
         return failure
     end
 
-    local function refreshDependencyHealth(inactiveResource)
+    local function refreshDependencyHealth(inactiveResource, databaseAvailableOverride)
         local findings = validateActive(inactiveResource, enforceCriticalResources)
         local critical = 0
         local byResource = {}
@@ -225,20 +226,78 @@ factories.bootstrapLifecycle = function(deps)
             and next(lifecycle.core:snapshot().reasons) == nil then
             lifecycle.core:transition('READY', 'live dependency and capability validation recovered')
         end
-        local currentAfterRefresh = lifecycle.core:get()
-        local instanceStatusError = synchronizeInstanceHealthStatus()
-        lifecycle.core:setCriticalFoundationsValidated(
-            instanceStatusInitialized and instanceStatusError == nil
-                and enforceCriticalResources and critical == 0
-                and currentAfterRefresh == 'READY'
-                and next(lifecycle.core:snapshot().reasons) == nil)
-        if instanceStatusError == nil then
+        local databaseAvailable = databaseAvailableOverride == true
+            or databaseRuntimeHealth == nil or databaseRuntimeHealth:isAvailable()
+        local instanceStatusError = nil
+        if databaseAvailable then instanceStatusError = synchronizeInstanceHealthStatus() end
+        local function refreshCriticalFoundationState()
+            local snapshot = lifecycle.core:snapshot()
+            lifecycle.core:setCriticalFoundationsValidated(
+                databaseAvailable and instanceStatusInitialized and instanceStatusError == nil
+                    and enforceCriticalResources and critical == 0
+                    and snapshot.state == 'READY' and next(snapshot.reasons) == nil)
+        end
+        refreshCriticalFoundationState()
+        if databaseAvailable and instanceStatusError == nil then
             instanceStatusError = synchronizeInstanceHealthStatus()
-            if instanceStatusError then lifecycle.core:setCriticalFoundationsValidated(false) end
+            if instanceStatusError then
+                lifecycle.core:setCriticalFoundationsValidated(false)
+            else
+                refreshCriticalFoundationState()
+            end
         end
         local _, registryHealthError = synchronizeCoreResourceHealth()
         if registryHealthError then return findings, critical, registryHealthError end
         return findings, critical, instanceStatusError
+    end
+
+    local function completeDatabaseRecovery(isCurrentProbe)
+        lifecycle.core:setCriticalFoundationsValidated(false)
+        local _, critical, refreshError = refreshDependencyHealth(nil, true)
+        if refreshError then return nil, refreshError end
+        if not isCurrentProbe() then
+            return nil, foundation.error('DATABASE_HEALTH_PROBE_STALE',
+                'The database recovery probe is no longer current.', { retryable = true })
+        end
+
+        lifecycle.core:setHealth('database-runtime', 'HEALTHY')
+        local snapshot = lifecycle.core:snapshot()
+        if critical == 0 and snapshot.state == 'DEGRADED'
+            and next(snapshot.reasons) == nil then
+            local _, transitionError = lifecycle.core:transition(
+                'READY', 'runtime database validation recovered')
+            if transitionError then return nil, transitionError end
+        end
+
+        snapshot = lifecycle.core:snapshot()
+        local candidateReady = enforceCriticalResources and critical == 0
+            and snapshot.state == 'READY' and next(snapshot.reasons) == nil
+        local instanceStatusError = synchronizeInstanceHealthStatus(
+            candidateReady and 'ready' or 'degraded')
+        if instanceStatusError then return nil, instanceStatusError end
+        local currentProbe, staleReason = isCurrentProbe()
+        if not currentProbe then
+            if candidateReady and staleReason == 'timeout' then
+                local rollbackError = synchronizeInstanceHealthStatus('degraded')
+                if rollbackError then return nil, rollbackError end
+            end
+            return nil, foundation.error('DATABASE_HEALTH_PROBE_STALE',
+                'The database recovery probe is no longer current.', { retryable = true })
+        end
+
+        snapshot = lifecycle.core:snapshot()
+        local stillReady = candidateReady and snapshot.state == 'READY'
+            and next(snapshot.reasons) == nil
+        if candidateReady and not stillReady then
+            instanceStatusError = synchronizeInstanceHealthStatus('degraded')
+            if instanceStatusError then return nil, instanceStatusError end
+            if not isCurrentProbe() then
+                return nil, foundation.error('DATABASE_HEALTH_PROBE_STALE',
+                    'The database recovery probe is no longer current.', { retryable = true })
+            end
+        end
+        lifecycle.core:setCriticalFoundationsValidated(stillReady)
+        return true, nil
     end
 
     function runtime:refreshDependencyHealth(inactiveResource)
@@ -361,6 +420,15 @@ factories.bootstrapLifecycle = function(deps)
             bootStage = 'validate_database_utc'
             local utcSession, utcSessionError = persistence.database:validateUtcSession()
             if not utcSession then raiseBootFailure(utcSessionError, 'DATABASE_UTC_VALIDATION_FAILED') end
+            bootStage = 'initialize_database_runtime_health'
+            databaseRuntimeHealth = factories.runtimeDatabaseHealth({
+                foundation = foundation,
+                lifecycle = lifecycle,
+                database = persistence.database,
+                synchronizeInstanceHealthStatus = synchronizeInstanceHealthStatus,
+                completeRecovery = completeDatabaseRecovery,
+                setTimeout = platform.setTimeout
+            })
             bootStage = 'bootstrap_migration_schema'
             local bootstrapped, bootstrapError = persistence.migrations:bootstrap()
             if not bootstrapped then raiseBootFailure(bootstrapError, 'MIGRATION_BOOTSTRAP_FAILED') end
@@ -438,9 +506,24 @@ factories.bootstrapLifecycle = function(deps)
                 if not token then raiseBootFailure(scheduleError, 'SCHEDULER_REGISTRATION_FAILED') end
                 return token
             end
+            local function scheduleDatabaseEvery(intervalMs, handler, name)
+                return scheduleEvery(intervalMs, function(token, cancellation)
+                    local healthy, _, probeState = databaseRuntimeHealth:probe()
+                    if not healthy or probeState == 'suspended'
+                        or not databaseRuntimeHealth:isAvailable() then
+                        return lifecycle.scheduler:suspended(), nil
+                    end
+                    return handler(token, cancellation)
+                end, name)
+            end
             bootStage = 'start_runtime_workers'
+            scheduleEvery(1000, function()
+                local healthy, healthError, probeState = databaseRuntimeHealth:probe()
+                if probeState == 'suspended' then return lifecycle.scheduler:suspended(), nil end
+                return healthy, healthError
+            end, 'core.database.runtime_health')
             if defaultConfig.features.durableEvents then
-                scheduleEvery(1000, function()
+                scheduleDatabaseEvery(1000, function()
                     local report, dispatchError = reliability.outbox:dispatchBatch(function(event)
                         if type(event.producerResource) ~= 'string' then
                             return nil, foundation.error('OUTBOX_PRODUCER_UNAVAILABLE',
@@ -461,13 +544,13 @@ factories.bootstrapLifecycle = function(deps)
                 end, 'core.outbox.dispatch')
             end
             if defaultConfig.features.sagas then
-                scheduleEvery(1000, function()
+                scheduleDatabaseEvery(1000, function()
                     return sagaRuntime:dispatchBatch(10)
                 end, 'core.sagas.dispatch')
             end
             if reliability.idempotency
                 and type(reliability.idempotency.compactExpired) == 'function' then
-                scheduleEvery(defaultConfig.retention.workerIntervalMs, function()
+                scheduleDatabaseEvery(defaultConfig.retention.workerIntervalMs, function()
                     local report, compactionError = reliability.idempotency:compactExpired(
                         defaultConfig.retention.batchSize or 250)
                     if compactionError then return nil, compactionError end
@@ -479,7 +562,7 @@ factories.bootstrapLifecycle = function(deps)
             if defaultConfig.features.durableEvents and outboxRetention
                 and reliability.outbox
                 and type(reliability.outbox.compactTerminal) == 'function' then
-                scheduleEvery(defaultConfig.retention.workerIntervalMs, function()
+                scheduleDatabaseEvery(defaultConfig.retention.workerIntervalMs, function()
                     local report, compactionError = reliability.outbox:compactTerminal(
                         defaultConfig.retention.batchSize or 250, outboxRetention)
                     if compactionError then return nil, compactionError end
@@ -488,7 +571,7 @@ factories.bootstrapLifecycle = function(deps)
             end
             if persistence.instances
                 and type(persistence.instances.compactTerminalControls) == 'function' then
-                scheduleEvery(defaultConfig.retention.workerIntervalMs, function()
+                scheduleDatabaseEvery(defaultConfig.retention.workerIntervalMs, function()
                     local report, compactionError = persistence.instances:compactTerminalControls(
                         defaultConfig.retention.batchSize or 250)
                     if compactionError then return nil, compactionError end
@@ -496,7 +579,7 @@ factories.bootstrapLifecycle = function(deps)
                 end, 'core.session_controls.compact_terminal')
             end
             if persistence.leases and type(persistence.leases.compactTerminal) == 'function' then
-                scheduleEvery(5000, function()
+                scheduleDatabaseEvery(5000, function()
                     if type(persistence.leases.retireExpiredAuthority) == 'function' then
                         local retirement, retirementError = persistence.leases:retireExpiredAuthority(250)
                         if retirementError then return nil, retirementError end
@@ -517,20 +600,20 @@ factories.bootstrapLifecycle = function(deps)
                 end, 'core.state.replication_cleanup')
             end
             if defaultConfig.retention.audit.mode == 'archive' then
-                scheduleEvery(defaultConfig.retention.workerIntervalMs, function()
+                scheduleDatabaseEvery(defaultConfig.retention.workerIntervalMs, function()
                     return retention.audit:archiveBatch()
                 end, 'core.retention.audit_archive')
             end
-            scheduleEvery(5000, function()
+            scheduleDatabaseEvery(5000, function()
                 return identity.characters:reconcileDeletions(10)
             end, 'core.characters.delete_reconciliation')
-            scheduleEvery(5000, function()
+            scheduleDatabaseEvery(5000, function()
                 return identity.characters:reconcileUnloads(10)
             end, 'core.characters.unload_reconciliation')
             scheduleEvery(defaultConfig.connections.clusterHeartbeatMs or 10000, function()
                 return identity.connections:heartbeat()
             end, 'core.cluster.heartbeat')
-            scheduleEvery(5000, function()
+            scheduleDatabaseEvery(5000, function()
                 local _, _, healthError = refreshDependencyHealth()
                 if healthError then return nil, healthError end
                 return true, nil

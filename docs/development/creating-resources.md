@@ -1,5 +1,8 @@
 # Creating a Synex resource
 
+> [!IMPORTANT]
+> This guide targets the experimental post-Core resource model. Newly created resources, the current example, generated SDK integrations, and every existing non-Core module are outside `synex_core` Production-Beta certification and require their own design, security review, runtime acceptance, and release decision.
+
 The CLI can create the minimum server-only structure:
 
 ```bash
@@ -19,7 +22,7 @@ Every runnable Synex resource has:
 - an explicit `stateSnapshot` declaration with `supported` and schema version `1`, even when support is `false`;
 - server/client/NUI files only when those execution sides are needed.
 
-Use `synex_example` as the smallest working provider. Do not copy a gameplay scaffold containing only `.gitkeep`; those directories are reserved names, not templates.
+Use `synex_example` only as the smallest source-level provider example. It is not a production-ready template. Do not copy a gameplay scaffold containing only `.gitkeep`; those directories are reserved names, not templates.
 
 ## Define a contract
 

@@ -5,12 +5,12 @@
 <h1 align="center">Synex</h1>
 
 <p align="center">
-  <strong>A contract-first FiveM runtime and foundation for independently owned resources.</strong>
+  <strong>A contract-first FiveM Core built around explicit ownership and fail-closed boundaries.</strong>
 </p>
 
 <p align="center">
-  Synex binds resource identity, lifecycle, policy, persistence, and observability behind a small versioned API.<br>
-  Foundation domains build on the kernel without becoming one mutable framework object.
+  <code>synex_core</code> binds resource identity, lifecycle, policy, persistence, and observability behind a versioned API.<br>
+  Downstream modules remain outside the current certification boundary while they are reworked.
 </p>
 
 <p align="center">
@@ -46,19 +46,33 @@
 </p>
 
 > [!CAUTION]
-> **Experimental source release.** Synex `0.1.0` contains runnable foundation resources, generated contracts, migrations, tests, and tooling. Its public contracts are still marked `experimental`; the repository has no stable release, packaged installer, or production-support claim.
+> **Core Production-Beta candidate — IN PROGRESS / NO-GO.** Synex `0.1.0` is still an experimental source release. Only `synex_core` is being evaluated for the first Production-Beta profile, and the exact current candidate has not completed every mandatory acceptance gate. Public contracts remain `experimental`; there is no framework-wide stable release or production-support claim.
 
 ## Current verification
 
-The 2026-08-24 acceptance build completed its server-side and real-client stages. The current tree additionally contains post-acceptance restart-retry and migration-verification hardening; those follow-ups passed repository and live-database gates but have not yet been rerun through the complete manual FXServer/client sequence. This is evidence for the stated boundaries, not a stable-release or production-readiness claim.
+Development runs have already exercised repository checks, the 26-migration MariaDB chain, isolated FXServer boot, public Core APIs, recovery paths, and a real-client join/disconnect/reconnect sequence. That evidence does **not** certify a different revision. The final decision remains NO-GO until the complete gate is repeated and retained for one clean, immutable candidate.
 
-- **PASS — Repository checks.** Generation, validation, headless suites, static security analysis, and dependency audit.
-- **PASS — Live database.** MariaDB 11.8 baseline and all 26 Core migrations.
-- **PASS — E2E acceptance build.** Server-only `READY`, caller-bound APIs, persisted Saga execution, restart recovery, real-client join/disconnect/reconnect, and the pending-database-work prepared-restart drain.
-- **FOLLOW-UP VERIFIED — Current hardening.** Terminal restart-retry handling plus exact migration-026 generated-expression and forced-index-usability verification passed headless and live-MariaDB regression gates; the combined tree still requires one repeat of the complete manual FXServer/client sequence before release acceptance.
-- **NOT TESTED — Two-instance handoff.** The cross-instance `kick_old` requester-restart scenario still requires dedicated multi-instance acceptance.
+- **VERIFIED DURING DEVELOPMENT.** Generation, validation, headless suites, static security analysis, dependency audit, live MariaDB regression tests, and earlier FXServer/client stages have passed.
+- **IMPLEMENTED; LIVE RETEST PENDING.** The runtime database-health circuit moves Core to recoverable `DEGRADED` with `operational = true` and player admission closed after a returned probe failure, adapter exception, or the fixed five-second fail-closed watchdog. It suspends ordinary database-backed workers while retaining bounded connection-heartbeat cleanup, and requires two successful probes plus reconciliation before work and admission resume. This behavior has focused headless and Cfx-like coroutine coverage but is not a live PASS until the exact candidate completes the outage/recovery gate.
+- **IN PROGRESS.** Fresh install, upgrade, backup/restore, restart/crash recovery, database outage/recovery, bounded load/soak, security review, documentation audit, and the complete real-client sequence must agree on the same exact revision.
+- **NOT CERTIFIED.** MySQL and multi-instance operation, including `kick_old`, are outside the first candidate profile.
+- **OUT OF SCOPE.** Every runtime resource, library, bridge, and example downstream of `synex_core` is an experimental rework snapshot or scaffold and is not part of Core certification.
 
-[Review the exact coverage and remaining client sequence](./docs/testing.md)
+[Release gate](./docs/release-readiness.md) &middot; [Current test coverage](./docs/testing.md) &middot; [Known limitations](./docs/known-limitations.md)
+
+### First acceptance target profile
+
+| Boundary | Candidate value |
+| --- | --- |
+| Product | `synex_core` only |
+| Host | Windows |
+| Runtime | FXServer build `35245` |
+| Database adapter | `oxmysql 2.14.1` |
+| Database | MariaDB `11.8.8`, UTC session time |
+| Topology | One active Core instance |
+| Production policy | `synex_environment "production"`, `synex_strict "1"`, `synex_duplicate_policy "deny_new"` |
+
+These are candidate boundaries, not a PASS statement. A different platform or dependency version requires its own acceptance evidence.
 
 ## Why Synex
 
@@ -69,54 +83,37 @@ The 2026-08-24 acceptance build completed its server-side and real-client stages
 - **Lifecycle cleanup.** RPC handlers, services, hooks, subscriptions, states, schedules, and pending ownership are tracked by resource epoch.
 - **Evidence over claims.** Headless, static, compatibility, and live MariaDB tests are present; their platform limits are documented.
 
-## Implemented foundation
+## Core beta scope
 
-| Layer | Resource or package | Verified responsibility |
+| Area | Repository path | Current role |
 | --- | --- | --- |
-| Kernel | [`synex_core`](./core/synex_core/) | Boot/session/character lifecycle, contracts, RPC, events, hooks, services, capabilities, persistent RBAC/access policy, state, reliability, audit, metrics, health |
-| Groups | [`synex_groups`](./resources/synex_groups/) | Durable groups, grades, grade capability rules, primary selection, and versioned memberships |
-| Accounts | [`synex_accounts`](./resources/synex_accounts/) | Currencies, double-entry accounts, holds, access roles, reversals, and integrity read models |
-| Entities | [`synex_entities`](./resources/synex_entities/) | Server-authoritative entity identity, persistent resolution, routing buckets, Net ID generation checks |
-| Operations | [`synex_control`](./resources/synex_control/) | Read-only in-game operational NUI with bounded Core/domain views, exact audit search, and transparent closed state |
-| Contracts | [`packages/contracts`](./packages/contracts/) | Canonical discovery and deterministic generated runtime/docs artifacts |
-| SDKs | [`packages/sdk-lua`](./packages/sdk-lua/) / [`packages/sdk-ts`](./packages/sdk-ts/) | Generated contract clients and types; TypeScript transport is host-provided |
-| Tooling | [`tools/cli`](./tools/cli/) | Validate, inspect, generate, create, doctor, permissions, scan, certify, benchmark, compatibility, upgrade checks |
-| Compatibility | [`synex_bridge`](./libraries/synex_bridge/) | Optional native QB/QBX/ESX transition shims plus review-gated legacy data import |
+| Runtime candidate | [`synex_core`](./core/synex_core/) | Boot, connection/session/character lifecycle, contracts, RPC, events, hooks, services, capabilities, persistent access policy, state, reliability, audit, metrics, health, and owned migrations |
+| Contract pipeline | [`packages/contracts`](./packages/contracts/) | Canonical inputs and deterministic generated runtime/reference artifacts used to validate Core development |
+| SDK and tooling | [`packages`](./packages/) / [`tools`](./tools/) | Generated clients/types, validation, migration, security, certification, and test tooling; not separately certified server features |
 
-Every implemented foundation above remains experimental. The compatibility path is additionally deprecated for greenfield development.
+The current certification target is deliberately narrow: **only `core/synex_core` may become Production-Beta-ready.** Its public API remains experimental even if the runtime acceptance target passes the beta gate.
 
-The compatibility layer is intentionally narrow. It provides bounded callbacks and lifecycle projections plus cash/bank mutations as balanced Synex transfers. It does not expose mutable player objects, direct SQL, offline lookup, inventory, arbitrary currencies, or job/group authorization mutations.
+### Downstream rework boundary
 
-### Reserved ecosystem boundaries
+`synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, every other directory under `resources/`, all libraries and bridges under `libraries/` (including `synex_bridge`), and the runnable examples are **experimental rework snapshots or scaffolds**. They are unsupported for the Core beta and must not be started, bundled, or advertised as certified components. OneSync-dependent downstream behavior is likewise outside this Core-only profile.
 
-The following directories currently contain scaffolds only and are **not runnable features**: `synex_character`, `synex_identity`, `synex_inventory`, `synex_banking`, `synex_phone`, `synex_radio`, `synex_jobs`, `synex_shops`, `synex_vehicles`, `synex_garages`, and `synex_ui`.
-
-Character and session behavior that exists today is part of `synex_core`; the reserved gameplay/domain resources above must not be inferred from their directory names.
+This also applies to the reserved gameplay names `synex_character`, `synex_identity`, `synex_inventory`, `synex_banking`, `synex_phone`, `synex_radio`, `synex_jobs`, `synex_shops`, `synex_vehicles`, `synex_garages`, and `synex_ui`. Directory presence does not imply a finished feature. Character and session behavior that exists in the current candidate belongs to `synex_core`.
 
 ## Architecture
 
 ```mermaid
 flowchart TB
-    CFX["Cfx.re / FXServer"] --> CORE["synex_core"]
-    DB[("MariaDB / MySQL")] --> OX["oxmysql >= 2.14.1"]
+    CFX["Cfx.re / FXServer 35245"] --> CORE["synex_core"]
+    DB[("MariaDB 11.8.8")] --> OX["oxmysql 2.14.1"]
     OX --> CORE
 
-    CONTRACTS["Canonical JSON contracts"] --> GENERATED["Generated runtime + Lua + TypeScript"]
+    CONTRACTS["Versioned JSON contracts"] --> GENERATED["Generated runtime + Lua + TypeScript"]
     GENERATED --> CORE
-    GENERATED --> SDK["Lua / TypeScript SDKs"]
-
-    CORE --> GROUPS["synex_groups"]
-    CORE --> ACCOUNTS["synex_accounts"]
-    CORE --> ENTITIES["synex_entities / OneSync"]
-    CORE --> CONTROL["synex_control / read-only operations NUI"]
-    CORE --> BRIDGE["optional compatibility gateway"]
-
-    OX --> GROUPS
-    OX --> ACCOUNTS
-    OX --> ENTITIES
+    CORE --> API["Caller-bound Core API"]
+    API -. "experimental boundary" .-> REWORK["Downstream rework snapshots — not certified"]
 ```
 
-Arrows show runtime requirements or generated-input flow. Domain resources own their tables and call other domains through contracts or versioned services; they do not receive mutable core registries or a raw global framework object.
+Solid arrows show the first Core candidate's runtime or generated-input flow. The dashed edge marks an API boundary that exists for development but does not certify any downstream consumer.
 
 The core separates users, sessions, characters, ephemeral player sources, and source generations. Resource manifests declare API ranges, services, contracts, capabilities, migrations, and data ownership. A capability declaration records intent; operator policy must grant it, and deny rules take precedence.
 
@@ -124,7 +121,7 @@ The core separates users, sessions, characters, ephemeral player sources, and so
 
 ## Getting started
 
-Requirements: a current FXServer artifact, MariaDB 11.8 or MySQL 8.4 through `oxmysql >= 2.14.1` (and `< 3.0.0` when `synex_entities` is enabled), a stable `synex_instance_id` in strict production, and OneSync `on` for `synex_entities`. Node.js is required for repository generation and tests, not for the Lua runtime.
+The first candidate profile requires Windows, FXServer build `35245`, `oxmysql 2.14.1`, MariaDB `11.8.8`, one stable unique `synex_instance_id`, strict production mode, and `deny_new`. Node.js `>=22.12.0` with npm `>=10.0.0` is required for repository generation and tests, not for the Lua runtime.
 
 ```bash
 git clone https://github.com/PixelGG/Synex_Framework.git
@@ -136,9 +133,9 @@ npm run security
 npm run certify
 ```
 
-The repository is a development monorepo rather than a packaged server release. Follow the tested placement, configuration, migration, start-order, and verification notes before enabling resources:
+These checks are required development gates; they are not by themselves Production-Beta evidence. This repository remains a development monorepo rather than a packaged server release. Deploy only `oxmysql` and `synex_core` for the initial candidate, keep credentials in an operator-owned local file, and follow the reviewed configuration and acceptance instructions:
 
-[Open the getting-started guide](./docs/getting-started.md)
+[Getting started](./docs/getting-started.md) &middot; [Core server configuration](./examples/server.cfg.example) &middot; [Release readiness](./docs/release-readiness.md)
 
 ## Development model
 
@@ -146,40 +143,38 @@ The repository is a development monorepo rather than a packaged server release. 
 local api, apiError = exports.synex_core:GetAPI('^1.0.0')
 if not api then error(apiError.message) end
 
-local group, groupError = api.RPC.call(
-    'synex.groups.get',
-    '1.0.0',
-    { group_id = groupId }
-)
+local status, statusError = api.Runtime.status()
+if not status then error(statusError.message) end
+
+print(('Synex Core state: %s'):format(status.state))
 ```
 
-Calls return `value, nil` or `nil, error`. The stable error shape contains `code`, `message`, optional `traceId`, `retryable`, and optional bounded `details`. Runtime validation and capability checks remain active even when generated SDK metadata is used.
+The calling server resource must declare `synex.runtime.read`, and operator policy must grant it. Calls return `value, nil` or `nil, error`; capability and caller-epoch validation remains active. This example uses only the Core facade and does not depend on a downstream module.
 
 [Public API](./docs/api/README.md) &middot; [Create a resource](./docs/development/creating-resources.md) &middot; [Generated contracts](./packages/contracts/generated/docs/contracts.md)
 
 ## Technology
 
-- Lua for FiveM runtime resources
-- SQL with MariaDB 11.8 or MySQL 8.4 through oxmysql
+- Lua for the FiveM Core runtime
+- SQL with MariaDB `11.8.8` through `oxmysql 2.14.1` in the first acceptance target profile
 - TypeScript and Node.js for contracts, SDKs, CLI, analyzers, and tests
-- Vanilla HTML, CSS, and JavaScript for the read-only operational control NUI
 - JSON Schema for contract, resource-manifest, state, and configuration validation
 - GitHub Actions with an isolated MariaDB integration job
 
-There is no React/Vite application, external telemetry service, hosted control API, or automatic remote updater in the current repository.
+MySQL remains a code-compatibility target, not a certified Production-Beta database. Repository snapshots outside the Core scope may use additional technologies, but they are not part of this runtime claim. There is no external telemetry service, hosted control API, or automatic remote updater in the current repository.
 
 ## Documentation
 
 - [Documentation index](./docs/README.md)
+- [Core Production-Beta release gate](./docs/release-readiness.md)
+- [Known limitations](./docs/known-limitations.md)
+- [Backup and restore](./docs/backup-and-restore.md)
 - [Runtime model](./docs/architecture/runtime.md)
 - [Security model](./docs/architecture/security.md)
+- [Security policy](./SECURITY.md)
 - [Database and migrations](./docs/reference/database.md)
 - [Operations](./docs/operations.md)
 - [Testing and CI](./docs/testing.md)
-- [Entity authority](./docs/reference/entities.md)
-- [Groups](./docs/reference/groups.md) and [accounts/ledger](./docs/reference/accounts.md)
-- [Compatibility and migration](./docs/compatibility/README.md)
-- [Discord notification automation](./docs/discord-notifications.md)
 
 ## Community
 
@@ -199,14 +194,14 @@ Copyright &copy; 2026 PixelGG. Synex is licensed under the [GNU Affero General P
 
 ```text
 Synex_Framework/
-├── core/synex_core/           # runtime kernel and owned migrations
-├── resources/                 # implemented foundation resources + planned scaffolds
-├── libraries/synex_bridge/    # optional compatibility gateway
-├── packages/                  # canonical contracts and generated SDKs
+├── core/synex_core/           # only current Production-Beta runtime candidate
+├── resources/                 # unsupported downstream rework snapshots and scaffolds
+├── libraries/                 # unsupported libraries and bridge rework snapshots
+├── packages/                  # contracts and generated development SDKs
 ├── schemas/                   # JSON Schemas
 ├── tools/                     # CLI and migration planner
 ├── tests/                     # headless, static, compatibility, docs, and database tests
-├── examples/synex_example/    # minimal server-only provider
+├── examples/                  # configuration templates and unsupported development examples
 └── docs/                      # architecture, operations, references, and translations
 ```
 

@@ -1,10 +1,15 @@
 # Read-only control plane
 
-`synex_control` is a dependency-free NUI for bounded Synex operational snapshots. It is a read surface, not an admin dashboard, and contains no actions that mutate players, resources, configuration, entities, accounts, or database state.
+> [!WARNING]
+> `synex_control` is an experimental rework snapshot. It is unsupported, excluded from the `synex_core` Production-Beta deployment and NUI certification boundary, and must not be presented as an accepted operator interface.
 
-## Access and startup
+The current snapshot is a dependency-free NUI for bounded Synex operational snapshots. It is a read surface, not an admin dashboard, and contains no actions that mutate players, resources, configuration, entities, accounts, or database state.
 
-Start `synex_core` before `synex_control`, then grant the dedicated ACE only to operators who may inspect runtime data:
+Everything below describes the checked-in historical snapshot. It is not operator guidance: do not start `synex_control`, grant its ACE, or present its NUI as an accepted interface before the rework receives its own security and runtime acceptance.
+
+## Historical access design
+
+The snapshot expected Core to start before `synex_control` and used the following ACE. This block is retained for source review only and must not be applied to the Core candidate:
 
 ```cfg
 ensure synex_core
@@ -13,7 +18,7 @@ ensure synex_control
 add_ace group.admin synex.control.view allow
 ```
 
-An authorized in-game operator opens the panel with:
+In that snapshot, an authorized in-game operator opened the panel with:
 
 ```text
 /synex-control

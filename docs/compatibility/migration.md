@@ -1,8 +1,14 @@
 # Legacy data migration
 
+> [!WARNING]
+> The migrator, compatibility profiles, and target domain resources are experimental rework snapshots. This workflow is not part of `synex_core` Production-Beta certification and must not be used for a production cutover until the downstream rework receives its own acceptance.
+
 `tools/migrator` implements a review-gated copy/transform/import pipeline for controlled QBCore, Qbox, and ESX JSON exports. It never connects to or mutates the legacy source database. The source export and mapping are regular, non-symlink files opened read-only; target database access exists only in the explicit import phase.
 
 The built-in profiles describe mapping semantics, not every community schema. Build and review a mapping for the exact pinned source schema. The mapped user ID must be a supported Cfx platform identifier with its prefix (`license`, `license2`, `fivem`, `discord`, `steam`, `xbl`, or `live`); an ambiguous database key cannot be presented as a login identity. Synthetic examples under [`tests/compatibility/fixtures`](../../tests/compatibility/fixtures/) are test data, not production templates.
+
+> [!CAUTION]
+> The workflow and commands below document the checked-in historical snapshot for source review. Do not execute them against a deployment or prepare a cutover while groups, accounts, bridges, and the migrator are being reworked. A future release must publish a newly reviewed workflow and acceptance boundary.
 
 ## 1. Generate a deterministic dry-run
 
@@ -34,9 +40,9 @@ migration-bundle.json
 
 These files contain sensitive legacy identifiers and names. Keep them outside version control with restricted access and a defined deletion date.
 
-## 3. Prepare a target rehearsal
+## 3. Historical target-rehearsal design
 
-Use a new disposable database first. Configure oxmysql for that schema and start the native Synex resources so their forward migrations have completed successfully:
+The snapshot expected a new disposable database and the following dependency order. This block is retained to describe that design only; it is not a runnable instruction for the current Core candidate:
 
 ```cfg
 ensure oxmysql
@@ -68,7 +74,7 @@ Re-running a completed report digest is an idempotent no-write replay and return
 
 ## 5. Reconcile and cut over
 
-Before production use:
+Before any future production use after the downstream rework has its own release acceptance:
 
 1. compare imported user/character/group counts with the signed-off report;
 2. verify every currency reconciliation run is healthy and ledger postings balance to zero;

@@ -2,6 +2,8 @@
 
 Synex migrations are resource-owned, forward-only SQL files. Each runnable data-owning resource declares its ordered files in `synex.resource.json`. The current `synex_core` manifest declares 26 migrations in strict order.
 
+Only those 26 Core migrations belong to the current Production-Beta candidate. Migration files under `synex_groups`, `synex_accounts`, `synex_entities`, or any future downstream resource are experimental rework snapshots; they are retained for review and repository regression tests but are not part of the Core candidate installation or upgrade path.
+
 ## Discovery and execution
 
 During core boot, `synex_core`:
@@ -75,12 +77,14 @@ The current runner has no automatic down migration and does not infer destructiv
 
 Every created `synex_` table is listed under the owning manifest's `dataOwnership.tables`. Resources must not mutate another domain's tables. Cross-domain operations use contracts or versioned services.
 
-Current data-owning resources are:
+The checked-in manifests currently declare these ownership snapshots:
 
 - `synex_core` — migration control, identity/session/character, reliability, access, saga, audit plus its non-destructive archive mirror, deletion plans, cluster session control, persistent RBAC and its policy-revision authority, and reviewed legacy-import journals/mappings;
-- `synex_groups` — groups, grades and rules, memberships and history, primary selections, read-model versions, operation idempotency, character-deletion journals, and outbox;
-- `synex_accounts` — currencies, accounts and owners, access roles and grants, ledger and reversals, snapshots, holds, reconciliation, a non-destructive financial transaction archive mirror, character-deletion journals, audit, and outbox;
-- `synex_entities` — persistent entity identity and serialized durable properties, never runtime handles or Net IDs.
+- `synex_groups` — **experimental rework snapshot:** groups, grades and rules, memberships and history, primary selections, read-model versions, operation idempotency, character-deletion journals, and outbox;
+- `synex_accounts` — **experimental rework snapshot:** currencies, accounts and owners, access roles and grants, ledger and reversals, snapshots, holds, reconciliation, a non-destructive financial transaction archive mirror, character-deletion journals, audit, and outbox;
+- `synex_entities` — **experimental rework snapshot:** persistent entity identity and serialized durable properties, never runtime handles or Net IDs.
+
+Do not apply the three non-Core migration sets to a database intended to represent the Core-only acceptance target. Their future rework may require a new migration and upgrade decision.
 
 The exact table model and constraints are documented in [Database model](reference/database.md).
 

@@ -6,7 +6,6 @@
   "database": {
     "minimumOxmysqlVersion": "2.14.1",
     "queryWarnMs": 250,
-    "queryTimeoutMs": 5000,
     "deadlockRetries": 2,
     "migrationLeaseSeconds": 30
   },
@@ -42,16 +41,9 @@
     "rate": 12,
     "burst": 24
   },
-  "events": {
-    "maximumQueueDepth": 1024
-  },
   "logging": {
     "level": "info",
     "pretty": false
-  },
-  "privacy": {
-    "identifierSaltConvar": "synex_identifier_salt",
-    "diagnosticIdentifierPrefix": 8
   },
   "retention": {
     "workerIntervalMs": 3600000,

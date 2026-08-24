@@ -1,10 +1,13 @@
 # Accounts, ledger, and holds
 
-`synex_accounts` is an experimental server-only accounting foundation. It supplies currencies, owned accounts, immutable double-entry transactions/postings, balance snapshots, holds, access roles/grants, reversals, integrity read models, audit rows, an outbox, and an optional non-destructive financial archive mirror. It is not the planned `synex_banking` gameplay/UI resource.
+> [!WARNING]
+> `synex_accounts` is an experimental rework snapshot. It is unsupported, outside the `synex_core` Production-Beta certification boundary, and must not be used as a production ledger based on this reference or its repository tests.
+
+The current snapshot supplies currencies, owned accounts, immutable double-entry transactions/postings, balance snapshots, holds, access roles/grants, reversals, integrity read models, audit rows, an outbox, and an optional non-destructive financial archive mirror. It is not the planned `synex_banking` gameplay/UI resource, and its interfaces may change or be replaced during the rework. Everything below is a source catalog, not current ledger, integration, or deployment guidance.
 
 ## Contracts
 
-The local RPC surface includes:
+The checked-in snapshot's local RPC declarations include:
 
 - currency registration and account creation;
 - account and hold snapshots;
@@ -31,7 +34,7 @@ All 19 contracts are `network: none` and `experimental`. Use the exact generated
 
 Mint and burn are explicit ledger roles and capabilities, not shortcuts that update a balance.
 
-An owner-aware scheduler runs the `synex_accounts.outbox_dispatcher` once per second and claims at most 25 ready rows per batch. It publishes the transactionally stored events through the capability-gated Core `Events.publishOutbox` surface with their stable `eventId`; subscriber failures use bounded retry/backoff and the tenth failed attempt moves the row to `dead`. Delivery is at least once, so subscribers must deduplicate by `eventId`.
+The checked-in snapshot defines an owner-aware `synex_accounts.outbox_dispatcher` scheduled once per second with at most 25 ready rows per batch. Its code publishes transactionally stored events through the capability-gated Core `Events.publishOutbox` surface with their stable `eventId`; subscriber failures use bounded retry/backoff and the tenth failed attempt moves the row to `dead`. This describes snapshot behavior only and is not accepted operational guidance.
 
 ## Capabilities
 

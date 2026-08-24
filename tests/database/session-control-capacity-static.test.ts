@@ -180,6 +180,6 @@ test('session-control capacity migration, configuration, and worker are reposito
   ), 'utf8');
   assert.match(
     lifecycle,
-    /scheduleEvery\(defaultConfig\.retention\.workerIntervalMs,[\s\S]*?compactTerminalControls[\s\S]*?'core\.session_controls\.compact_terminal'/u,
+    /scheduleDatabaseEvery\(defaultConfig\.retention\.workerIntervalMs,[\s\S]*?compactTerminalControls[\s\S]*?'core\.session_controls\.compact_terminal'/u,
   );
 });

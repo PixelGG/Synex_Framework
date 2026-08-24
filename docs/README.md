@@ -2,7 +2,9 @@
 
 This documentation describes the code present in Synex `0.1.0`. The release is experimental: contracts, schemas, migrations, and operational behavior may change before a stable release. Passing repository tests does not by itself certify a production deployment.
 
-The 2026-08-24 Core acceptance build passed its manual FXServer/MariaDB stages, including 26/26 Core migrations, real-client join/disconnect/reconnect, and the pending-database-work prepared-restart drain. The current tree adds restart-retry terminalization plus stricter migration-026 expression and forced-index-usability verification; both hardening areas passed repository and live-database regression gates, but the combined revision has not yet repeated the complete manual FXServer/client sequence. The two-instance `kick_old` requester-restart scenario also remains untested; the maintained boundary is recorded under [Current acceptance baseline](testing.md#current-acceptance-baseline).
+The Production-Beta effort applies to `synex_core` only. Every non-Core resource and library in the current tree is an experimental rework snapshot or scaffold and is unsupported for that beta profile; do not start or advertise those components as production-ready.
+
+The 2026-08-24 Core acceptance build passed its manual FXServer/MariaDB stages, including 26/26 Core migrations, real-client join/disconnect/reconnect, and the pending-database-work prepared-restart drain. The current tree adds restart-retry terminalization, stricter migration-026 verification, and a runtime database-health circuit that keeps diagnostics and bounded connection-heartbeat cleanup operational while admission is fail-closed and ordinary database-backed workers are suspended. The circuit has focused headless coverage, but the combined revision has not yet repeated the complete manual FXServer/client and database-outage/recovery sequence. Multi-instance and `kick_old` verification is a future, explicitly out-of-scope profile and does not block the single-instance Core beta; the maintained boundary is recorded under [Current acceptance baseline](testing.md#current-acceptance-baseline).
 
 ## Start here
 
@@ -11,6 +13,16 @@ The 2026-08-24 Core acceptance build passed its manual FXServer/MariaDB stages, 
 - [Operations](operations.md) — lifecycle, health, console commands, failure behavior, and backups
 - [Testing](testing.md) — local suites, live-database gate, CI, and current coverage boundaries
 - [Migrations](migrations.md) — forward-only SQL files, checksums, leases, and ownership
+
+- [Core server configuration example](../examples/server.cfg.example) — secret-free single-instance baseline
+
+## Release and support
+
+- [Core Production-Beta release readiness](release-readiness.md) — canonical gate and evidence requirements
+- [Known limitations](known-limitations.md) — current support, topology, compatibility, and operations boundary
+- [MariaDB backup and restore](backup-and-restore.md) — safe logical-backup and isolated restore drill
+- [Security policy](../SECURITY.md) — supported scope and private vulnerability reporting
+- [Changelog](../CHANGELOG.md) — unreleased technical changes and maturity status
 
 ## Architecture and public interfaces
 
@@ -26,6 +38,8 @@ The 2026-08-24 Core acceptance build passed its manual FXServer/MariaDB stages, 
 - [Architecture decisions](architecture/decisions/README.md)
 
 ## Foundation resources
+
+These non-Core implementations are development inputs for a planned full rework. They are not supported components of the Core Production-Beta profile.
 
 - [Database model](reference/database.md)
 - [Groups and memberships](reference/groups.md)

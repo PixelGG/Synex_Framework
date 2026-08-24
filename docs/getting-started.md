@@ -1,17 +1,21 @@
 # Getting started
 
-Synex `0.1.0` is an experimental source release, not a packaged drag-and-drop server distribution. Validate the repository first, then place the runnable resource directories where your FXServer can discover them.
+Synex `0.1.0` is an experimental source release, not a packaged drag-and-drop server distribution. The current Production-Beta candidate covers `synex_core` only. Every non-Core resource, library, bridge, SDK integration, and example is an experimental rework snapshot outside that certification boundary.
+
+This guide installs only the Core candidate. Do not add `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, compatibility bridges, or other downstream modules to a deployment that is intended to match the documented Core acceptance profile.
 
 ## Requirements
 
-- a current Cfx.re FXServer artifact with the `cerulean` resource manifest format;
-- MariaDB 11.8 or MySQL 8.4 configured for oxmysql;
-- `oxmysql` `2.14.1` or newer for Core; the current `synex_entities` manifest additionally requires a version below `3.0.0`;
+- the current Windows acceptance target with Cfx.re FXServer artifact `35245` and the `cerulean` resource manifest format;
+- MariaDB `11.8.8` with InnoDB;
+- `oxmysql` `2.14.1`;
 - an oxmysql database session configured and verified to use UTC;
-- OneSync in `on` mode when `synex_entities` is enabled;
+- one `synex_core` instance using strict production mode and duplicate policy `deny_new`;
 - Node.js `22.12.0` or newer and npm `10` or newer for generation, validation, and tests. CI uses Node.js 24.
 
 Node.js is a repository-development dependency. The Lua resources do not install npm packages on the game server.
+
+Other FXServer artifacts, operating systems, oxmysql versions, MySQL, multi-instance operation, and the non-production duplicate policies are not part of the initial Production-Beta support matrix. See [Release readiness](release-readiness.md) and [Known limitations](known-limitations.md) before deployment.
 
 ## Validate the source tree
 
@@ -31,19 +35,10 @@ npm run certify
 
 ## Place the resources
 
-FXServer must discover each runnable directory as a resource. The monorepo directories are:
+FXServer must discover each runnable directory as a resource. To exercise the current Core-only candidate profile, deploy:
 
 ```text
 core/synex_core
-resources/synex_groups
-resources/synex_accounts
-resources/synex_entities
-resources/synex_control
-libraries/synex_bridge
-resources/synex_bridge_qb
-resources/synex_bridge_qbx
-resources/synex_bridge_esx
-examples/synex_example
 ```
 
 Do not place the unchanged repository root beneath the server's `resources/` directory and expect nested paths such as `core/synex_core` to be discovered. Deploy each runnable directory itself as a direct child of a FiveM resource collection. A category directory in square brackets is suitable, for example:
@@ -52,21 +47,12 @@ Do not place the unchanged repository root beneath the server's `resources/` dir
 server-data/
 └── resources/
     └── [synex]/
-        ├── synex_core/
-        ├── synex_groups/
-        ├── synex_accounts/
-        ├── synex_entities/
-        ├── synex_control/
-        ├── synex_bridge/
-        ├── synex_bridge_qb/
-        ├── synex_bridge_qbx/
-        ├── synex_bridge_esx/
-        └── synex_example/
+        └── synex_core/
 ```
 
 Copy or link only the selected resource directories while preserving the contents and names inside each one. This repository does not provide a deploy command that flattens the monorepo automatically.
 
-Do not start every entry automatically. `synex_control`, compatibility bridges, and `synex_example` are optional. The native compatibility bridges do not require the corresponding external framework; they expose a limited legacy-shaped surface backed by Synex. Enable only the selected bridge and follow the [compatibility guide](compatibility/README.md). Directories that contain only `.gitkeep` are planned boundaries and are not runnable resources.
+Do not start the other repository entries automatically. They remain useful implementation and contract references while their rework is in progress, but they are unsupported in the Core Production-Beta profile. Directories that contain only `.gitkeep` are planned boundaries and are not runnable resources.
 
 ## Configure and start
 
@@ -76,23 +62,20 @@ Strict production mode requires a stable instance identifier. The value is ASCII
 set synex_instance_id "primary-eu"
 set synex_environment "production"
 set synex_strict "1"
+set synex_duplicate_policy "deny_new"
 set mysql_transaction_isolation_level 2
 
 ensure oxmysql
 ensure synex_core
-ensure synex_groups
-ensure synex_accounts
-ensure synex_entities
-ensure synex_control
 ```
 
-The sequential start order is intentional. Core exposes its kernel API first, then performs an admission validation against all installed `critical` Synex resources. Until groups, accounts, and entities have started and registered their required services, Core reports `DEGRADED` and rejects new player connections. Resource-start events trigger immediate revalidation; a successful full set moves Core to `READY` without a server restart.
+The sequential start order is intentional. Core validates installed Synex manifests and critical dependencies before it opens admission. A Core-only candidate installation includes no downstream critical resource; adding an experimental resource can introduce new critical dependencies and makes that deployment different from the acceptance target.
 
-Configure the database connection according to the installed oxmysql release before starting `oxmysql`. Keep credentials outside this repository and never put them in `config/default.json`. The account lock model expects oxmysql isolation level `2` (`READ COMMITTED`); set it explicitly and verify the effective server configuration rather than relying on an adapter default.
+Configure the database connection according to the installed oxmysql release before starting `oxmysql`. Keep credentials outside this repository and never put them in `config/default.json`. The Core transaction model expects oxmysql isolation level `2` (`READ COMMITTED`); set it explicitly and verify the effective server configuration rather than relying on an adapter default.
 
 The database session used by oxmysql must use UTC. Synex stores and compares `DATETIME(6)` values with `CURRENT_TIMESTAMP(6)` throughout persistence and uses `UTC_TIMESTAMP(6)` for archive cutoffs; a non-UTC session can shift expiry, lease, queue, outbox, audit, and retention decisions. Before running any migration, Core compares both functions in one database statement and refuses to start when the offset is not zero or the validation query fails. Synex does not set the database session time zone, and this guide intentionally does not assume a connection-string option for a particular oxmysql/database build.
 
-At Core boot, Synex applies its supported ConVar overrides and validates `config/default.json` plus `config/capabilities.json` before database access. It then verifies the UTC database session, discovers `synex.resource.json` through each resource's `synex_manifest` metadata, acquires a database-time migration lease, verifies checksums, applies the 26 declared Core migrations plus the migrations owned by installed domain resources, and validates declared service dependencies and generated contracts before entering `READY`. A boot failure is fail-closed.
+At Core boot, Synex applies its documented ConVar overrides and validates `config/default.json` plus `config/capabilities.json` before database access. It then verifies the UTC database session, discovers `synex.resource.json` through each resource's `synex_manifest` metadata, acquires a database-time migration lease, verifies checksums, applies the 26 declared Core migrations, and validates declared service dependencies and generated contracts before entering `READY`. A boot failure is fail-closed. Migrations owned by experimental resources are intentionally absent from the Core-only installation.
 
 ## Verify the runtime
 
@@ -114,14 +97,16 @@ synex access <userId> [limit]
 
 `synex overview` prints the compact human-readable boot, database, resource, session, worker, cluster, and migration summary. `synex status` prints the structured Core lifecycle snapshot. `synex doctor` checks database connectivity and UTC session semantics, incomplete or failed migration attempts, the oxmysql version, service dependency declarations, generated contract registration, and lifecycle state. `synex_status` and `synex_doctor` remain compatibility aliases. Every command is registered as restricted and also rejects player execution explicitly. Access mutation commands and exact argument rules are documented under [Operations](operations.md).
 
+In the Core-only profile, the optional `synex ledger` and `synex entities` summaries are expected to report their provider as not installed. That is not a Core health failure.
+
 ## First resource
 
-Study [`examples/synex_example`](../examples/synex_example/) and then follow [Creating a resource](development/creating-resources.md). The example registers a server-only contract and a versioned service without exposing a network endpoint.
+The current [`examples/synex_example`](../examples/synex_example/) and [resource-development guide](development/creating-resources.md) demonstrate the experimental API model. They are reference material for the downstream rework, not a production-ready extension template and not part of Core certification.
 
 ## Current platform limits
 
 - There is no packaged release installer or automatic updater.
-- Repository tests do not launch FXServer. The 2026-08-24 acceptance build passed manual FXServer/MariaDB stages, including 26/26 Core migrations, persisted Saga execution, restart recovery, real-client join/disconnect/reconnect, and a pending-database-work prepared restart. The current tree then added two hardening corrections that passed repository and live-database regression gates; the complete manual FXServer/client sequence has not yet been repeated against that combined revision. The two-instance `kick_old` requester-restart scenario also remains untested. See [Testing](testing.md#current-acceptance-baseline).
-- Public contracts are marked `experimental`.
-- `synex_control` is an in-game, read-only NUI; no remote HTTP control API is implemented.
-- The planned phone, inventory, banking UI, jobs, shops, vehicle, garage, radio, character-resource, identity-resource, and shared UI directories are not implemented gameplay resources.
+- Repository tests do not launch FXServer. The 2026-08-24 acceptance build passed manual FXServer/MariaDB stages, including 26/26 Core migrations, persisted Saga execution, restart recovery, real-client join/disconnect/reconnect, and a pending-database-work prepared restart. The current tree then added restart-retry terminalization, stricter migration-026 verification, and the runtime database-health circuit. The first two changes passed repository and live-database regression gates; the circuit has focused headless coverage, but the complete manual FXServer/client and database-outage/recovery sequence has not yet been repeated against the combined revision. The two-instance `kick_old` requester-restart scenario also remains untested. See [Testing](testing.md#current-acceptance-baseline).
+- Public contracts and the consumer API surface remain `experimental` even when the Core runtime reaches Production-Beta acceptance.
+- MySQL, multi-instance operation, `kick_old`, `replace_old`, and `allow` are outside the initial acceptance target. Strict production configuration accepts only `deny_new`.
+- `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, all bridges and libraries, examples, and every downstream module are rework snapshots or scaffolds. None is included in Core Production-Beta certification.

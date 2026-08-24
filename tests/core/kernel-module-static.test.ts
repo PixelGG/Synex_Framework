@@ -38,6 +38,7 @@ const modules = [
   'server/bootstrap_diagnostics.lua',
   'server/bootstrap_restart.lua',
   'server/bootstrap_resource_events.lua',
+  'server/runtime_database_health.lua',
   'server/bootstrap_lifecycle.lua',
   'server/bootstrap.lua',
 ] as const;
@@ -160,7 +161,7 @@ test('boot validates UTC and fail-closes named recurring worker registration', a
   );
   assert.match(
     lifecycle,
-    /scheduleEvery\(5000,[\s\S]*?refreshDependencyHealth\(\)[\s\S]*?'core\.runtime\.dependency_health'/u,
+    /scheduleDatabaseEvery\(5000,[\s\S]*?refreshDependencyHealth\(\)[\s\S]*?'core\.runtime\.dependency_health'/u,
   );
   assert.match(
     lifecycle,
