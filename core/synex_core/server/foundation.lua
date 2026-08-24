@@ -4,6 +4,30 @@ factories.foundation = function(deps)
     deps = deps or {}
     local platform = assert(deps.platform, 'foundation requires platform')
 
+    local jsonContainerKinds = { plain = true, object = true, array = true }
+    local function jsonContainerKind(value)
+        if type(value) ~= 'table' then return nil end
+        if type(platform.jsonContainerKind) ~= 'function' then
+            return getmetatable(value) == nil and 'plain' or nil
+        end
+        local inspected, kind = pcall(platform.jsonContainerKind, value)
+        if not inspected or not jsonContainerKinds[kind] then return nil end
+        return kind
+    end
+
+    local function preserveJsonContainerMetadata(source, target)
+        local kind = jsonContainerKind(source)
+        if kind ~= 'object' and kind ~= 'array' then return target end
+        if type(platform.copyJsonContainerMetadata) ~= 'function' then
+            error('platform cannot preserve Cfx JSON container metadata', 2)
+        end
+        local copied, result = pcall(platform.copyJsonContainerMetadata, source, target)
+        if not copied or result ~= target then
+            error('platform failed to preserve Cfx JSON container metadata', 2)
+        end
+        return target
+    end
+
     local function deepCopy(value, seen, depth)
         if type(value) ~= 'table' then return value end
         depth = (depth or 0) + 1
@@ -12,10 +36,10 @@ factories.foundation = function(deps)
         if seen[value] then return seen[value] end
         local copy = {}
         seen[value] = copy
-        for key, item in pairs(value) do
+        for key, item in next, value do
             copy[deepCopy(key, seen, depth)] = deepCopy(item, seen, depth)
         end
-        return copy
+        return preserveJsonContainerMetadata(value, copy)
     end
 
     local function readonly(value, cache)
@@ -238,34 +262,66 @@ factories.foundation = function(deps)
         end
         if valueType == 'nil' or valueType == 'boolean' then return value end
         if valueType ~= 'table' then return '[UNSUPPORTED_TYPE]' end
-        if getmetatable(value) ~= nil then return '[UNSAFE_TABLE]' end
+        local containerKind = jsonContainerKind(value)
+        if not containerKind then return '[UNSAFE_TABLE]' end
         depth = (depth or 0) + 1
         if depth > 8 then return '[DEPTH_LIMIT]' end
         seen = seen or {}
         if seen[value] then return '[CYCLE]' end
         seen[value] = true
         local output = {}
-        local count = 0
-        for key, item in next, value do
+        local keyType, count, maximumIndex, truncated = nil, 0, 0, false
+        for key in next, value do
             count = count + 1
             if count > 128 then
-                output['[TRUNCATED_FIELDS]'] = true
+                truncated = true
                 break
             end
-            if type(key) ~= 'string' or #key < 1 or #key > 128 then
-                output[('[INVALID_FIELD_%d]'):format(count)] = '[REDACTED]'
-                goto continue
+            local currentType = type(key)
+            if currentType == 'number' and math.type(key) == 'integer' and key >= 1 then
+                maximumIndex = math.max(maximumIndex, key)
+            elseif currentType ~= 'string' or #key < 1 or #key > 128 then
+                seen[value] = nil
+                return '[UNSAFE_TABLE]'
             end
-            local normalized = key:lower()
-            if redactedKeys[normalized] or normalized:find('password', 1, true) or normalized:find('secret', 1, true) then
-                output[key] = '[REDACTED]'
+            if keyType and keyType ~= currentType then
+                seen[value] = nil
+                return '[UNSAFE_TABLE]'
+            end
+            keyType = currentType
+        end
+        if not truncated and keyType == 'number' and maximumIndex ~= count
+            or containerKind == 'object' and keyType == 'number'
+            or containerKind == 'array' and keyType == 'string' then
+            seen[value] = nil
+            return '[UNSAFE_TABLE]'
+        end
+        if keyType == 'number' then
+            if truncated then
+                output[1] = '[TRUNCATED_ITEMS]'
             else
-                output[key] = redact(item, depth, seen)
+                for index = 1, count do output[index] = '[REDACTED]' end
             end
-            ::continue::
+        else
+            local copied = 0
+            for key, item in next, value do
+                copied = copied + 1
+                if copied > 128 then
+                    output['[TRUNCATED_FIELDS]'] = true
+                    break
+                end
+                local normalized = key:lower()
+                if redactedKeys[normalized] or normalized:find('password', 1, true)
+                    or normalized:find('secret', 1, true) then
+                    output[key] = '[REDACTED]'
+                else
+                    output[key] = redact(item, depth, seen)
+                end
+            end
+            if truncated then output['[TRUNCATED_FIELDS]'] = true end
         end
         seen[value] = nil
-        return output
+        return preserveJsonContainerMetadata(value, output)
     end
 
     local mainExecutionKey = {}
@@ -449,6 +505,7 @@ factories.foundation = function(deps)
         failureCode = failureCode,
         safeCall = safeCall,
         isCallable = isCallable,
+        jsonContainerKind = jsonContainerKind,
         nextId = deps.nextId or nextId,
         configureIds = configureIds,
         monotonicMs = deps.monotonicMs or monotonicMs,

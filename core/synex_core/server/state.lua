@@ -275,7 +275,9 @@ factories.state = function(deps)
                     and candidate ~= -math.huge and add(32)
             end
             if candidateType == 'string' then return add(encodedStringBytes(candidate)) end
-            if candidateType ~= 'table' or getmetatable(candidate) ~= nil
+            local containerKind = candidateType == 'table'
+                and foundation.jsonContainerKind(candidate) or nil
+            if candidateType ~= 'table' or not containerKind
                 or depth > maximumSchemaDepth or state.active[candidate] then return false end
             state.active[candidate] = true
             if not add(2) then state.active[candidate] = nil return false end
@@ -310,7 +312,10 @@ factories.state = function(deps)
                 end
             end
             state.active[candidate] = nil
-            return keyType ~= 'number' or maximumIndex == count
+            if keyType == 'number' and maximumIndex ~= count
+                or containerKind == 'object' and keyType == 'number'
+                or containerKind == 'array' and keyType == 'string' then return false end
+            return true
         end
         if not inspect(value, 1) then return nil end
         return state.bytes

@@ -59,12 +59,14 @@ factories.reliability = function(deps)
                 end
                 return spend(#tostring(candidate)) and true or nil, 'size'
             end
-            if candidateType ~= 'table' or getmetatable(candidate) ~= nil
+            local containerKind = candidateType == 'table'
+                and foundation.jsonContainerKind(candidate) or nil
+            if candidateType ~= 'table' or not containerKind
                 or depth > 12 or active[candidate] then return nil, 'invalid' end
             active[candidate] = true
             local keyType, count, maximumIndex = nil, 0, 0
             if not spend(2) then active[candidate] = nil return nil, 'size' end
-            for key, child in pairs(candidate) do
+            for key, child in next, candidate do
                 keys = keys + 1
                 if keys > 512 then active[candidate] = nil return nil, 'invalid' end
                 local currentType = type(key)
@@ -91,7 +93,11 @@ factories.reliability = function(deps)
                 if not inspected then active[candidate] = nil return nil, inspectError end
             end
             active[candidate] = nil
-            if keyType == 'number' and maximumIndex ~= count then return nil, 'invalid' end
+            if keyType == 'number' and maximumIndex ~= count
+                or containerKind == 'object' and keyType == 'number'
+                or containerKind == 'array' and keyType == 'string' then
+                return nil, 'invalid'
+            end
             return true, nil
         end
         return inspect(value, 1)
@@ -744,17 +750,20 @@ factories.reliability = function(deps)
         local enabled, featureError = requireFeature(features.sagas, 'sagas')
         if not enabled then return nil, featureError end
         options = options or {}
+        local contextValue = context or {}
+        local contextKind = type(contextValue) == 'table'
+            and foundation.jsonContainerKind(contextValue) or nil
         if not validSagaOwner(owner)
             or type(sagaType) ~= 'string' or #sagaType < 1 or #sagaType > 96
             or not sagaType:match('^[a-z][a-z0-9_.%-]*$')
             or type(correlationId) ~= 'string' or #correlationId < 1 or #correlationId > 128
-            or correlationId:find('[%z\1-\31\127]') or type(context or {}) ~= 'table'
-            or getmetatable(context or {}) ~= nil or type(options) ~= 'table' or getmetatable(options) ~= nil
+            or correlationId:find('[%z\1-\31\127]') or not contextKind
+            or type(options) ~= 'table' or getmetatable(options) ~= nil
             or (options.deadlineAt ~= nil and (type(options.deadlineAt) ~= 'string' or #options.deadlineAt < 19
                 or #options.deadlineAt > 32 or not options.deadlineAt:match('^%d%d%d%d%-%d%d%-%d%d[T ]%d%d:%d%d:%d%d'))) then
             return nil, foundation.error('INVALID_SAGA', 'Saga type or correlation ID is invalid.')
         end
-        local contextJson, contextError = boundedJson(context or {}, 65536)
+        local contextJson, contextError = boundedJson(contextValue, 65536)
         if not contextJson then return nil, contextError end
         local publicId = foundation.nextId('saga')
         local inserted, insertError = database:insert([[INSERT INTO `synex_sagas`

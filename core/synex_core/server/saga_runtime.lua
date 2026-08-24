@@ -23,6 +23,11 @@ factories.sagaRuntime = function(deps)
         return type(value) == 'table' and getmetatable(value) == nil
     end
 
+    local function jsonContainer(value)
+        return type(value) == 'table'
+            and foundation.jsonContainerKind(value) ~= nil
+    end
+
     local function exactKeys(value, allowed)
         if not plainObject(value) then return false end
         for key in pairs(value) do if type(key) ~= 'string' or not allowed[key] then return false end end
@@ -346,7 +351,8 @@ factories.sagaRuntime = function(deps)
             if not persisted then return nil, persistError end
             return { failed = true, terminal = terminal }, nil
         end
-        if result and (not plainObject(result) or (result.context ~= nil and not plainObject(result.context))) then
+        if result and (not plainObject(result)
+            or (result.context ~= nil and not jsonContainer(result.context))) then
             handlerError = foundation.error('SAGA_HANDLER_RESULT_INVALID', 'Saga compensation must return an object result.')
             result = nil
         end
@@ -431,7 +437,8 @@ factories.sagaRuntime = function(deps)
             if not persisted then return nil, persistError end
             return { failed = true, terminal = terminal, compensating = shouldCompensate }, nil
         end
-        if result and (not plainObject(result) or (result.context ~= nil and not plainObject(result.context))) then
+        if result and (not plainObject(result)
+            or (result.context ~= nil and not jsonContainer(result.context))) then
             handlerError = foundation.error('SAGA_HANDLER_RESULT_INVALID', 'Saga handlers must return an object with optional object context.')
             result = nil
         end

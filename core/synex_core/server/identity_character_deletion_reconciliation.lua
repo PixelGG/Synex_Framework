@@ -48,7 +48,7 @@ factories.identityCharacterDeletionReconciliation = function(deps)
     end
 
     local function hasOnlyFields(value, allowed)
-        for key in pairs(value) do
+        for key in next, value do
             if type(key) ~= 'string' or allowed[key] ~= true then return false end
         end
         return true
@@ -66,12 +66,14 @@ factories.identityCharacterDeletionReconciliation = function(deps)
         if valueType == 'number' then
             return value == value and value ~= math.huge and value ~= -math.huge
         end
-        if valueType ~= 'table' or getmetatable(value) ~= nil or state.seen[value] then
+        local containerKind = valueType == 'table'
+            and foundation.jsonContainerKind(value) or nil
+        if valueType ~= 'table' or not containerKind or state.seen[value] then
             return false
         end
         state.seen[value] = true
         local keyCount, numericKeys, stringKeys, maximumIndex = 0, 0, 0, 0
-        for key in pairs(value) do
+        for key in next, value do
             keyCount = keyCount + 1
             if keyCount > 128 then state.seen[value] = nil return false end
             if type(key) == 'number' and math.type(key) == 'integer' and key >= 1 then
@@ -85,11 +87,13 @@ factories.identityCharacterDeletionReconciliation = function(deps)
             end
         end
         if numericKeys > 0 and stringKeys > 0
-            or numericKeys > 0 and maximumIndex ~= numericKeys then
+            or numericKeys > 0 and maximumIndex ~= numericKeys
+            or containerKind == 'object' and numericKeys > 0
+            or containerKind == 'array' and stringKeys > 0 then
             state.seen[value] = nil
             return false
         end
-        for _, child in pairs(value) do
+        for _, child in next, value do
             if not validateMetadata(child, depth + 1, state) then
                 state.seen[value] = nil
                 return false
@@ -100,46 +104,69 @@ factories.identityCharacterDeletionReconciliation = function(deps)
     end
 
     local function validatePlan(plan)
-        if type(plan) ~= 'table' or getmetatable(plan) ~= nil or plan.schema ~= 1
-            or not validCharacterId(plan.characterId) or type(plan.actions) ~= 'table'
-            or getmetatable(plan.actions) ~= nil or #plan.actions > participantMaximum
+        if type(plan) ~= 'table' then
+            return nil, foundation.error('INVALID_DELETE_PLAN',
+                'The persisted character deletion plan is invalid.')
+        end
+        local planKind = foundation.jsonContainerKind(plan)
+        local schema = rawget(plan, 'schema')
+        local characterId = rawget(plan, 'characterId')
+        local actions = rawget(plan, 'actions')
+        local actionsKind = type(actions) == 'table'
+            and foundation.jsonContainerKind(actions) or nil
+        if not planKind or planKind == 'array' or schema ~= 1
+            or not validCharacterId(characterId) or type(actions) ~= 'table'
+            or not actionsKind or actionsKind == 'object'
             or not hasOnlyFields(plan, planFields) then
             return nil, foundation.error('INVALID_DELETE_PLAN',
                 'The persisted character deletion plan is invalid.')
         end
-        local actionCount = 0
-        for key in pairs(plan.actions) do
+        local actionCount, maximumIndex = 0, 0
+        for key in next, actions do
             if type(key) ~= 'number' or math.type(key) ~= 'integer'
-                or key < 1 or key > #plan.actions then
+                or key < 1 then
                 return nil, foundation.error('INVALID_DELETE_PLAN',
                     'The persisted character deletion action list is not dense.')
             end
             actionCount = actionCount + 1
+            maximumIndex = math.max(maximumIndex, key)
+            if actionCount > participantMaximum then
+                return nil, foundation.error('INVALID_DELETE_PLAN',
+                    'The persisted character deletion plan is invalid.')
+            end
         end
-        if actionCount ~= #plan.actions then
+        if actionCount ~= maximumIndex then
             return nil, foundation.error('INVALID_DELETE_PLAN',
                 'The persisted character deletion action list is not dense.')
         end
-        for index, action in ipairs(plan.actions) do
-            if type(action) ~= 'table' or getmetatable(action) ~= nil
+        for index = 1, actionCount do
+            local action = rawget(actions, index)
+            local actionKind = type(action) == 'table'
+                and foundation.jsonContainerKind(action) or nil
+            local owner = type(action) == 'table' and rawget(action, 'owner') or nil
+            local participant = type(action) == 'table' and rawget(action, 'participant') or nil
+            local actionName = type(action) == 'table' and rawget(action, 'action') or nil
+            local notify = type(action) == 'table' and rawget(action, 'notify') or nil
+            if type(action) ~= 'table' or not actionKind or actionKind == 'array'
                 or not hasOnlyFields(action, actionFields)
-                or type(action.owner) ~= 'string' or #action.owner < 7 or #action.owner > 64
-                or not action.owner:match('^synex_[a-z0-9_]+$')
-                or (action.participant ~= nil and (type(action.participant) ~= 'string'
-                    or #action.participant < 1 or #action.participant > 64
-                    or not action.participant:match('^[a-z][a-z0-9_.%-]*$')))
-                or not allowedActions[action.action] or (action.notify ~= nil
-                    and type(action.notify) ~= 'boolean') then
+                or type(owner) ~= 'string' or #owner < 7 or #owner > 64
+                or not owner:match('^synex_[a-z0-9_]+$')
+                or (participant ~= nil and (type(participant) ~= 'string'
+                    or #participant < 1 or #participant > 64
+                    or not participant:match('^[a-z][a-z0-9_.%-]*$')))
+                or not allowedActions[actionName] or (notify ~= nil
+                    and type(notify) ~= 'boolean') then
                 return nil, foundation.error('INVALID_DELETE_PLAN',
                     ('Character deletion action %d is invalid.'):format(index))
             end
-            if action.metadata ~= nil then
-                local metadataValid = validateMetadata(action.metadata, 1, {
+            local metadata = rawget(action, 'metadata')
+            if metadata ~= nil then
+                local metadataValid = validateMetadata(metadata, 1, {
                     nodes = 0, stringBytes = 0, seen = {}
                 })
                 local encodedOk, encoded = false, nil
                 if metadataValid then
-                    encodedOk, encoded = pcall(platform.jsonEncode, action.metadata)
+                    encodedOk, encoded = pcall(platform.jsonEncode, metadata)
                 end
                 if not metadataValid or not encodedOk or type(encoded) ~= 'string'
                     or #encoded > 4096 then
@@ -327,8 +354,11 @@ factories.identityCharacterDeletionReconciliation = function(deps)
                 'The persisted character deletion plan identity is invalid.')
         end
         local valid, validationError = validatePlan(plan)
+        local schema = valid and rawget(plan, 'schema') or nil
+        local characterId = valid and rawget(plan, 'characterId') or nil
+        local actions = valid and rawget(plan, 'actions') or nil
         if valid and (not validCharacterId(expectedCharacterId)
-            or plan.characterId ~= expectedCharacterId) then
+            or characterId ~= expectedCharacterId) then
             valid = nil
             validationError = foundation.error('INVALID_DELETE_PLAN',
                 'The persisted deletion plan does not match its character record.')
@@ -405,11 +435,27 @@ factories.identityCharacterDeletionReconciliation = function(deps)
         local attemptVersion, attemptError = beginAttempt(
             planId, expectedVersion, fencingToken)
         if not attemptVersion then release() return nil, attemptError end
-        for _, action in ipairs(plan.actions) do
-            if action.notify ~= false then
+        local actionCount = 0
+        for _ in next, actions do actionCount = actionCount + 1 end
+        for index = 1, actionCount do
+            local action = rawget(actions, index)
+            local owner = rawget(action, 'owner')
+            local participantName = rawget(action, 'participant')
+            local actionName = rawget(action, 'action')
+            local notify = rawget(action, 'notify')
+            local metadata = rawget(action, 'metadata')
+            if notify ~= false then
                 fenced, fenceError = fence()
                 if not fenced then release() return nil, fenceError end
-                local participant = findParticipant(action)
+                local participantAction = { owner = owner, action = actionName }
+                if participantName ~= nil then
+                    participantAction.participant = participantName
+                end
+                if notify ~= nil then participantAction.notify = notify end
+                if metadata ~= nil then
+                    participantAction.metadata = foundation.copy(metadata)
+                end
+                local participant = findParticipant(participantAction)
                 if not participant or not foundation.isCallable(participant.deleteCommit) then
                     release()
                     return nil, foundation.error('DELETE_PARTICIPANT_UNAVAILABLE',
@@ -418,9 +464,9 @@ factories.identityCharacterDeletionReconciliation = function(deps)
                         })
                 end
                 local participantPlan = {
-                    schema = plan.schema,
-                    characterId = plan.characterId,
-                    actions = { foundation.copy(action) }
+                    schema = schema,
+                    characterId = characterId,
+                    actions = { participantAction }
                 }
                 local _, participantError = invokeParticipant(
                     participant, participant.deleteCommit, foundation.readonly({
@@ -435,7 +481,7 @@ factories.identityCharacterDeletionReconciliation = function(deps)
         fenced, fenceError = fence()
         if not fenced then release() return nil, fenceError end
         local purgedState, purgeError = stateService:purgeSubject(
-            'character', plan.characterId)
+            'character', characterId)
         if not purgedState then release() return nil, purgeError end
         fenced, fenceError = fence()
         if not fenced then release() return nil, fenceError end
@@ -444,7 +490,7 @@ factories.identityCharacterDeletionReconciliation = function(deps)
         if not completed then return nil, completionError end
         local _, eventError = messaging.events:publish(
             coreResource, owners:epoch(coreResource), 'synex.characters.deleted', {
-                characterId = plan.characterId,
+                characterId = characterId,
                 planId = planId
             })
         if eventError then
@@ -455,7 +501,7 @@ factories.identityCharacterDeletionReconciliation = function(deps)
         end
         return {
             planId = planId,
-            characterId = plan.characterId,
+            characterId = characterId,
             state = 'completed'
         }, nil
     end

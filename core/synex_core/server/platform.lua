@@ -3,6 +3,62 @@ local factories = assert(SynexCoreFactories, 'factories must be loaded first')
 factories.platform = function(overrides)
     overrides = overrides or {}
 
+    local runtimeJson = type(json) == 'table' and json or nil
+
+    local function rawMetatable(value)
+        if type(debug) ~= 'table' or type(debug.getmetatable) ~= 'function' then
+            return nil, false
+        end
+        local readable, metatable = pcall(debug.getmetatable, value)
+        if not readable then return nil, false end
+        return metatable, true
+    end
+
+    local function sharedJsonMetatable(factoryName, expectedKind)
+        local factory = runtimeJson and rawget(runtimeJson, factoryName) or nil
+        if type(factory) ~= 'function' then return nil end
+        local created, sample = pcall(factory)
+        if not created or type(sample) ~= 'table' then return nil end
+        local metatable, readable = rawMetatable(sample)
+        if not readable or type(metatable) ~= 'table'
+            or rawget(metatable, '__jsontype') ~= expectedKind then return nil end
+        return metatable
+    end
+
+    -- Cfx RapidJSON tags decoded objects and arrays with two shared metatables.
+    -- Compare the raw metatable identities so arbitrary __jsontype/__metatable
+    -- lookalikes never cross a plain-JSON boundary.
+    local jsonObjectMetatable = sharedJsonMetatable('object', 'object')
+    local jsonArrayMetatable = sharedJsonMetatable('array', 'array')
+    if jsonObjectMetatable ~= nil and jsonArrayMetatable ~= nil
+        and rawequal(jsonObjectMetatable, jsonArrayMetatable) then
+        jsonObjectMetatable, jsonArrayMetatable = nil, nil
+    end
+
+    local function jsonContainerKind(value)
+        if type(value) ~= 'table' then return nil end
+        if getmetatable(value) == nil then return 'plain' end
+        local metatable, readable = rawMetatable(value)
+        if not readable then return nil end
+        if jsonObjectMetatable ~= nil and rawequal(metatable, jsonObjectMetatable)
+            and rawget(metatable, '__jsontype') == 'object' then
+            return 'object'
+        end
+        if jsonArrayMetatable ~= nil and rawequal(metatable, jsonArrayMetatable)
+            and rawget(metatable, '__jsontype') == 'array' then
+            return 'array'
+        end
+        return nil
+    end
+
+    local function copyJsonContainerMetadata(source, target)
+        if type(target) ~= 'table' or getmetatable(target) ~= nil then return nil end
+        local kind = jsonContainerKind(source)
+        if kind == 'object' then return setmetatable(target, jsonObjectMetatable) end
+        if kind == 'array' then return setmetatable(target, jsonArrayMetatable) end
+        return target
+    end
+
     local function fallback(name)
         return function()
             error(('Cfx function %s is unavailable in this environment'):format(name), 2)
@@ -37,6 +93,9 @@ factories.platform = function(overrides)
         nowGame = overrides.nowGame or GetGameTimer,
         jsonDecode = overrides.jsonDecode or function(value) return json.decode(value) end,
         jsonEncode = overrides.jsonEncode or function(value) return json.encode(value) end,
+        jsonContainerKind = overrides.jsonContainerKind or jsonContainerKind,
+        copyJsonContainerMetadata = overrides.copyJsonContainerMetadata
+            or copyJsonContainerMetadata,
         print = overrides.print or print,
         random = overrides.random or math.random
     }

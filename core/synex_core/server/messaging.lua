@@ -426,12 +426,14 @@ factories.messaging = function(deps)
                 return candidate == candidate and candidate ~= math.huge
                     and candidate ~= -math.huge and consumeBytes(#tostring(candidate))
             end
-            if candidateType ~= 'table' or getmetatable(candidate) ~= nil
+            local containerKind = candidateType == 'table'
+                and foundation.jsonContainerKind(candidate) or nil
+            if candidateType ~= 'table' or not containerKind
                 or depth > maximumDepth or active[candidate] then return false end
             if not consumeBytes(2) then return false end
             active[candidate] = true
             local keyType, count, maximumIndex = nil, 0, 0
-            for key, child in pairs(candidate) do
+            for key, child in next, candidate do
                 keys = keys + 1
                 if keys > maximumKeys then active[candidate] = nil return false end
                 local currentType = type(key)
@@ -455,7 +457,10 @@ factories.messaging = function(deps)
                 if not inspect(child, depth + 1) then active[candidate] = nil return false end
             end
             active[candidate] = nil
-            return keyType ~= 'number' or maximumIndex == count
+            if keyType == 'number' and maximumIndex ~= count
+                or containerKind == 'object' and keyType == 'number'
+                or containerKind == 'array' and keyType == 'string' then return false end
+            return true
         end
         local valid = inspect(value, 1)
         return valid, not valid and byteLimitExceeded and 'bytes' or nil

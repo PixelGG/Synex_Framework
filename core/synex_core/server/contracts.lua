@@ -8,15 +8,21 @@ factories.contracts = function(deps)
         local kind = type(value)
         if kind == 'nil' then return 'null' end
         if kind == 'number' and math.type(value) == 'integer' then return 'integer' end
-        if kind == 'table' then return 'object' end
+        if kind == 'table' then
+            local containerKind = foundation.jsonContainerKind(value)
+            if containerKind == 'array' then return 'array' end
+            return 'object'
+        end
         return kind
     end
 
     local function arrayLength(value)
-        if type(value) ~= 'table' or getmetatable(value) ~= nil then return nil end
+        if type(value) ~= 'table' then return nil end
+        local containerKind = foundation.jsonContainerKind(value)
+        if not containerKind or containerKind == 'object' then return nil end
         local maximum = 0
         local count = 0
-        for key in pairs(value) do
+        for key in next, value do
             if type(key) ~= 'number' or math.type(key) ~= 'integer' or key < 1 then return nil end
             maximum = math.max(maximum, key)
             count = count + 1
@@ -54,7 +60,11 @@ factories.contracts = function(deps)
         if not spendWork(workState, 1) then return nil, 'workBudget' end
         if type(left) ~= type(right) then return false, nil end
         if type(left) ~= 'table' then return left == right, nil end
-        if getmetatable(left) ~= nil or getmetatable(right) ~= nil then return false, 'plainJson' end
+        local leftContainer = foundation.jsonContainerKind(left)
+        local rightContainer = foundation.jsonContainerKind(right)
+        if not leftContainer or not rightContainer then return false, 'plainJson' end
+        if leftContainer ~= 'plain' and rightContainer ~= 'plain'
+            and leftContainer ~= rightContainer then return false, nil end
         depth = (depth or 0) + 1
         if depth > validationLimits.equalityDepth then return false, 'maxDepth' end
         compared = compared or {}
@@ -63,16 +73,17 @@ factories.contracts = function(deps)
         if status == 'active' then return false, 'cycle' end
         if status == 'equal' then return true, nil end
         compared[left][right] = 'active'
-        for key, value in pairs(left) do
+        for key, value in next, left do
             if not spendWork(workState, 1) then return nil, 'workBudget' end
-            if right[key] == nil then return false, nil end
-            local same, comparisonError = equals(value, right[key], workState, compared, depth)
+            local rightValue = rawget(right, key)
+            if rightValue == nil then return false, nil end
+            local same, comparisonError = equals(value, rightValue, workState, compared, depth)
             if comparisonError then return same, comparisonError end
             if not same then return false, nil end
         end
-        for key in pairs(right) do
+        for key in next, right do
             if not spendWork(workState, 1) then return nil, 'workBudget' end
-            if left[key] == nil then return false, nil end
+            if rawget(left, key) == nil then return false, nil end
         end
         compared[left][right] = 'equal'
         return true, nil
@@ -415,7 +426,9 @@ factories.contracts = function(deps)
             end
             return true, nil
         end
-        if kind ~= 'table' or getmetatable(value) ~= nil then
+        local containerKind = kind == 'table'
+            and foundation.jsonContainerKind(value) or nil
+        if kind ~= 'table' or not containerKind then
             return nil, { path = path, rule = 'plainJson', message = 'payload must contain plain JSON-compatible values' }
         end
         if depth > shared.maximumDepth then
@@ -430,7 +443,7 @@ factories.contracts = function(deps)
         shared.active[value] = true
         local entries = {}
         local keyType, maximumIndex, count = nil, 0, 0
-        for key, child in pairs(value) do
+        for key, child in next, value do
             if not spendWork(shared, 1) then
                 shared.active[value] = nil
                 return nil, { path = path, rule = 'validationBudget', message = 'validation work budget exceeded' }
@@ -459,7 +472,9 @@ factories.contracts = function(deps)
             end
             entries[#entries + 1] = { key = key, value = child }
         end
-        if keyType == 'number' and maximumIndex ~= count then
+        if keyType == 'number' and maximumIndex ~= count
+            or containerKind == 'object' and keyType == 'number'
+            or containerKind == 'array' and keyType == 'string' then
             shared.active[value] = nil
             return nil, { path = path, rule = 'arrayShape', message = 'payload arrays must be dense' }
         end
@@ -552,6 +567,7 @@ factories.contracts = function(deps)
                 if candidate == 'array' then candidateMatched = type(value) == 'table' and arrayLength(value) ~= nil end
                 if candidate == 'object' then
                     candidateMatched = type(value) == 'table'
+                        and foundation.jsonContainerKind(value) ~= 'array'
                         and (next(value) == nil or arrayLength(value) == nil)
                 end
                 if candidateMatched then matched = true break end
@@ -565,7 +581,9 @@ factories.contracts = function(deps)
             local matched = actual == expected or (expected == 'number' and type(value) == 'number')
             if expected == 'array' then matched = type(value) == 'table' and arrayLength(value) ~= nil end
             if expected == 'object' then
-                matched = type(value) == 'table' and (next(value) == nil or arrayLength(value) == nil)
+                matched = type(value) == 'table'
+                    and foundation.jsonContainerKind(value) ~= 'array'
+                    and (next(value) == nil or arrayLength(value) == nil)
             end
             if not matched then
                 state.depth = state.depth - 1
@@ -672,7 +690,8 @@ factories.contracts = function(deps)
                     end
                     for left = 1, length do
                         for right = left + 1, length do
-                            local same, comparisonError = equals(value[left], value[right], shared)
+                            local same, comparisonError = equals(
+                                rawget(value, left), rawget(value, right), shared)
                             if comparisonError == 'workBudget' then
                                 state.depth = state.depth - 1
                                 return nil, { path = path, rule = 'validationBudget',
@@ -687,7 +706,8 @@ factories.contracts = function(deps)
                 end
                 if schema.items ~= nil then
                     for index = 1, length do
-                        local ok, err = validate(schema.items, value[index], ('%s[%d]'):format(path, index), state)
+                        local ok, err = validate(schema.items, rawget(value, index),
+                            ('%s[%d]'):format(path, index), state)
                         if not ok then state.depth = state.depth - 1 return nil, err end
                     end
                 end
@@ -695,12 +715,12 @@ factories.contracts = function(deps)
                 local required = {}
                 for _, key in ipairs(schema.required or {}) do required[key] = true end
                 for key in pairs(required) do
-                    if value[key] == nil then
+                    if rawget(value, key) == nil then
                         state.depth = state.depth - 1
                         return nil, { path = path .. '.' .. key, rule = 'required', message = 'required property is missing' }
                     end
                 end
-                for key, item in pairs(value) do
+                for key, item in next, value do
                     if not spendWork(shared, 1) then
                         state.depth = state.depth - 1
                         return nil, { path = path, rule = 'validationBudget', message = 'validation work budget exceeded' }
