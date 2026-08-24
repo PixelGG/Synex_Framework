@@ -343,3 +343,60 @@ test('multiple waiters invoke only one arbiter and one sort inside one queue int
     engine.global.close();
   }
 });
+
+test('queue capacity accepts the configured boundary, rejects boundary plus one, and is reusable after cleanup', async () => {
+  const engine = await connectionEngine();
+  try {
+    const result = await engine.doString(`${connectionFixture}
+      local fixture = newConnectionFixture({
+        id = 'queue-capacity', maximumActiveSessions = 1,
+        maximumQueued = 2, queueTimeoutMs = 500
+      })
+      local players = fixture:players()
+      assert(players:createPending(-99, { sessionId = 'occupied' }))
+      assert(players:bindJoined(-99, 99, {
+        id = 'occupied', userId = 'occupied-user', state = 'SELECTING_CHARACTER'
+      }))
+
+      local boundaryObserved, reusedCapacity = false, false
+      fixture:onWait(function(attempt)
+        if attempt == 1 then
+          assert(fixture:connect(-2))
+          local afterCleanup = fixture:snapshot()
+          assert(afterCleanup.queued == 1 and afterCleanup.rejected == 1)
+          assert(fixture:connect(-4))
+          reusedCapacity = not fixture:completion(-4):find('[QUEUE_FULL]', 1, true)
+        elseif attempt == 2 then
+          local atBoundary = fixture:snapshot()
+          assert(atBoundary.queued == 2 and atBoundary.maximumQueued == 2)
+          assert(atBoundary.peak == 2 and atBoundary.rejected == 0)
+          boundaryObserved = true
+          assert(fixture:connect(-3))
+          assert(fixture:completion(-3):find('[QUEUE_FULL]', 1, true))
+          local overBoundary = fixture:snapshot()
+          assert(overBoundary.queued == 2 and overBoundary.peak == 2)
+          assert(overBoundary.rejected == 1)
+        end
+      end)
+
+      assert(fixture:connect(-1))
+      local snapshot = fixture:snapshot()
+      local registry = players:summary()
+      assert(boundaryObserved and reusedCapacity)
+      assert(fixture:completion(-1):find('[QUEUE_TIMEOUT]', 1, true))
+      assert(fixture:completion(-2):find('[QUEUE_TIMEOUT]', 1, true))
+      assert(fixture:completion(-4):find('[QUEUE_TIMEOUT]', 1, true))
+      assert(snapshot.queued == 0 and snapshot.granted == 0)
+      assert(snapshot.admissionReservations == 0 and snapshot.openDeferrals == 0)
+      assert(snapshot.preAuth.active == 0 and registry.pendingConnections == 0)
+      assert(snapshot.maximumQueued == 2 and snapshot.peak == 2)
+      assert(snapshot.rejected == 1 and snapshot.timedOut == 3)
+      return table.concat({snapshot.maximumQueued, snapshot.peak, snapshot.rejected,
+        snapshot.timedOut, snapshot.queued, snapshot.admissionReservations,
+        snapshot.openDeferrals, snapshot.preAuth.active, registry.pendingConnections}, ':')
+    `);
+    assert.equal(result, '2:2:1:3:0:0:0:0:0');
+  } finally {
+    engine.global.close();
+  }
+});
