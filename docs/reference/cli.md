@@ -50,7 +50,7 @@ synex certify <repository|resource|path> [--output <file>] [--json]
 synex live-test prepare --probe <external-synex_core_probe-directory> [--output <.temp/live-test/directory>] [--json]
 ```
 
-This command builds an ignored, deployment-shaped Core acceptance bundle without changing the tracked production capability policy. It accepts only a reviewed, server-only `synex_core_probe` outside the repository that requests the four exact Connection Gate and Saga test capabilities. The output contains `server-data/resources`, schemas, a credential-free startup configuration fragment, hashes, and safeguard evidence. Use it only with isolated infrastructure and remove it after the run. See [Testing](../testing.md#disposable-core-live-test-bundle) for the probe contract and runtime acceptance rules.
+This command builds an ignored, deployment-shaped Core acceptance bundle without changing the tracked production capability policy. It accepts only a reviewed, server-only `synex_core_probe` outside the repository that requests the four exact Connection Gate and Saga test capabilities. The output contains `server-data/resources`, schemas, a credential-free startup configuration fragment, hashes, run-scoped KVP isolation metadata, and safeguard evidence. Use it only with isolated infrastructure and remove it after the run. See [Testing](../testing.md#disposable-core-live-test-bundle) for the probe contract and runtime acceptance rules.
 
 ## Compatibility and upgrades
 

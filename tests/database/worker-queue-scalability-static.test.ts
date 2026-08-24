@@ -102,6 +102,12 @@ test('saga recovery uses bounded state cycles, exact keyset ranges, and Lua sele
   assert.ok(candidatePath.length > 0);
   assert.match(candidatePath, /sagaCandidateScanMaximum/u);
   assert.match(candidatePath, /FORCE INDEX \(`idx_sagas_state_updated`\)/u);
+  assert.equal(
+    candidatePath.match(
+      /DATE_FORMAT\(`updated_at`, '%Y-%m-%d %H:%i:%s.%f'\) AS `updated_at_cursor`/gu,
+    )?.length,
+    3,
+  );
   assert.match(
     candidatePath,
     /ORDER BY `updated_at` DESC, `id` DESC LIMIT 1/u,
@@ -121,7 +127,7 @@ test('saga recovery uses bounded state cycles, exact keyset ranges, and Lua sele
   assert.doesNotMatch(candidatePath, /`state` IN \('pending'/u);
   assert.match(candidatePath, /boundedRowCount\(rows, sagaCandidateScanMaximum\) == nil/u);
   assert.match(candidatePath, /lastTraversed = row/u);
-  assert.match(candidatePath, /cycle\.cursor = \{\s*updatedAt = lastTraversed\.updated_at/u);
+  assert.match(candidatePath, /cycle\.cursor = \{\s*updatedAt = lastTraversed\.updated_at_cursor/u);
   assert.match(candidatePath, /cycle\.highWatermark = nil/u);
   assert.match(candidatePath, /sagaCandidateTurn = \(sagaCandidateTurn % #sagaCandidateStates\) \+ 1/u);
 });

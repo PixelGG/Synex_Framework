@@ -924,8 +924,9 @@ factories.reliability = function(deps)
                 or (type(row.id) == 'string' and #row.id <= 20
                     and row.id:match('^[1-9][0-9]*$') ~= nil)
             )
-            return validId and type(row.updated_at) == 'string'
-                and #row.updated_at >= 19 and #row.updated_at <= 32
+            local updatedAt = validId and row.updated_at_cursor or nil
+            return validId and type(updatedAt) == 'string' and #updatedAt == 26
+                and updatedAt:match('^%d%d%d%d%-%d%d%-%d%d %d%d:%d%d:%d%d%.%d%d%d%d%d%d$') ~= nil
                 and row.state == state
         end
 
@@ -942,7 +943,8 @@ factories.reliability = function(deps)
         end
 
         local function loadHighWatermark(state)
-            local rows, queryError = database:query([[SELECT `id`, `state`, `updated_at`
+            local rows, queryError = database:query([[SELECT `id`, `state`,
+                    DATE_FORMAT(`updated_at`, '%Y-%m-%d %H:%i:%s.%f') AS `updated_at_cursor`
                 FROM `synex_sagas` FORCE INDEX (`idx_sagas_state_updated`)
                 WHERE `state` = ?
                 ORDER BY `updated_at` DESC, `id` DESC LIMIT 1]], { state })
@@ -957,7 +959,7 @@ factories.reliability = function(deps)
                 return nil, foundation.error('DATABASE_RESULT_INVALID',
                     'Saga candidate high-watermark has an invalid cursor.')
             end
-            return { updatedAt = row.updated_at, id = row.id }, nil
+            return { updatedAt = row.updated_at_cursor, id = row.id }, nil
         end
 
         local function queryWindow(state, cycle)
@@ -965,7 +967,7 @@ factories.reliability = function(deps)
             local parameters
             if cycle.cursor then
                 sql = [[SELECT `id`, `public_id`, `owner_resource`, `saga_type`, `state`, `version`,
-                        `updated_at`,
+                        DATE_FORMAT(`updated_at`, '%Y-%m-%d %H:%i:%s.%f') AS `updated_at_cursor`,
                         (`deadline_at` IS NOT NULL AND `deadline_at` <= CURRENT_TIMESTAMP(6)) AS `deadline_expired`,
                         TIMESTAMPDIFF(MICROSECOND, `updated_at`, CURRENT_TIMESTAMP(6)) DIV 1000 AS `age_ms`
                     FROM `synex_sagas` FORCE INDEX (`idx_sagas_state_updated`)
@@ -981,7 +983,7 @@ factories.reliability = function(deps)
                 }
             else
                 sql = [[SELECT `id`, `public_id`, `owner_resource`, `saga_type`, `state`, `version`,
-                        `updated_at`,
+                        DATE_FORMAT(`updated_at`, '%Y-%m-%d %H:%i:%s.%f') AS `updated_at_cursor`,
                         (`deadline_at` IS NOT NULL AND `deadline_at` <= CURRENT_TIMESTAMP(6)) AS `deadline_expired`,
                         TIMESTAMPDIFF(MICROSECOND, `updated_at`, CURRENT_TIMESTAMP(6)) DIV 1000 AS `age_ms`
                     FROM `synex_sagas` FORCE INDEX (`idx_sagas_state_updated`)
@@ -1005,7 +1007,7 @@ factories.reliability = function(deps)
                     return nil, foundation.error('DATABASE_RESULT_INVALID',
                         ('Saga candidate scan row %d has an invalid cursor.'):format(index))
                 end
-                local current = { updatedAt = row.updated_at, id = row.id }
+                local current = { updatedAt = row.updated_at_cursor, id = row.id }
                 if (previous and not cursorBefore(previous, current))
                     or cursorBefore(cycle.highWatermark, current) then
                     return nil, foundation.error('DATABASE_RESULT_INVALID',
@@ -1071,13 +1073,13 @@ factories.reliability = function(deps)
                         end
                         if #candidates >= maximum then break end
                     end
-                    if lastTraversed.updated_at == cycle.highWatermark.updatedAt
+                    if lastTraversed.updated_at_cursor == cycle.highWatermark.updatedAt
                         and tostring(lastTraversed.id) == tostring(cycle.highWatermark.id) then
                         cycle.cursor = nil
                         cycle.highWatermark = nil
                     else
                         cycle.cursor = {
-                            updatedAt = lastTraversed.updated_at,
+                            updatedAt = lastTraversed.updated_at_cursor,
                             id = lastTraversed.id
                         }
                     end

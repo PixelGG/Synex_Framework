@@ -17,6 +17,7 @@ test('live migration 021 verifies exact queue metadata and fences historical com
   const { connection } = await openLiveDatabase();
   const namespace = `worker021:${randomUUID()}`;
   const owner = 'worker021';
+  const sagaType = `cursor:${randomUUID()}`;
   let capacityTablesReady = false;
   try {
     const migrations = await loadMigrations();
@@ -96,6 +97,59 @@ test('live migration 021 verifies exact queue metadata and fences historical com
       (total, columnsForIndex) => total + columnsForIndex.length,
       0,
     ));
+
+    const sagaTimestamps = [
+      '2026-08-24 00:00:00.123001',
+      '2026-08-24 00:00:00.123002',
+      '2026-08-24 00:00:00.123999',
+    ];
+    for (const timestamp of sagaTimestamps) {
+      await connection.query(
+        `INSERT INTO synex_sagas
+         (public_id, owner_resource, saga_type, correlation_id, state,
+          current_step, version, context_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'pending', 0, 1, '{}', ?, ?)`,
+        [randomUUID(), owner, sagaType, randomUUID(), timestamp, timestamp],
+      );
+    }
+
+    const seenCursors: string[] = [];
+    let cursorAt: string | undefined;
+    let cursorId: number | undefined;
+    for (let page = 0; page < sagaTimestamps.length; page += 1) {
+      const [rows] = cursorAt === undefined
+        ? await connection.query<RowDataPacket[]>(
+          `SELECT id,
+                  DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s.%f') AS updated_at_cursor
+           FROM synex_sagas FORCE INDEX (idx_sagas_state_updated)
+           WHERE state = 'pending' AND saga_type = ?
+           ORDER BY updated_at ASC, id ASC LIMIT 1`,
+          [sagaType],
+        )
+        : await connection.query<RowDataPacket[]>(
+          `SELECT id,
+                  DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s.%f') AS updated_at_cursor
+           FROM synex_sagas FORCE INDEX (idx_sagas_state_updated)
+           WHERE state = 'pending' AND saga_type = ?
+             AND (updated_at > ? OR (updated_at = ? AND id > ?))
+           ORDER BY updated_at ASC, id ASC LIMIT 1`,
+          [sagaType, cursorAt, cursorAt, cursorId],
+        );
+      assert.equal(rows.length, 1);
+      assert.equal(typeof rows[0]?.updated_at_cursor, 'string');
+      cursorAt = String(rows[0]?.updated_at_cursor);
+      cursorId = Number(rows[0]?.id);
+      seenCursors.push(cursorAt);
+    }
+    assert.deepEqual(seenCursors, sagaTimestamps);
+    const [exhausted] = await connection.query<RowDataPacket[]>(
+      `SELECT id FROM synex_sagas FORCE INDEX (idx_sagas_state_updated)
+       WHERE state = 'pending' AND saga_type = ?
+         AND (updated_at > ? OR (updated_at = ? AND id > ?))
+       ORDER BY updated_at ASC, id ASC LIMIT 1`,
+      [sagaType, cursorAt, cursorAt, cursorId],
+    );
+    assert.equal(exhausted.length, 0);
 
     const placeholders: string[] = [];
     const values: Array<string | null> = [];
@@ -211,6 +265,7 @@ test('live migration 021 verifies exact queue metadata and fences historical com
   } finally {
     try {
       if (capacityTablesReady) {
+        await connection.query('DELETE FROM synex_sagas WHERE saga_type = ?', [sagaType]);
         await connection.beginTransaction();
         try {
           await connection.query(

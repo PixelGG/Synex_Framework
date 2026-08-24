@@ -198,10 +198,15 @@ test("live-test builder derives an exact disposable policy without touching prod
   const productionAfter = await readFile(productionPolicyPath, "utf8");
 
   assert.equal(report.status, "PREPARED");
+  assert.equal(report.schema, 2);
   assert.match(report.revision, /^[0-9a-f]{40,64}$/u);
   assert.match(report.runId, /^probe_[0-9a-f]{32}$/u);
   assert.match(report.instanceId, /^probe_[0-9a-f]{24}$/u);
-  assert.match(report.kvsName, /^synex_[0-9a-f]{24}$/u);
+  assert.deepEqual(report.kvpIsolation, {
+    strategy: "run-scoped-resource-key",
+    key: `synex_core_probe.owner_epoch.v1:${report.runId}`,
+    cleanupRequired: true,
+  });
   assert.match(report.resources.core, /server-data\/resources\/synex_core$/u);
   assert.match(report.resources.probe, /server-data\/resources\/synex_core_probe$/u);
   assert.deepEqual(report.grants, CORE_PROBE_CAPABILITIES);
@@ -220,13 +225,23 @@ test("live-test builder derives an exact disposable policy without touching prod
   const configuration = await readFile(join(repository, report.configuration), "utf8");
   assert.match(configuration, /DO NOT DEPLOY/u);
   assert.match(configuration, /mysql_connection_string/u);
-  assert.match(configuration, new RegExp(`sv_kvsName "${report.kvsName}"`, "u"));
-  assert.doesNotMatch(configuration, /set sv_kvsName/u);
-  assert.match(configuration, /set synex_environment "staging"/u);
-  assert.match(configuration, new RegExp(`set synex_probe_run_id "${report.runId}"`, "u"));
+  assert.doesNotMatch(configuration, /sv_kvsName/u);
+  assert.doesNotMatch(configuration, /;/u);
+  const commands = configuration
+    .split(/\r?\n/u)
+    .filter((line) => line.length > 0 && !line.startsWith("#"));
+  assert.deepEqual(commands, [
+    'set synex_environment "staging"',
+    'set synex_strict "1"',
+    `set synex_instance_id "${report.instanceId}"`,
+    `set synex_probe_run_id "${report.runId}"`,
+    "ensure oxmysql",
+    "ensure synex_core",
+    "ensure synex_core_probe",
+  ]);
   assert.doesNotMatch(configuration, /\bset[rs]\s+synex_probe_run_id/u);
-  assert.ok(configuration.indexOf("ensure oxmysql") < configuration.indexOf("ensure synex_core"));
-  assert.ok(configuration.indexOf("ensure synex_core") < configuration.indexOf("ensure synex_core_probe"));
+  assert.equal(report.hashes.configuration, sha256(configuration));
+  assert.equal(report.safeguards.runScopedKvpKey, true);
 
   const metadata = await readFile(join(bundle, "bundle.json"), "utf8");
   assert.equal(metadata.includes(repository), false);

@@ -147,13 +147,17 @@ interface ProbeKvpCall {
 }
 
 export interface CoreLiveTestBundleReport {
-  schema: 1;
+  schema: 2;
   artifactKind: "synex-core-live-test-bundle";
   status: "PREPARED";
   revision: string;
   runId: string;
   instanceId: string;
-  kvsName: string;
+  kvpIsolation: {
+    strategy: "run-scoped-resource-key";
+    key: string;
+    cleanupRequired: true;
+  };
   bundle: string;
   resources: {
     core: string;
@@ -170,6 +174,7 @@ export interface CoreLiveTestBundleReport {
     operatorConfiguration: ["mysql_connection_string", "sv_licenseKey", "endpoint_add_tcp", "endpoint_add_udp"];
   };
   hashes: {
+    configuration: string;
     productionPolicy: string;
     testPolicy: string;
     sourceCoreTree: string;
@@ -188,6 +193,7 @@ export interface CoreLiveTestBundleReport {
     cleanRevision: true;
     ignoredDisposableOutput: true;
     exactCapabilitiesOnly: true;
+    runScopedKvpKey: true;
     symlinksRejected: true;
   };
 }
@@ -1020,7 +1026,7 @@ export async function prepareCoreLiveTestBundle(
 
   const runId = `probe_${randomBytes(16).toString("hex")}`;
   const instanceId = `probe_${runId.slice(-24)}`;
-  const kvsName = `synex_${runId.slice(-24)}`;
+  const kvpKey = `synex_core_probe.owner_epoch.v1:${runId}`;
   const liveTestRoot = resolveWithin(repository, LIVE_TEST_ROOT);
   const output = requestedOutput
     ? resolveWithin(repository, requestedOutput)
@@ -1111,10 +1117,10 @@ export async function prepareCoreLiveTestBundle(
     const configurationPath = join(serverData, "live-test.cfg.example");
     const configuration = [
       "# SYNEX DISPOSABLE LIVE TEST ONLY - DO NOT DEPLOY",
-      "# Supply database and license settings separately; this file intentionally contains no credentials.",
+      "# Supply database and license settings separately.",
+      "# This file intentionally contains no credentials.",
       "# Execute this fragment from the isolated server's startup configuration.",
       "# Required beforehand: endpoints, sv_licenseKey, mysql_connection_string, and reviewed oxmysql >= 2.14.1.",
-      `sv_kvsName \"${kvsName}\"`,
       "set synex_environment \"staging\"",
       "set synex_strict \"1\"",
       `set synex_instance_id \"${instanceId}\"`,
@@ -1153,13 +1159,17 @@ export async function prepareCoreLiveTestBundle(
       throw new CliError("Deployment-layout probe hash differs from its inspected source.", 2);
     }
     const report: CoreLiveTestBundleReport = {
-      schema: 1,
+      schema: 2,
       artifactKind: "synex-core-live-test-bundle",
       status: "PREPARED",
       revision,
       runId,
       instanceId,
-      kvsName,
+      kvpIsolation: {
+        strategy: "run-scoped-resource-key",
+        key: kvpKey,
+        cleanupRequired: true,
+      },
       bundle: displayPath(repository, output),
       resources: {
         core: displayPath(repository, runtimeCore),
@@ -1176,6 +1186,7 @@ export async function prepareCoreLiveTestBundle(
         operatorConfiguration: ["mysql_connection_string", "sv_licenseKey", "endpoint_add_tcp", "endpoint_add_udp"],
       },
       hashes: {
+        configuration: sha256(configuration),
         productionPolicy: productionPolicyHash,
         testPolicy: sha256(testPolicyText),
         sourceCoreTree: sourceCoreHash,
@@ -1194,6 +1205,7 @@ export async function prepareCoreLiveTestBundle(
         cleanRevision: true,
         ignoredDisposableOutput: true,
         exactCapabilitiesOnly: true,
+        runScopedKvpKey: true,
         symlinksRejected: true,
       },
     };

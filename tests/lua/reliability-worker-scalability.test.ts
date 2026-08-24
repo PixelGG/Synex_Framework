@@ -36,7 +36,7 @@ test('saga candidate cursor advances past a full deferred window and rotates sta
           id = id, public_id = ('00000000-0000-4000-8000-%012d'):format(id),
           owner_resource = 'synex_fixture', saga_type = 'fixture.workflow',
           state = state, version = 1,
-          updated_at = ('2026-08-23 00:%02d:%02d.000000'):format(
+          updated_at_cursor = ('2026-08-23 00:%02d:%02d.000000'):format(
             math.floor(id / 60), id % 60),
           deadline_expired = 0, age_ms = 60000
         }
@@ -46,6 +46,8 @@ test('saga candidate cursor advances past a full deferred window and rotates sta
       local fairDatabase = {}
       function fairDatabase:query(sql, parameters)
         assert(sql:find('FORCE INDEX (' .. tick .. 'idx_sagas_state_updated' .. tick .. ')', 1, true))
+        assert(sql:find("DATE_FORMAT(" .. tick .. "updated_at" .. tick
+          .. ", '%Y-%m-%d %H:%i:%s.%f') AS " .. tick .. "updated_at_cursor" .. tick, 1, true))
         local ids = { pending = 1, running = 2, compensating = 3 }
         if sql:find('DESC', 1, true) then
           assert(#parameters == 1)
@@ -177,7 +179,7 @@ test('saga candidate scan post-filters selectors and rejects oversized adapter r
         if sql:find('DESC', 1, true) then
           if parameters[1] ~= 'pending' then return {}, nil end
           return {{ id = 50, state = 'pending',
-            updated_at = '2026-08-23 00:00:50.000000' }}, nil
+            updated_at_cursor = '2026-08-23 00:00:50.000000' }}, nil
         end
         queryCalls = queryCalls + 1
         assert(#parameters <= 8 and parameters[#parameters] == 50)
@@ -191,7 +193,7 @@ test('saga candidate scan post-filters selectors and rejects oversized adapter r
             owner_resource = id == 50 and 'synex_target' or 'synex_other',
             saga_type = id == 50 and 'target.workflow' or 'other.workflow',
             state = 'pending', version = 1,
-            updated_at = ('2026-08-23 00:00:%02d.000000'):format(id % 60),
+            updated_at_cursor = ('2026-08-23 00:00:%02d.000000'):format(id % 60),
             deadline_expired = 0, age_ms = 1
           }
         end
@@ -211,14 +213,14 @@ test('saga candidate scan post-filters selectors and rejects oversized adapter r
       function oversizedDatabase:query(sql, parameters)
         if sql:find('DESC', 1, true) then
           return {{ id = 51, state = parameters[1],
-            updated_at = '2026-08-23 00:00:51.000000' }}, nil
+            updated_at_cursor = '2026-08-23 00:00:51.000000' }}, nil
         end
         local rows = {}
         for id = 1, 51 do
           rows[id] = {
             id = id, public_id = 'poison', owner_resource = 'synex_target',
             saga_type = 'target.workflow', state = parameters[1], version = 1,
-            updated_at = '2026-08-23 00:00:00.000000',
+            updated_at_cursor = '2026-08-23 00:00:00.000000',
             deadline_expired = 0, age_ms = 0
           }
         end
@@ -233,6 +235,47 @@ test('saga candidate scan post-filters selectors and rejects oversized adapter r
       return table.concat({selected[1].ownerResource, queryCalls, failure.code}, ':')
     `);
     assert.equal(result, 'synex_target:1:DATABASE_RESULT_INVALID');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('saga candidate cursors reject oxmysql epoch values and malformed canonical text', async () => {
+  const engine = await reliabilityEngine();
+  try {
+    const result = await engine.doString(`
+      local platform = {
+        nowGame = function() return 1000 end, random = function() return 14 end,
+        print = function() end, jsonEncode = function() return '{}' end,
+        jsonDecode = function() return {} end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      foundation.configureIds('saga-cursor-types')
+      local invalidCursors = {
+        1787443200000,
+        0 / 0,
+        math.huge,
+        -math.huge,
+        '2026-08-23T00:00:00.000000'
+      }
+      local rejected = 0
+      for index, cursor in ipairs(invalidCursors) do
+        local database = {}
+        function database:query(_, parameters)
+          if parameters[1] ~= 'pending' then return {}, nil end
+          return {{ id = index, state = 'pending', updated_at_cursor = cursor }}, nil
+        end
+        local reliability = SynexCoreFactories.reliability({
+          platform = platform, foundation = foundation, database = database,
+          instanceId = 'saga-cursor-types-' .. index, features = { sagas = true }
+        })
+        local value, failure = reliability.sagas:candidates(1)
+        assert(value == nil and failure.code == 'DATABASE_RESULT_INVALID')
+        rejected = rejected + 1
+      end
+      return rejected
+    `);
+    assert.equal(result, 5);
   } finally {
     engine.global.close();
   }
