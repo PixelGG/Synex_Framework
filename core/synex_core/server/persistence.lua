@@ -94,6 +94,124 @@ factories.persistence = function(deps)
     end
 
     local database = {}
+    local databaseDraining = false
+    local databaseActivityCount = 0
+    local databaseActivitySequence = 0
+    local databaseActivities = {}
+    local databaseActivityKinds = {}
+    local databaseControlDepth = setmetatable({}, { __mode = 'k' })
+    local databaseMainControlKey = {}
+
+    local function databaseControlKey()
+        local running = coroutine.running()
+        return running or databaseMainControlKey
+    end
+
+    local function beginDatabaseActivity(kind)
+        local controlKey = databaseControlKey()
+        if databaseDraining and (databaseControlDepth[controlKey] or 0) == 0 then
+            return nil, foundation.error('DATABASE_DRAINING',
+                'The database runtime is draining for Core shutdown.', {
+                    retryable = true
+                })
+        end
+        databaseActivitySequence = databaseActivitySequence + 1
+        local token = databaseActivitySequence
+        databaseActivities[token] = kind
+        databaseActivityCount = databaseActivityCount + 1
+        databaseActivityKinds[kind] = (databaseActivityKinds[kind] or 0) + 1
+        return token, nil
+    end
+
+    local function finishDatabaseActivity(token)
+        local kind = databaseActivities[token]
+        if kind == nil then return false end
+        databaseActivities[token] = nil
+        databaseActivityCount = math.max(0, databaseActivityCount - 1)
+        databaseActivityKinds[kind] = math.max(0, (databaseActivityKinds[kind] or 1) - 1)
+        if databaseActivityKinds[kind] == 0 then databaseActivityKinds[kind] = nil end
+        return true
+    end
+
+    function database:activity()
+        local kinds = {}
+        for kind, count in pairs(databaseActivityKinds) do kinds[kind] = count end
+        return {
+            draining = databaseDraining,
+            active = databaseActivityCount,
+            kinds = kinds
+        }
+    end
+
+    function database:beginDrain()
+        databaseDraining = true
+        return self:activity(), nil
+    end
+
+    function database:waitForDrain(timeoutMs, pollMs)
+        timeoutMs = timeoutMs == nil and 30000 or timeoutMs
+        pollMs = pollMs == nil and 10 or pollMs
+        if type(timeoutMs) ~= 'number' or math.type(timeoutMs) ~= 'integer'
+            or timeoutMs < 0 or timeoutMs > 60000
+            or type(pollMs) ~= 'number' or math.type(pollMs) ~= 'integer'
+            or pollMs < 1 or pollMs > 100 then
+            return nil, foundation.error('INVALID_ARGUMENT',
+                'Database drain timeout or poll interval is outside the supported range.')
+        end
+        local startedAt = foundation.monotonicMs()
+        local maximumPolls = timeoutMs == 0 and 0 or math.ceil(timeoutMs / pollMs)
+        local polls = 0
+        while databaseActivityCount > 0 and polls < maximumPolls
+            and foundation.monotonicMs() - startedAt < timeoutMs do
+            polls = polls + 1
+            local elapsed = foundation.monotonicMs() - startedAt
+            local delay = math.min(pollMs, math.max(0, timeoutMs - elapsed))
+            local waited, waitError = foundation.safeCall(platform.wait, delay)
+            if not waited then
+                return nil, foundation.error('DATABASE_DRAIN_WAIT_FAILED',
+                    'The runtime could not wait for database work to drain.', {
+                        details = {
+                            cause = foundation.failureCode(
+                                waitError, 'DATABASE_DRAIN_WAIT_EXCEPTION')
+                        }
+                    })
+            end
+        end
+        local snapshot = self:activity()
+        snapshot.durationMs = math.max(0, foundation.monotonicMs() - startedAt)
+        snapshot.polls = polls
+        if snapshot.active > 0 then
+            return nil, foundation.error('RESTART_DATABASE_DRAIN_TIMEOUT',
+                'Core restart preparation timed out while database work remained active.', {
+                    retryable = true,
+                    details = { active = snapshot.active, timeoutMs = timeoutMs }
+                })
+        end
+        return snapshot, nil
+    end
+
+    function database:withControl(handler)
+        if type(handler) ~= 'function' then
+            return nil, foundation.error('INVALID_ARGUMENT',
+                'Database control work requires a handler.')
+        end
+        local controlKey = databaseControlKey()
+        databaseControlDepth[controlKey] = (databaseControlDepth[controlKey] or 0) + 1
+        local invoked, result, handlerError = foundation.safeCall(handler)
+        databaseControlDepth[controlKey] = math.max(0,
+            (databaseControlDepth[controlKey] or 1) - 1)
+        if databaseControlDepth[controlKey] == 0 then databaseControlDepth[controlKey] = nil end
+        if not invoked then
+            return nil, foundation.error('DATABASE_CONTROL_FAILED',
+                'Database shutdown control work raised an exception.', {
+                    details = {
+                        cause = foundation.failureCode(result, 'DATABASE_CONTROL_EXCEPTION')
+                    }
+                })
+        end
+        return result, handlerError
+    end
+
     local function failureDetails(value)
         if type(value) == 'table' then
             return tostring(value.code or value.errno or value.sqlState or value.sqlstate or value.message or '')
@@ -159,8 +277,11 @@ factories.persistence = function(deps)
         }
     end
     local function measured(kind, sql, parameters)
+        local activityToken, activityError = beginDatabaseActivity(kind)
+        if not activityToken then return nil, activityError end
         local started = foundation.monotonicMs()
         local ok, value, adapterError = foundation.safeCall(adapter[kind], sql, parameters or {})
+        finishDatabaseActivity(activityToken)
         local duration = foundation.monotonicMs() - started
         local attributed = attribution()
         local valueType = type(value)
@@ -227,8 +348,11 @@ factories.persistence = function(deps)
         end
         local maximumAttempts = 1 + math.max(0, math.min(tonumber(config.deadlockRetries) or 0, 5))
         for attempt = 1, maximumAttempts do
+            local activityToken, activityError = beginDatabaseActivity('batch')
+            if not activityToken then return nil, activityError end
             local started = foundation.monotonicMs()
             local ok, result, adapterError = foundation.safeCall(adapter.transaction, statements)
+            finishDatabaseActivity(activityToken)
             local duration = foundation.monotonicMs() - started
             local failure = ok and adapterError or result
             metrics:increment('synex_db_transactions_total', { ok = ok and result == true, attempt = attempt })
@@ -255,8 +379,11 @@ factories.persistence = function(deps)
         end
         local maximumAttempts = 1 + math.max(0, math.min(tonumber(config.deadlockRetries) or 0, 5))
         for attempt = 1, maximumAttempts do
+            local activityToken, activityError = beginDatabaseActivity('interactive')
+            if not activityToken then return nil, activityError end
             local started = foundation.monotonicMs()
             local ok, result, adapterError = foundation.safeCall(adapter.startTransaction, handler)
+            finishDatabaseActivity(activityToken)
             local duration = foundation.monotonicMs() - started
             local failure = ok and adapterError or result
             metrics:increment('synex_db_interactive_transactions_total', { ok = ok and result == true, attempt = attempt })

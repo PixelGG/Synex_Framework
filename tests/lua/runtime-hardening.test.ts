@@ -642,7 +642,25 @@ test('local session termination atomically revokes orphaned runtime authority', 
       function database:withTransaction(handler)
         local committed = handler(function(sql, parameters)
           operations[#operations + 1] = { sql = sql, parameters = parameters }
-          if sql:find('FOR UPDATE', 1, true) then return {{ boot_id = registeredBoot }} end
+          if sql:find('synex_instance_boots', 1, true) then
+            return {{ boot_id = registeredBoot }}
+          end
+          if sql:find('SELECT', 1, true) and sql:find('synex_cluster_leases', 1, true) then
+            if sql:find('LIMIT ? FOR UPDATE', 1, true) then
+              if parameters[1] == 'admission' then
+                return {{ lease_name = 'admission:user-a',
+                  owner_id = 'instance-a:pending-a', fencing_token = '7',
+                  lease_authority_kind = 'admission' }}
+              end
+              return {{ lease_name = 'session:user-a',
+                owner_id = 'instance-a:session-a', fencing_token = '9',
+                lease_authority_kind = 'session' }}
+            end
+            return {}
+          end
+          if sql:find('UPDATE', 1, true) and sql:find('synex_cluster_leases', 1, true) then
+            return { affectedRows = 2 }
+          end
           return 1
         end)
         return committed == true and true or nil,
@@ -654,45 +672,179 @@ test('local session termination atomically revokes orphaned runtime authority', 
       }).instances
       assert(instances:register('Instance A'))
       assert(instances:terminateLocalSessions('synex_core restarted'))
-      assert(#statements == 2 and #operations == 4)
+      assert(#statements == 2 and #operations == 8)
       assert(operations[1].sql:find('synex_instance_boots', 1, true)
         and operations[1].sql:find('FOR UPDATE', 1, true)
         and operations[1].parameters[1] == 'instance-a'
         and operations[1].parameters[2] == registeredBoot)
-      assert(operations[2].sql:find('synex_cluster_leases', 1, true)
-        and operations[2].sql:find('INNER JOIN', 1, true)
-        and operations[2].sql:find('synex_sessions', 1, true)
-        and operations[2].sql:find('lease_name', 1, true)
-        and operations[2].sql:find("'session:'", 1, true)
-        and operations[2].sql:find('closed_at', 1, true)
-        and operations[2].sql:find('expires_at', 1, true)
-        and operations[2].sql:find('CONCAT', 1, true)
-        and #operations[2].parameters == 1
-        and operations[2].parameters[1] == 'instance-a')
-      assert(operations[3].sql:find('synex_session_control_requests', 1, true)
-        and operations[3].sql:find("'pending'", 1, true)
-        and operations[3].sql:find('requested_by_instance_id', 1, true)
-        and operations[3].sql:find('target_instance_id', 1, true)
-        and operations[3].sql:find('idx_session_control_requester_pending', 1, true)
-        and operations[3].sql:find('idx_session_control_target_pending', 1, true)
-        and operations[3].sql:find('UNION', 1, true)
-        and operations[3].sql:find('LIMIT ?', 1, true)
-        and not operations[3].sql:find('closed_at', 1, true)
-        and operations[3].parameters[1] == 'instance-a'
-        and operations[3].parameters[2] == 250
-        and operations[3].parameters[3] == 'instance-a'
-        and operations[3].parameters[4] == 250
-        and operations[3].parameters[5] == 250
-        and operations[3].parameters[6] == 'instance-a'
-        and operations[3].parameters[7] == 'instance-a',
+      assert(operations[2].sql:find('SELECT', 1, true)
+        and operations[2].sql:find('idx_cluster_leases_authority_owner', 1, true)
+        and operations[2].sql:find('CAST(', 1, true)
+        and operations[2].sql:find('fencing_token', 1, true)
+        and operations[2].sql:find('LIMIT ? FOR UPDATE', 1, true)
+        and operations[2].parameters[1] == 'admission'
+        and operations[2].parameters[2] == 'instance-a:'
+        and operations[2].parameters[3] == 'instance-a;')
+      assert(operations[3].sql:find('LIMIT ? FOR UPDATE', 1, true)
+        and operations[3].parameters[1] == 'session'
+        and operations[3].parameters[2] == 'instance-a:'
+        and operations[3].parameters[3] == 'instance-a;')
+      assert(operations[4].sql:find('UPDATE', 1, true)
+        and operations[4].sql:find('FORCE INDEX', 1, true)
+        and operations[4].sql:find('PRIMARY', 1, true)
+        and operations[4].sql:find('terminal_compaction_at', 1, true)
+        and operations[4].sql:find('lease_name', 1, true)
+        and operations[4].sql:find(' IN (', 1, true)
+        and operations[4].parameters[1] == 'admission:user-a'
+        and operations[4].parameters[2] == 'session:user-a')
+      assert(operations[5].sql:find('LIMIT 1 FOR UPDATE', 1, true)
+        and operations[5].parameters[1] == 'admission')
+      assert(operations[6].sql:find('LIMIT 1 FOR UPDATE', 1, true)
+        and operations[6].parameters[1] == 'session')
+      assert(operations[7].sql:find('synex_session_control_requests', 1, true)
+        and operations[7].sql:find("'pending'", 1, true)
+        and operations[7].sql:find('requested_by_instance_id', 1, true)
+        and operations[7].sql:find('target_instance_id', 1, true)
+        and operations[7].sql:find('idx_session_control_requester_pending', 1, true)
+        and operations[7].sql:find('idx_session_control_target_pending', 1, true)
+        and operations[7].sql:find('UNION', 1, true)
+        and operations[7].sql:find('LIMIT ?', 1, true)
+        and not operations[7].sql:find('closed_at', 1, true)
+        and operations[7].parameters[1] == 'instance-a'
+        and operations[7].parameters[2] == 250
+        and operations[7].parameters[3] == 'instance-a'
+        and operations[7].parameters[4] == 250
+        and operations[7].parameters[5] == 250
+        and operations[7].parameters[6] == 'instance-a'
+        and operations[7].parameters[7] == 'instance-a',
         'incoming and outgoing pending controls, including closed local targets, must expire')
-      assert(operations[4].sql:find('synex_sessions', 1, true)
-        and operations[4].sql:find("'CLOSED'", 1, true)
-        and operations[4].parameters[1] == 'synex_core restarted'
-        and operations[4].parameters[2] == 'instance-a')
-      return table.concat({#operations, operations[2].parameters[1], operations[4].parameters[1]}, ':')
+      assert(operations[8].sql:find('synex_sessions', 1, true)
+        and operations[8].sql:find("'CLOSED'", 1, true)
+        and operations[8].parameters[1] == 'synex_core restarted'
+        and operations[8].parameters[2] == 'instance-a')
+      return table.concat({#operations, operations[2].parameters[1], operations[8].parameters[1]}, ':')
     `);
-    assert.equal(result, '4:instance-a:synex_core restarted');
+    assert.equal(result, '8:admission:synex_core restarted');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('next boot retires sessionless pending authority from the exact prior local owner range', async () => {
+  const engine = await coreEngine(['foundation', 'runtime_persistence']);
+  try {
+    const result = await engine.doString(`
+      local currentBoot = nil
+      local leases = {}
+      local platform = {
+        nowGame = function() return 1000 end, random = function() return 9 end,
+        print = function() end, jsonEncode = function() return '{}' end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      foundation.configureIds('pending-authority-recovery')
+      local database = {}
+      function database:transaction(statements)
+        currentBoot = statements[2].values[2]
+        return true, nil
+      end
+      function database:withTransaction(handler)
+        local function query(sql, parameters)
+          if sql:find('SELECT', 1, true) and sql:find('synex_instance_boots', 1, true) then
+            return parameters[2] == currentBoot and {{ boot_id = currentBoot }} or {}
+          end
+          if sql:find('SELECT', 1, true) and sql:find('synex_cluster_leases', 1, true) then
+            local kind = parameters[1]
+            assert((kind == 'admission' or kind == 'session')
+              and parameters[2] == 'instance-a:' and parameters[3] == 'instance-a;')
+            local candidates = {}
+            for _, lease in ipairs(leases) do
+              if lease.owner >= parameters[2] and lease.owner < parameters[3]
+                  and lease.kind == kind
+                  and lease.terminal ~= true then
+                candidates[#candidates + 1] = {
+                  lease_name = lease.name, owner_id = lease.owner,
+                  fencing_token = tostring(lease.fencingToken),
+                  lease_authority_kind = lease.kind
+                }
+              end
+            end
+            if sql:find('LIMIT 1 FOR UPDATE', 1, true) then
+              return candidates[1] and { candidates[1] } or {}
+            end
+            local maximum = parameters[4]
+            assert(type(maximum) == 'number' and maximum >= 1)
+            while #candidates > maximum do table.remove(candidates) end
+            return candidates
+          end
+          if sql:find('UPDATE', 1, true) and sql:find('synex_cluster_leases', 1, true) then
+            local retired = 0
+            for _, lease in ipairs(leases) do
+              for _, name in ipairs(parameters) do
+                if lease.name == name and lease.terminal ~= true then
+                  lease.owner = 'retired'
+                  lease.terminal = true
+                  retired = retired + 1
+                end
+              end
+            end
+            return { affectedRows = retired }
+          end
+          if sql:find('synex_session_control_requests', 1, true) then
+            return { affectedRows = 0 }
+          end
+          if sql:find('UPDATE', 1, true) and sql:find('synex_sessions', 1, true) then
+            return { affectedRows = 0 }
+          end
+          error('unexpected SQL: ' .. sql)
+        end
+        local committed = handler(query)
+        return committed == true and true or nil,
+          committed == true and nil or foundation.error('TRANSACTION_REJECTED', 'fixture rollback')
+      end
+
+      local bootA = SynexCoreFactories.runtimePersistence({
+        foundation = foundation, database = database, platform = platform,
+        instanceId = 'instance-a', maximumLocalSessions = 4
+      }).instances
+      assert(bootA:register('Instance A'))
+      local bootAId = assert(bootA:bootId())
+      leases = {
+        { name = 'admission:user-a', owner = 'instance-a:pending-a',
+          kind = 'admission', fencingToken = 1 },
+        { name = 'session:user-a', owner = 'instance-a:pending-a',
+          kind = 'session', fencingToken = 2 },
+        { name = 'session:user-expired', owner = 'instance-a:pending-expired',
+          kind = 'session', fencingToken = 3 },
+        { name = 'admission:user-foreign', owner = 'instance-b:pending-foreign',
+          kind = 'admission', fencingToken = 4 },
+        { name = 'admission:user-similar', owner = 'instance-a2:pending-similar',
+          kind = 'admission', fencingToken = 5 }
+      }
+
+      local bootB = SynexCoreFactories.runtimePersistence({
+        foundation = foundation, database = database, platform = platform,
+        instanceId = 'instance-a', maximumLocalSessions = 4
+      }).instances
+      assert(bootB:register('Instance A'))
+      local bootBId = assert(bootB:bootId())
+      assert(bootB:terminateLocalSessions('next boot recovery'))
+
+      assert(leases[1].terminal == true and leases[2].terminal == true
+        and leases[3].terminal == true)
+      assert(leases[4].terminal == nil and leases[5].terminal == nil)
+      leases[#leases + 1] = { name = 'session:user-current', owner = 'instance-a:current',
+        kind = 'session', fencingToken = 6 }
+      local stale, staleError = bootA:terminateLocalSessions('delayed old boot cleanup')
+      assert(stale == nil and staleError.code == 'INSTANCE_BOOT_AUTHORITY_LOST')
+      return table.concat({bootAId ~= bootBId and 'rotated' or 'same',
+        leases[1].terminal and 'admission-retired' or 'admission-live',
+        leases[2].terminal and 'session-retired' or 'session-live',
+        leases[6].terminal and 'current-retired' or 'current-live', staleError.code}, ':')
+    `);
+    assert.equal(
+      result,
+      'rotated:admission-retired:session-retired:current-live:INSTANCE_BOOT_AUTHORITY_LOST',
+    );
   } finally {
     engine.global.close();
   }
@@ -750,9 +902,21 @@ test('local session termination rejects cleanup work beyond the configured live-
       end
       function database:withTransaction(handler)
         local committed = handler(function(sql)
-          if sql:find('FOR UPDATE', 1, true) then return {{ boot_id = registeredBoot }} end
+          if sql:find('synex_instance_boots', 1, true) then
+            return {{ boot_id = registeredBoot }}
+          end
+          if sql:find('SELECT', 1, true) and sql:find('synex_cluster_leases', 1, true) then
+            local rows = {}
+            for index = 1, 7 do
+              rows[index] = {
+                lease_name = 'session:user-' .. index,
+                owner_id = 'instance-a:session-' .. index,
+                lease_authority_kind = 'session'
+              }
+            end
+            return rows
+          end
           writes = writes + 1
-          if sql:find('synex_cluster_leases', 1, true) then return { affectedRows = 7 } end
           return { affectedRows = 1 }
         end)
         rolledBack = committed ~= true
@@ -766,7 +930,7 @@ test('local session termination rejects cleanup work beyond the configured live-
       assert(instances:register('Instance A'))
       local terminated, terminationError = instances:terminateLocalSessions('bounded cleanup')
       assert(terminated == nil and terminationError.code == 'RUNTIME_MUTATION_BOUND_INVALID')
-      assert(rolledBack and writes == 1)
+      assert(rolledBack and writes == 0)
       return terminationError.code
     `);
     assert.equal(result, 'RUNTIME_MUTATION_BOUND_INVALID');
@@ -792,8 +956,16 @@ test('local session termination rolls back when boot control cleanup exceeds its
       end
       function database:withTransaction(handler)
         local committed = handler(function(sql)
-          if sql:find('FOR UPDATE', 1, true) then return {{ boot_id = registeredBoot }} end
+          if sql:find('synex_instance_boots', 1, true) then
+            return {{ boot_id = registeredBoot }}
+          end
+          if sql:find('SELECT', 1, true) and sql:find('synex_cluster_leases', 1, true) then
+            return {}
+          end
           writes = writes + 1
+          if sql:find('synex_cluster_leases', 1, true) then
+            return { affectedRows = 0 }
+          end
           if sql:find('synex_session_control_requests', 1, true) then
             return { affectedRows = 4 }
           end
@@ -811,7 +983,7 @@ test('local session termination rolls back when boot control cleanup exceeds its
       assert(instances:register('Instance A'))
       local terminated, terminationError = instances:terminateLocalSessions('bounded cleanup')
       assert(terminated == nil and terminationError.code == 'MAINTENANCE_BATCH_INVALID')
-      assert(rolledBack and writes == 2)
+      assert(rolledBack and writes == 1)
       return terminationError.code
     `);
     assert.equal(result, 'MAINTENANCE_BATCH_INVALID');
@@ -1376,7 +1548,11 @@ test('core raw stop is synchronous while explicit restart preparation drains dur
           addEventHandler = function(name, handler) handlers[name] = handler end,
           cancelEvent = function() cancelCalls = cancelCalls + 1 end,
           getPlayers = function() return {'41', '42'} end,
-          dropPlayer = function(playerSource) calls[#calls + 1] = 'drop:' .. playerSource end
+          dropPlayer = function(playerSource)
+            calls[#calls + 1] = 'drop:' .. playerSource
+            source = playerSource
+            handlers.playerDropped('fixture restart')
+          end
         }
         local foundation = SynexCoreFactories.foundation({ platform = platform })
         local lifecycle = {
@@ -1393,6 +1569,9 @@ test('core raw stop is synchronous while explicit restart preparation drains dur
           reload = { quiesce = function(_, owner)
             calls[#calls + 1] = 'owner:' .. owner
             return { abortErrors = {}, cleanup = { errors = {} } }, nil
+          end },
+          scheduler = { capacity = function()
+            return { runningHandlers = 0, detachedRunningHandlers = 0 }
           end }
         }
         local registries = {
@@ -1405,7 +1584,11 @@ test('core raw stop is synchronous while explicit restart preparation drains dur
         }
         local connections = {
           handleConnecting = function() connectingCalls = connectingCalls + 1 return true, nil end,
-          handleJoining = noop, handleDropped = noop,
+          handleJoining = noop,
+          handleDropped = function(_, playerSource)
+            calls[#calls + 1] = 'drop-cleanup:' .. playerSource
+            return true, nil
+          end,
           snapshot = function() return { quiesced = quiesced } end,
           quiesce = function()
             quiesced = true
@@ -1436,6 +1619,20 @@ test('core raw stop is synchronous while explicit restart preparation drains dur
             return true, nil
           end
         }
+        local databaseDraining = false
+        local database = {
+          beginDrain = function()
+            databaseDraining = true
+            return { draining = true, active = 0, kinds = {} }, nil
+          end,
+          waitForDrain = function()
+            return { draining = true, active = 0, kinds = {}, durationMs = 0, polls = 0 }, nil
+          end,
+          withControl = function(_, handler) return handler() end,
+          activity = function()
+            return { draining = databaseDraining, active = 0, kinds = {} }
+          end
+        }
         local runtime = {}
         SynexCoreFactories.bootstrapLifecycle({
           runtime = runtime, platform = platform, foundation = foundation,
@@ -1448,7 +1645,7 @@ test('core raw stop is synchronous while explicit restart preparation drains dur
           sagaRuntime = {}, retention = {}, security = {}, defaultConfig = {},
           messaging = { network = { bind = function() return true end } },
           identity = { connections = connections },
-          persistence = { instances = instances },
+          persistence = { database = database, instances = instances },
           api = {
             getAPIForCaller = noop, invokeForCaller = noop, guarded = noop,
             registerCoreContracts = noop, registerCoreServices = noop
@@ -1480,6 +1677,7 @@ test('core raw stop is synchronous while explicit restart preparation drains dur
         'connections:flush-ready', 'state:STOPPING', 'state:STOPPED'
       }, '|'))
       assert(not rawOrder:find('tick', 1, true)
+        and not rawOrder:find('drop-cleanup:', 1, true)
         and not rawOrder:find('status:', 1, true)
         and not rawOrder:find('terminate:', 1, true)
         and not rawOrder:find('release-leases', 1, true)
@@ -1496,9 +1694,10 @@ test('core raw stop is synchronous while explicit restart preparation drains dur
         and preparation.durableAuthorityClosed == true)
       local preparedOrder = table.concat(prepared.calls, '|')
       assert(preparedOrder == table.concat({
-        'gate:stop', 'state:QUIESCING', 'connections:quiesce', 'drop:41', 'drop:42',
-        'tick', 'connections:drain', 'status:stopping', 'connections:release-leases',
-        'owner:synex_core', 'terminate:synex_core restart prepared', 'status:stopped',
+        'gate:stop', 'state:QUIESCING', 'connections:quiesce',
+        'drop:41', 'drop-cleanup:41', 'drop:42', 'drop-cleanup:42',
+        'tick', 'connections:drain', 'owner:synex_core', 'status:stopping',
+        'connections:release-leases', 'terminate:synex_core restart prepared', 'status:stopped',
         'state:STOPPING', 'state:STOPPED'
       }, '|'))
       local callCount = #prepared.calls

@@ -61,6 +61,9 @@ factories.runtimePersistenceInstances = function(context)
         end
         local activeBootId, bootError = requireBootAuthority()
         if not activeBootId then return nil, bootError end
+        local leaseOwnerLowerBound = instanceId .. ':'
+        local leaseOwnerUpperBound = instanceId .. ';'
+        local maximumConnectionLeases = maximumLocalSessions * 2
         local authorityError = nil
         local terminated, terminationError = database:withTransaction(function(query)
             local authority = query([[SELECT `boot_id` FROM `synex_instance_boots`
@@ -71,28 +74,112 @@ factories.runtimePersistenceInstances = function(context)
                     'The runtime boot generation no longer owns the instance.')
                 return false
             end
-            local expiredLeases = query([[UPDATE `synex_cluster_leases` AS `lease`
-                INNER JOIN `synex_sessions` AS `session`
-                    ON `session`.`server_instance_id` = ?
-                        AND `session`.`closed_at` IS NULL
-                        AND `lease`.`owner_id`
-                            = CONCAT(`session`.`server_instance_id`, ':', `session`.`id`)
-                        AND `lease`.`lease_name` IN (
-                            CONCAT('session:', `session`.`user_id`),
-                            CONCAT('session:', `session`.`user_id`, ':', `session`.`id`)
-                        )
-                SET `lease`.`owner_id` = 'retired',
-                    `lease`.`fencing_token` = CASE
-                        WHEN `lease`.`fencing_token` < 18446744073709551615
-                            THEN `lease`.`fencing_token` + 1
-                        ELSE `lease`.`fencing_token`
-                    END,
-                    `lease`.`expires_at` = CURRENT_TIMESTAMP(6),
-                    `lease`.`terminal_compaction_at` = CURRENT_TIMESTAMP(6)
-                WHERE `lease`.`terminal_compaction_at` IS NULL]], { instanceId })
-            local _, leaseBoundError = validateBoundedMutation(
-                expiredLeases, maximumLocalSessions * 2, 'terminate_local_session_leases')
-            if leaseBoundError then authorityError = leaseBoundError return false end
+            local leaseRows, seenLeases = {}, {}
+            for _, leaseKind in ipairs({ 'admission', 'session' }) do
+                local remaining = maximumConnectionLeases + 1 - #leaseRows
+                local kindRows = query([[SELECT `lease_name`, `owner_id`,
+                        CAST(`fencing_token` AS CHAR) AS `fencing_token`,
+                        `lease_authority_kind`
+                    FROM `synex_cluster_leases`
+                        FORCE INDEX (`idx_cluster_leases_authority_owner`)
+                    WHERE `lease_authority_kind` = ?
+                        AND `terminal_compaction_at` IS NULL
+                        AND `owner_id` >= ? AND `owner_id` < ?
+                    ORDER BY `owner_id` ASC, `lease_name` ASC
+                    LIMIT ? FOR UPDATE]], {
+                    leaseKind, leaseOwnerLowerBound, leaseOwnerUpperBound, remaining
+                })
+                if type(kindRows) ~= 'table' or #kindRows > remaining then
+                    authorityError = foundation.error('DATABASE_RESULT_INVALID',
+                        'Local connection lease recovery returned an invalid candidate batch.', {
+                            retryable = true
+                        })
+                    return false
+                end
+                for _, lease in ipairs(kindRows) do leaseRows[#leaseRows + 1] = lease end
+                if #leaseRows > maximumConnectionLeases then
+                    authorityError = foundation.error('RUNTIME_MUTATION_BOUND_INVALID',
+                        'Local connection lease recovery exceeded its configured bound.', {
+                            retryable = true,
+                            details = { operation = 'terminate_local_connection_leases' }
+                        })
+                    return false
+                end
+            end
+            for _, lease in ipairs(leaseRows) do
+                local leaseKind = type(lease) == 'table'
+                    and lease.lease_authority_kind or nil
+                local leasePrefix = type(leaseKind) == 'string' and leaseKind .. ':' or nil
+                local fencingToken = type(lease) == 'table' and lease.fencing_token or nil
+                if type(lease) ~= 'table' or type(lease.lease_name) ~= 'string'
+                    or type(leasePrefix) ~= 'string'
+                    or #lease.lease_name <= #leasePrefix or #lease.lease_name > 96
+                    or lease.lease_name:sub(1, #leasePrefix) ~= leasePrefix
+                    or type(lease.owner_id) ~= 'string'
+                    or #lease.owner_id < 1 or #lease.owner_id > 96
+                    or lease.owner_id < leaseOwnerLowerBound or lease.owner_id >= leaseOwnerUpperBound
+                    or (lease.lease_authority_kind ~= 'session'
+                        and lease.lease_authority_kind ~= 'admission')
+                    or type(fencingToken) ~= 'string'
+                    or not fencingToken:match('^[1-9][0-9]*$') or #fencingToken > 20
+                    or (#fencingToken == 20 and fencingToken > '18446744073709551615')
+                    or seenLeases[lease.lease_name] then
+                    authorityError = foundation.error('DATABASE_RESULT_INVALID',
+                        'Local connection lease recovery returned an invalid candidate batch.', {
+                            retryable = true
+                        })
+                    return false
+                end
+                seenLeases[lease.lease_name] = true
+            end
+            if #leaseRows > 0 then
+                local names, placeholders = {}, {}
+                for index, lease in ipairs(leaseRows) do
+                    names[index], placeholders[index] = lease.lease_name, '?'
+                end
+                local expiredLeases = query([[UPDATE `synex_cluster_leases`
+                        FORCE INDEX (`PRIMARY`)
+                    SET `owner_id` = 'retired',
+                        `fencing_token` = CASE
+                            WHEN `fencing_token` < 18446744073709551615
+                                THEN `fencing_token` + 1
+                            ELSE `fencing_token`
+                        END,
+                        `expires_at` = CURRENT_TIMESTAMP(6),
+                        `terminal_compaction_at` = CURRENT_TIMESTAMP(6)
+                    WHERE `terminal_compaction_at` IS NULL
+                        AND `lease_name` IN (]] .. table.concat(placeholders, ',') .. ')', names)
+                local retiredLeaseCount, leaseBoundError = validateBoundedMutation(
+                    expiredLeases, maximumConnectionLeases,
+                    'terminate_local_connection_leases')
+                if leaseBoundError then authorityError = leaseBoundError return false end
+                if retiredLeaseCount ~= #leaseRows then
+                    authorityError = foundation.error('DATABASE_RESULT_INVALID',
+                        'Local connection lease recovery did not match the locked candidate batch.', {
+                            retryable = true
+                        })
+                    return false
+                end
+            end
+            for _, leaseKind in ipairs({ 'admission', 'session' }) do
+                local residual = query([[SELECT `lease_name`
+                    FROM `synex_cluster_leases`
+                        FORCE INDEX (`idx_cluster_leases_authority_owner`)
+                    WHERE `lease_authority_kind` = ?
+                        AND `terminal_compaction_at` IS NULL
+                        AND `owner_id` >= ? AND `owner_id` < ?
+                    ORDER BY `owner_id` ASC, `lease_name` ASC
+                    LIMIT 1 FOR UPDATE]], {
+                    leaseKind, leaseOwnerLowerBound, leaseOwnerUpperBound
+                })
+                if type(residual) ~= 'table' or #residual > 1 or residual[1] ~= nil then
+                    authorityError = foundation.error('DATABASE_RESULT_INVALID',
+                        'Local connection lease recovery left residual runtime authority.', {
+                            retryable = true
+                        })
+                    return false
+                end
+            end
             local expiredControls = query([[UPDATE `synex_session_control_requests` AS `request`
                 INNER JOIN (
                     SELECT `bounded_control`.`request_id` FROM (

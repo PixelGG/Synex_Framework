@@ -92,7 +92,7 @@ Configure the database connection according to the installed oxmysql release bef
 
 The database session used by oxmysql must use UTC. Synex stores and compares `DATETIME(6)` values with `CURRENT_TIMESTAMP(6)` throughout persistence and uses `UTC_TIMESTAMP(6)` for archive cutoffs; a non-UTC session can shift expiry, lease, queue, outbox, audit, and retention decisions. Before running any migration, Core compares both functions in one database statement and refuses to start when the offset is not zero or the validation query fails. Synex does not set the database session time zone, and this guide intentionally does not assume a connection-string option for a particular oxmysql/database build.
 
-At Core boot, Synex applies its supported ConVar overrides and validates `config/default.json` plus `config/capabilities.json` before database access. It then verifies the UTC database session, discovers `synex.resource.json` through each resource's `synex_manifest` metadata, acquires a database-time migration lease, verifies checksums, applies unapplied migrations, and validates declared service dependencies and generated contracts before entering `READY`. A boot failure is fail-closed.
+At Core boot, Synex applies its supported ConVar overrides and validates `config/default.json` plus `config/capabilities.json` before database access. It then verifies the UTC database session, discovers `synex.resource.json` through each resource's `synex_manifest` metadata, acquires a database-time migration lease, verifies checksums, applies the 26 declared Core migrations plus the migrations owned by installed domain resources, and validates declared service dependencies and generated contracts before entering `READY`. A boot failure is fail-closed.
 
 ## Verify the runtime
 
@@ -121,7 +121,7 @@ Study [`examples/synex_example`](../examples/synex_example/) and then follow [Cr
 ## Current platform limits
 
 - There is no packaged release installer or automatic updater.
-- Repository tests do not launch FXServer. Core runtime commit `510053e` passed a manual server-only FXServer/MariaDB acceptance on 2026-08-24, including persisted Saga execution and restart recovery, but the real FiveM client join/disconnect/reconnect sequence remains pending. See [Testing](testing.md#current-acceptance-baseline).
+- Repository tests do not launch FXServer. The 2026-08-24 acceptance build passed manual FXServer/MariaDB stages, including 26/26 Core migrations, persisted Saga execution, restart recovery, real-client join/disconnect/reconnect, and a pending-database-work prepared restart. The current tree then added two hardening corrections that passed repository and live-database regression gates; the complete manual FXServer/client sequence has not yet been repeated against that combined revision. The two-instance `kick_old` requester-restart scenario also remains untested. See [Testing](testing.md#current-acceptance-baseline).
 - Public contracts are marked `experimental`.
 - `synex_control` is an in-game, read-only NUI; no remote HTTP control API is implemented.
 - The planned phone, inventory, banking UI, jobs, shops, vehicle, garage, radio, character-resource, identity-resource, and shared UI directories are not implemented gameplay resources.

@@ -37,12 +37,13 @@
 
 ## État de validation actuel
 
-Le runtime Core du commit `510053e` a terminé son parcours de validation côté serveur le 24/08/2026. Il s'agit d'une preuve pour la révision testée, pas d'une revendication de stabilité ou de préparation à la production.
+Le build d'acceptation du 24/08/2026 a terminé ses étapes côté serveur et avec un vrai client. L'état actuel ajoute deux corrections de durcissement ultérieures, vérifiées par les tests du dépôt et de la base de données réelle ; la séquence manuelle FXServer/client complète n'a pas encore été répétée sur cette révision combinée. Il s'agit d'une preuve dans ces limites, pas d'une revendication de stabilité ou de préparation à la production.
 
 - **PASS — Vérifications du dépôt.** Génération, validation, suites headless, analyse statique de sécurité et audit des dépendances.
-- **PASS — Base de données réelle.** Base MariaDB 11.8 et les 25 migrations du Core.
-- **PASS — FXServer côté serveur.** `READY`, API liées à l'appelant, exécution persistée des Sagas, redémarrage de la probe, redémarrage préparé du Core et récupération au prochain démarrage.
-- **PENDING — Cycle de vie du vrai client FiveM.** Connexion, déconnexion, reconnexion et nettoyage joueur/session/lease nécessitent encore un vrai client.
+- **PASS — Base de données réelle.** Base MariaDB 11.8 et les 26 migrations du Core.
+- **PASS — Build d'acceptation E2E.** `READY` côté serveur, API liées à l'appelant, exécution persistée des Sagas, récupération après redémarrage, connexion/déconnexion/reconnexion avec un vrai client et redémarrage préparé avec travail de base de données en attente.
+- **SUIVI VÉRIFIÉ — Durcissement actuel.** Le traitement terminal des nouvelles tentatives de redémarrage ainsi que la vérification exacte de l'expression générée et de l'utilisabilité de l'index forcé de la migration 026 ont passé les régressions headless et MariaDB réelles ; la séquence manuelle FXServer/client complète doit être répétée avant l'acceptation d'une version.
+- **NON TESTÉ — Relève à deux instances.** Le redémarrage du demandeur pendant `kick_old` nécessite encore une validation multi-instance dédiée.
 
 [Couverture exacte et séquence client restante](../../testing.md)
 

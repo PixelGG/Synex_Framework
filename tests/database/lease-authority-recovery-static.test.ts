@@ -70,6 +70,89 @@ test('migration 023 installs fail-closed authority and stale-session queue metad
   assert.equal((migration.match(/DROP PROCEDURE IF EXISTS/gu) ?? []).length, 2);
 });
 
+test('migration 026 installs the exact local authority owner queue index', async () => {
+  const migration = await source(
+    'core/synex_core/migrations/026_lease_authority_owner_index.sql',
+  );
+  assert.match(
+    migration,
+    /ADD KEY `idx_cluster_leases_authority_owner`\s*\(`lease_authority_kind`, `terminal_compaction_at`, `owner_id`, `lease_name`\)/u,
+  );
+  assert.match(
+    migration,
+    /`COLUMN_NAME` = 'lease_authority_kind'[\s\S]*?`IS_NULLABLE` = 'YES'[\s\S]*?\(`COLUMN_DEFAULT` IS NULL\s*OR CAST\(`COLUMN_DEFAULT` AS BINARY\) = CAST\('NULL' AS BINARY\)\)[\s\S]*?STORED GENERATED/u,
+  );
+  assert.match(
+    migration,
+    /`GENERATION_EXPRESSION`[\s\S]*?`normalized_generation`[\s\S]*?`expected_generation`[\s\S]*?lease authority definition verification failed/u,
+  );
+  assert.match(
+    migration,
+    /casewhenleftlease_name,8=''session:''then''session''whenleftlease_name,10=''admission:''then''admission''elsenullend/u,
+  );
+  assert.match(
+    migration,
+    /`COLUMN_NAME` = 'terminal_compaction_at'[\s\S]*?`IS_NULLABLE` = 'YES'[\s\S]*?\(`COLUMN_DEFAULT` IS NULL\s*OR CAST\(`COLUMN_DEFAULT` AS BINARY\) = CAST\('NULL' AS BINARY\)\)/u,
+  );
+  assert.match(
+    migration,
+    /SELECT COUNT\(\*\)[\s\S]*?`INDEX_NAME` = 'idx_cluster_leases_authority_owner'[\s\S]*?\) <> 4/u,
+  );
+  for (const [offset, column] of [
+    [1, 'lease_authority_kind'],
+    [2, 'terminal_compaction_at'],
+    [3, 'owner_id'],
+    [4, 'lease_name'],
+  ] as const) {
+    assert.match(
+      migration,
+      new RegExp(
+        "INDEX_NAME` = 'idx_cluster_leases_authority_owner'"
+          + `[\\s\\S]*?NON_UNIQUE\\x60 = 1 AND \\x60SEQ_IN_INDEX\\x60 = ${offset}`
+          + `[\\s\\S]*?COLUMN_NAME\\x60 = '${column}'`
+          + '[\\s\\S]*?UPPER\\(\\x60INDEX_TYPE\\x60\\) = \'BTREE\''
+          + '[\\s\\S]*?\\x60SUB_PART\\x60 IS NULL[\\s\\S]*?\\x60COLLATION\\x60 = \'A\'',
+        'u',
+      ),
+    );
+  }
+  assert.match(
+    migration,
+    /`information_schema`\.`COLUMNS`[\s\S]*?UPPER\(`COLUMN_NAME`\) IN \('IGNORED', 'IS_VISIBLE'\)/u,
+  );
+  assert.match(
+    migration,
+    /PREPARE `synex_026_index_usability`[\s\S]*?EXECUTE `synex_026_index_usability`[\s\S]*?DEALLOCATE PREPARE `synex_026_index_usability`/u,
+  );
+  assert.match(
+    migration,
+    /UPPER\(COALESCE\(`IGNORED`, ''YES''\)\) = ''NO''[\s\S]*?UPPER\(COALESCE\(`IS_VISIBLE`, ''NO''\)\) = ''YES''/u,
+  );
+  assert.match(
+    migration,
+    /`usable_index_rows` IS NULL OR `usable_index_rows` <> 4/u,
+  );
+  assert.match(
+    migration,
+    /DECLARE CONTINUE HANDLER FOR SQLEXCEPTION[\s\S]*?FORCE INDEX \(`idx_cluster_leases_authority_owner`\)[\s\S]*?`lease_authority_kind` = '__probe__'/u,
+  );
+  assert.match(
+    migration,
+    /MESSAGE_TEXT = 'synex migration 026 lease authority owner index usability verification failed'/u,
+  );
+  assert.match(
+    migration,
+    /`index_usability_capability_count` <> 1[\s\S]*?index usability metadata verification failed/u,
+  );
+  assert.ok(
+    migration.indexOf('index usability metadata verification failed')
+      < migration.indexOf('ADD KEY `idx_cluster_leases_authority_owner`'),
+  );
+  assert.equal((migration.match(/DROP PROCEDURE IF EXISTS/gu) ?? []).length, 2);
+  assert.equal((migration.match(/CREATE PROCEDURE/gu) ?? []).length, 1);
+  assert.equal((migration.match(/SIGNAL SQLSTATE '45000'/gu) ?? []).length, 5);
+});
+
 test('expired authority retirement scans only one indexed bounded domain queue', async () => {
   const [persistence, lifecycle] = await Promise.all([
     source('core/synex_core/server/persistence.lua'),
@@ -100,21 +183,58 @@ test('expired authority retirement scans only one indexed bounded domain queue',
   );
 });
 
-test('runtime closure and crash cleanup retire only exact session authority', async () => {
-  const [runtime, fencing, maintenance] = await Promise.all([
+test('runtime closure and next-boot cleanup retire only exact local connection authority', async () => {
+  const [runtime, fencing, maintenance, persistence, configuration, lifecycle] = await Promise.all([
     source('core/synex_core/server/runtime_persistence_instances.lua'),
     source('core/synex_core/server/identity_session_fencing.lua'),
     source('core/synex_core/server/identity_connection_maintenance.lua'),
+    source('core/synex_core/server/persistence.lua'),
+    source('core/synex_core/server/configuration.lua'),
+    source('core/synex_core/server/bootstrap_lifecycle.lua'),
   ]);
   assert.match(
     runtime,
-    /function instances:terminateLocalSessions[\s\S]*?INNER JOIN `synex_sessions`[\s\S]*?`lease`.`owner_id`\s*= CONCAT\(`session`.`server_instance_id`, ':', `session`.`id`\)[\s\S]*?CONCAT\('session:', `session`.`user_id`\)[\s\S]*?CONCAT\('session:', `session`.`user_id`, ':', `session`.`id`\)[\s\S]*?`lease`.`terminal_compaction_at` IS NULL/u,
+    /function instances:terminateLocalSessions[\s\S]*?leaseOwnerLowerBound = instanceId \.\. ':'[\s\S]*?leaseOwnerUpperBound = instanceId \.\. ';'[\s\S]*?for _, leaseKind in ipairs\(\{ 'admission', 'session' \}\)[\s\S]*?CAST\(`fencing_token` AS CHAR\) AS `fencing_token`[\s\S]*?FORCE INDEX \(`idx_cluster_leases_authority_owner`\)[\s\S]*?`lease_authority_kind` = \?[\s\S]*?`terminal_compaction_at` IS NULL[\s\S]*?`owner_id` >= \? AND `owner_id` < \?[\s\S]*?ORDER BY `owner_id` ASC, `lease_name` ASC[\s\S]*?LIMIT \? FOR UPDATE/u,
   );
   const localTermination = runtime.match(
     /function instances:terminateLocalSessions[\s\S]*?\n    end/u,
   )?.[0];
   assert.ok(localTermination);
-  assert.doesNotMatch(localTermination, /`lease`.`expires_at`\s*>/u);
+  assert.match(localTermination, /SELECT `boot_id`[\s\S]*?FOR UPDATE[\s\S]*?local leaseRows, seenLeases/u);
+  assert.match(
+    localTermination,
+    /remaining = maximumConnectionLeases \+ 1 - #leaseRows[\s\S]*?#leaseRows > maximumConnectionLeases/u,
+  );
+  assert.match(
+    localTermination,
+    /fencingToken:match\('\^\[1-9\]\[0-9\]\*\$'\)[\s\S]*?#fencingToken > 20[\s\S]*?fencingToken > '18446744073709551615'/u,
+  );
+  assert.match(
+    localTermination,
+    /if #leaseRows > 0 then[\s\S]*?UPDATE `synex_cluster_leases`[\s\S]*?FORCE INDEX \(`PRIMARY`\)[\s\S]*?`lease_name` IN \([\s\S]*?retiredLeaseCount ~= #leaseRows[\s\S]*?return false/u,
+  );
+  assert.match(
+    localTermination,
+    /FORCE INDEX \(`idx_cluster_leases_authority_owner`\)[\s\S]*?`lease_authority_kind` = \?[\s\S]*?LIMIT 1 FOR UPDATE[\s\S]*?residual\[1\] ~= nil[\s\S]*?return false/u,
+  );
+  assert.doesNotMatch(localTermination, /owner_instance_id|owner_boot_id/u);
+  assert.doesNotMatch(localTermination, /INNER JOIN `synex_sessions`/u);
+  assert.doesNotMatch(
+    localTermination,
+    /UPDATE `synex_cluster_leases`[\s\S]*?WHERE `owner_id` >= \?/u,
+  );
+  assert.match(
+    persistence,
+    /owner:sub\(1, #requesterInstanceId \+ 1\) ~= requesterInstanceId \.\. ':'/u,
+  );
+  assert.match(
+    configuration,
+    /boundedString\(config\.instanceId, 1, 36, '\$\.instanceId', '\^\[A-Za-z0-9_-\]\+\$'\)/u,
+  );
+  assert.match(
+    lifecycle,
+    /bootStage = 'register_instance'[\s\S]*?instances:register[\s\S]*?bootStage = 'terminate_local_sessions'[\s\S]*?instances:terminateLocalSessions[\s\S]*?bootStage = 'persist_instance_status'[\s\S]*?instances:setStatus[\s\S]*?runtimeGate:open\(\)/u,
+  );
   assert.match(
     runtime,
     /FORCE INDEX \(`idx_sessions_open_heartbeat_expiry`\)[\s\S]*?`closed_at` IS NULL[\s\S]*?ORDER BY `stale_session`.`last_seen_at` ASC,\s*`stale_session`.`id` ASC LIMIT \? FOR UPDATE/u,
@@ -133,7 +253,7 @@ test('runtime closure and crash cleanup retire only exact session authority', as
   );
 });
 
-test('the core manifest registers migration 023 after idempotency capacity', async () => {
+test('the core manifest registers authority recovery migrations in order', async () => {
   const manifest = JSON.parse(await source('core/synex_core/synex.resource.json')) as {
     migrations: Array<{ id: string; path: string; transactional: boolean }>;
   };
@@ -147,4 +267,10 @@ test('the core manifest registers migration 023 after idempotency capacity', asy
     path: 'migrations/023_lease_authority_recovery.sql',
     transactional: false,
   });
+  assert.deepEqual(manifest.migrations[offset + 3], {
+    id: '026_lease_authority_owner_index',
+    path: 'migrations/026_lease_authority_owner_index.sql',
+    transactional: false,
+  });
+  assert.equal(manifest.migrations[offset + 2]?.id, '025_cluster_lease_capacity');
 });

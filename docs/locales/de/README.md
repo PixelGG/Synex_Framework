@@ -37,12 +37,13 @@
 
 ## Aktueller Prüfstand
 
-Die Core-Runtime aus Commit `510053e` hat ihren serverseitigen Abnahmepfad am 24.08.2026 bestanden. Das ist ein Nachweis für den geprüften Stand, aber kein Stable- oder Production-Ready-Anspruch.
+Der Abnahme-Build vom 24.08.2026 hat seine serverseitigen und echten Client-Stufen bestanden. Der aktuelle Stand enthält zusätzlich zwei nachgelagerte Hardening-Korrekturen, die durch Repository- und Live-Datenbanktests verifiziert wurden; die vollständige manuelle FXServer-/Client-Sequenz wurde mit diesem kombinierten Stand noch nicht wiederholt. Das ist ein Nachweis innerhalb dieser Grenzen, aber kein Stable- oder Production-Ready-Anspruch.
 
 - **PASS — Repository-Prüfungen.** Generation, Validierung, Headless-Suites, statische Security-Analyse und Dependency-Audit.
-- **PASS — Live-Datenbank.** MariaDB-11.8-Baseline und alle 25 Core-Migrationen.
-- **PASS — Server-only FXServer.** `READY`, caller-gebundene APIs, persistierte Saga-Ausführung, Probe-Restart, vorbereiteter Core-Restart und Next-Boot-Recovery.
-- **PENDING — Echter FiveM-Client-Lifecycle.** Join, Disconnect, Reconnect sowie Live-Player-/Session-/Lease-Cleanup benötigen weiterhin einen echten Client.
+- **PASS — Live-Datenbank.** MariaDB-11.8-Baseline und alle 26 Core-Migrationen.
+- **PASS — E2E-Abnahme-Build.** Server-only `READY`, caller-gebundene APIs, persistierte Saga-Ausführung, Restart-Recovery, echter Join/Disconnect/Reconnect und der Prepared-Restart mit wartender Datenbankarbeit.
+- **NACHGELAGERT VERIFIZIERT — Aktuelles Hardening.** Terminale Restart-Retry-Behandlung sowie die exakte Prüfung des generierten Ausdrucks und der erzwungenen Index-Nutzbarkeit in Migration 026 bestanden Headless- und Live-MariaDB-Regressionstests; vor einer Release-Abnahme muss die vollständige manuelle FXServer-/Client-Sequenz erneut laufen.
+- **NICHT GETESTET — Two-Instance-Handoff.** Der `kick_old`-Requester-Restart benötigt weiterhin eine dedizierte Multi-Instance-Abnahme.
 
 [Exakte Abdeckung und verbleibende Client-Sequenz](../../testing.md)
 

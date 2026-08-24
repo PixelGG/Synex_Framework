@@ -143,7 +143,7 @@ Prepared Core restarts use the one-way command below while Core is still running
 synex prepare-restart
 ```
 
-Only execute the returned `restart synex_core` command after the result reports `state = "prepared"`. A failed preparation leaves admission fail-closed; see [Operations](../operations.md#resource-restart-boundary-in-010).
+Only execute the returned `restart synex_core` command after the result reports `state = "prepared"`. The command is omitted from every failed result. `RESTART_DATABASE_DRAIN_TIMEOUT` means an in-flight database operation is still active; resolve that blocker and retry preparation while Core remains loaded. Do not replace the failed workflow with a direct Core-resource restart. See [Operations](../operations.md#resource-restart-boundary-in-010).
 
 Durable access administration is intentionally separate and explicit:
 

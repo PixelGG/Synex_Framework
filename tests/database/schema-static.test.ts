@@ -112,6 +112,7 @@ test('migrations are deterministic, forward ordered, and split exactly as the co
       '020_terminal_lease_eligibility.sql',
       '021_worker_queue_scalability.sql',
       '023_lease_authority_recovery.sql',
+      '026_lease_authority_owner_index.sql',
     ]).has(migration.file)) {
       assert.equal(migration.statements.length, 4);
       assert.match(migration.statements[0] ?? '', /^DROP PROCEDURE IF EXISTS/u);

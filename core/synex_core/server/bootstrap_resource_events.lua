@@ -379,6 +379,10 @@ factories.bootstrapResourceEvents = function(deps)
             end
         end)
         platform.addEventHandler('playerDropped', function(reason)
+            if type(restartController.isRawStopFenceActive) == 'function'
+                and restartController:isRawStopFenceActive() then
+                return
+            end
             local playerSource = source
             local invoked = foundation.safeCall(
                 identity.connections.handleDropped, identity.connections, playerSource, reason)

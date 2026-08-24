@@ -966,6 +966,23 @@ test('prepared and raw core stops clear replicated player state before player ev
       'synex_fixture', fixture.ownerEpoch, 'synex_fixture.restart_state', 55, true,
       PlayerStateContext(restarting)))
 
+    local function restartDatabase()
+      local draining = false
+      return {
+        beginDrain = function()
+          draining = true
+          return { draining = true, active = 0, kinds = {} }, nil
+        end,
+        waitForDrain = function()
+          return { draining = true, active = 0, kinds = {}, durationMs = 0, polls = 0 }, nil
+        end,
+        withControl = function(_, handler) return handler() end,
+        activity = function()
+          return { draining = draining, active = 0, kinds = {} }
+        end
+      }
+    end
+
     local lifecycleState = 'READY'
     local controller = SynexCoreFactories.bootstrapRestart({
       foundation = fixture.foundation,
@@ -981,7 +998,7 @@ test('prepared and raw core stops clear replicated player state before player ev
           return { failures = 0, remaining = 0 }
         end
       } },
-      persistence = {},
+      persistence = { database = restartDatabase() },
       registries = { owners = { list = function() return {} end } },
       facadeCache = {},
       stateService = fixture.state,
@@ -1021,14 +1038,18 @@ test('prepared and raw core stops clear replicated player state before player ev
         get = function() return preparedLifecycleState end,
         setCriticalFoundationsValidated = function() end,
         transition = function(_, target) preparedLifecycleState = target return 1 end
-      }, reload = { quiesce = function() return { abortErrors = {}, cleanup = { errors = {} } } end } },
+      }, reload = {
+        quiesce = function() return { abortErrors = {}, cleanup = { errors = {} } } end
+      }, scheduler = { capacity = function()
+        return { runningHandlers = 0, detachedRunningHandlers = 0 }
+      end } },
       identity = { connections = {
         quiesce = function() return { quiesced = true } end,
         releaseQuiescedLeases = function()
           return { leaseReleaseFailures = 0 }
         end
       } },
-      persistence = { instances = {
+      persistence = { database = restartDatabase(), instances = {
         setStatus = function() return true end,
         terminateLocalSessions = function() return true end
       } },

@@ -2,7 +2,7 @@
 
 This documentation describes the code present in Synex `0.1.0`. The release is experimental: contracts, schemas, migrations, and operational behavior may change before a stable release. Passing repository tests does not by itself certify a production deployment.
 
-Core runtime commit `510053e` passed its server-only FXServer/MariaDB acceptance path on 2026-08-24. Real FiveM client join, disconnect, reconnect, and live cleanup acceptance remains pending; the maintained boundary is recorded under [Current acceptance baseline](testing.md#current-acceptance-baseline).
+The 2026-08-24 Core acceptance build passed its manual FXServer/MariaDB stages, including 26/26 Core migrations, real-client join/disconnect/reconnect, and the pending-database-work prepared-restart drain. The current tree adds restart-retry terminalization plus stricter migration-026 expression and forced-index-usability verification; both hardening areas passed repository and live-database regression gates, but the combined revision has not yet repeated the complete manual FXServer/client sequence. The two-instance `kick_old` requester-restart scenario also remains untested; the maintained boundary is recorded under [Current acceptance baseline](testing.md#current-acceptance-baseline).
 
 ## Start here
 

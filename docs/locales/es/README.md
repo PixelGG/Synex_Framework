@@ -37,12 +37,13 @@
 
 ## Estado actual de validación
 
-El runtime del Core del commit `510053e` completó su ruta de validación del lado del servidor el 24/08/2026. Es evidencia para la revisión probada, no una declaración de estabilidad ni de preparación para producción.
+La compilación de aceptación del 24/08/2026 completó sus etapas del lado del servidor y con cliente real. El estado actual incorpora además dos correcciones posteriores de endurecimiento verificadas por las pruebas del repositorio y de base de datos real; la secuencia manual completa de FXServer/cliente aún no se ha repetido sobre esta revisión combinada. Es evidencia dentro de esos límites, no una declaración de estabilidad ni de preparación para producción.
 
 - **PASS — Comprobaciones del repositorio.** Generación, validación, suites headless, análisis estático de seguridad y auditoría de dependencias.
-- **PASS — Base de datos real.** Base MariaDB 11.8 y las 25 migraciones del Core.
-- **PASS — FXServer del lado del servidor.** `READY`, API ligadas al llamador, ejecución persistida de Sagas, reinicio de la probe, reinicio preparado del Core y recuperación en el siguiente arranque.
-- **PENDING — Ciclo de vida del cliente FiveM real.** Conexión, desconexión, reconexión y limpieza de jugador/sesión/lease aún requieren un cliente real.
+- **PASS — Base de datos real.** Base MariaDB 11.8 y las 26 migraciones del Core.
+- **PASS — Compilación de aceptación E2E.** `READY` del lado del servidor, API ligadas al llamador, ejecución persistida de Sagas, recuperación tras reinicios, conexión/desconexión/reconexión con cliente real y reinicio preparado con trabajo de base de datos pendiente.
+- **SEGUIMIENTO VERIFICADO — Endurecimiento actual.** El manejo terminal de reintentos de reinicio y la verificación exacta de la expresión generada y de la usabilidad del índice forzado de la migración 026 superaron las regresiones headless y con MariaDB real; la secuencia manual completa de FXServer/cliente debe repetirse antes de aceptar una versión.
+- **NO PROBADO — Relevo de dos instancias.** El reinicio del solicitante durante `kick_old` aún requiere una validación multiinstancia dedicada.
 
 [Cobertura exacta y secuencia de cliente pendiente](../../testing.md)
 

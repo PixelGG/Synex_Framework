@@ -67,7 +67,8 @@
     { "id": "022_idempotency_capacity", "path": "migrations/022_idempotency_capacity.sql", "transactional": false },
     { "id": "023_lease_authority_recovery", "path": "migrations/023_lease_authority_recovery.sql", "transactional": false },
     { "id": "024_session_control_capacity", "path": "migrations/024_session_control_capacity.sql", "transactional": false },
-    { "id": "025_cluster_lease_capacity", "path": "migrations/025_cluster_lease_capacity.sql", "transactional": false }
+    { "id": "025_cluster_lease_capacity", "path": "migrations/025_cluster_lease_capacity.sql", "transactional": false },
+    { "id": "026_lease_authority_owner_index", "path": "migrations/026_lease_authority_owner_index.sql", "transactional": false }
   ],
   "dataOwnership": {
     "tables": [

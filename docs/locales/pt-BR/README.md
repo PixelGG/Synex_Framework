@@ -37,12 +37,13 @@
 
 ## Estado atual da validação
 
-O runtime do Core no commit `510053e` concluiu seu caminho de validação no lado do servidor em 24/08/2026. Isso é evidência para a revisão testada, não uma declaração de estabilidade ou prontidão para produção.
+O build de aceitação de 24/08/2026 concluiu suas etapas no lado do servidor e com cliente real. O estado atual também inclui duas correções posteriores de hardening verificadas pelos testes do repositório e do banco de dados real; a sequência manual completa de FXServer/cliente ainda não foi repetida nessa revisão combinada. Isso é evidência dentro desses limites, não uma declaração de estabilidade ou prontidão para produção.
 
 - **PASS — Verificações do repositório.** Geração, validação, suites headless, análise estática de segurança e auditoria de dependências.
-- **PASS — Banco de dados real.** Baseline MariaDB 11.8 e todas as 25 migrations do Core.
-- **PASS — FXServer no lado do servidor.** `READY`, APIs vinculadas ao chamador, execução persistida de Sagas, restart da probe, restart preparado do Core e recuperação no próximo boot.
-- **PENDING — Ciclo de vida do cliente FiveM real.** Join, disconnect, reconnect e limpeza de player/session/lease ainda exigem um cliente real.
+- **PASS — Banco de dados real.** Baseline MariaDB 11.8 e todas as 26 migrations do Core.
+- **PASS — Build de aceitação E2E.** `READY` no lado do servidor, APIs vinculadas ao chamador, execução persistida de Sagas, recuperação após restart, join/disconnect/reconnect com cliente real e restart preparado com trabalho pendente no banco.
+- **FOLLOW-UP VERIFICADO — Hardening atual.** O tratamento terminal das tentativas de restart e a verificação exata da expressão gerada e da usabilidade do índice forçado da migration 026 passaram nas regressões headless e com MariaDB real; a sequência manual completa de FXServer/cliente deve ser repetida antes da aceitação de uma versão.
+- **NÃO TESTADO — Handoff em duas instâncias.** O restart do requester durante `kick_old` ainda requer uma validação multi-instância dedicada.
 
 [Cobertura exata e sequência restante do cliente](../../testing.md)
 

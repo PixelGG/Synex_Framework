@@ -50,12 +50,13 @@
 
 ## Current verification
 
-The Core runtime at `510053e` completed its server-side acceptance path on 2026-08-24. This is evidence for that tested runtime, not a stable-release or production-readiness claim.
+The 2026-08-24 acceptance build completed its server-side and real-client stages. The current tree additionally contains post-acceptance restart-retry and migration-verification hardening; those follow-ups passed repository and live-database gates but have not yet been rerun through the complete manual FXServer/client sequence. This is evidence for the stated boundaries, not a stable-release or production-readiness claim.
 
 - **PASS — Repository checks.** Generation, validation, headless suites, static security analysis, and dependency audit.
-- **PASS — Live database.** MariaDB 11.8 baseline and all 25 Core migrations.
-- **PASS — Server-only FXServer.** `READY`, caller-bound APIs, persisted Saga execution, probe restart, prepared Core restart, and next-boot recovery.
-- **PENDING — Real FiveM client lifecycle.** Join, disconnect, reconnect, and live player/session/lease cleanup still require a real client.
+- **PASS — Live database.** MariaDB 11.8 baseline and all 26 Core migrations.
+- **PASS — E2E acceptance build.** Server-only `READY`, caller-bound APIs, persisted Saga execution, restart recovery, real-client join/disconnect/reconnect, and the pending-database-work prepared-restart drain.
+- **FOLLOW-UP VERIFIED — Current hardening.** Terminal restart-retry handling plus exact migration-026 generated-expression and forced-index-usability verification passed headless and live-MariaDB regression gates; the combined tree still requires one repeat of the complete manual FXServer/client sequence before release acceptance.
+- **NOT TESTED — Two-instance handoff.** The cross-instance `kick_old` requester-restart scenario still requires dedicated multi-instance acceptance.
 
 [Review the exact coverage and remaining client sequence](./docs/testing.md)
 
