@@ -17,6 +17,79 @@ async function loadCore(engine: Awaited<ReturnType<LuaFactory['createEngine']>>)
   }
 }
 
+test('platform stabilizes constructor-less Cfx decoder metadata across decode calls', async () => {
+  const engine = await new LuaFactory().createEngine();
+  try {
+    await loadCore(engine);
+    const result = await engine.doString(`
+      json = {
+        decode = function(value, position, nullValue, objectMeta, arrayMeta)
+          assert(value == 'fixture-context')
+          assert(position == nil or position == 1)
+          assert(nullValue == nil)
+          objectMeta = objectMeta or { __jsontype = 'object' }
+          arrayMeta = arrayMeta or { __jsontype = 'array' }
+          return setmetatable({
+            emptyObject = setmetatable({}, objectMeta),
+            emptyArray = setmetatable({}, arrayMeta),
+            nodes = setmetatable({
+              setmetatable({ id = 'node-a' }, objectMeta)
+            }, arrayMeta)
+          }, objectMeta)
+        end,
+        encode = function(value)
+          assert(type(value) == 'table' and next(value) == nil)
+          local metatable = debug.getmetatable(value)
+          if rawget(metatable, '__jsontype') == 'object' then return '{}' end
+          if rawget(metatable, '__jsontype') == 'array' then return '[]' end
+          error('fixture received an untagged empty table')
+        end
+      }
+      assert(json.object == nil and json.array == nil)
+
+      local bareFirst = json.decode('fixture-context')
+      local bareSecond = json.decode('fixture-context')
+      assert(not rawequal(debug.getmetatable(bareFirst), debug.getmetatable(bareSecond)))
+      assert(not rawequal(debug.getmetatable(bareFirst.emptyArray),
+        debug.getmetatable(bareSecond.emptyArray)))
+
+      local platform = SynexCoreFactories.platform({
+        nowGame = function() return 1000 end,
+        random = function() return 5 end,
+        print = function() end
+      })
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      local trustedFirst = platform.jsonDecode('fixture-context')
+      local trustedSecond = platform.jsonDecode('fixture-context')
+      assert(platform.jsonContainerKind(bareFirst) == nil)
+      assert(platform.jsonContainerKind(trustedFirst) == 'object')
+      assert(platform.jsonContainerKind(trustedFirst.emptyObject) == 'object')
+      assert(platform.jsonContainerKind(trustedFirst.emptyArray) == 'array')
+      assert(platform.jsonContainerKind(trustedFirst.nodes) == 'array')
+      assert(rawequal(debug.getmetatable(trustedFirst), debug.getmetatable(trustedSecond)))
+      assert(rawequal(debug.getmetatable(trustedFirst.emptyArray),
+        debug.getmetatable(trustedSecond.emptyArray)))
+
+      local copied = foundation.copy(trustedFirst)
+      assert(platform.jsonContainerKind(copied) == 'object')
+      assert(platform.jsonContainerKind(copied.emptyObject) == 'object')
+      assert(platform.jsonContainerKind(copied.emptyArray) == 'array')
+      assert(platform.jsonEncode(copied.emptyObject) == '{}')
+      assert(platform.jsonEncode(copied.emptyArray) == '[]')
+      assert(platform.jsonContainerKind(setmetatable({}, { __jsontype = 'object' })) == nil)
+      return table.concat({
+        platform.jsonContainerKind(copied),
+        platform.jsonContainerKind(copied.emptyArray),
+        platform.jsonEncode(copied.emptyObject),
+        platform.jsonEncode(copied.emptyArray)
+      }, ':')
+    `);
+    assert.equal(result, 'object:array:{}:[]');
+  } finally {
+    engine.global.close();
+  }
+});
+
 test('Cfx JSON container identities survive trusted copies and reject metatable lookalikes', async () => {
   const engine = await new LuaFactory().createEngine();
   try {
@@ -28,7 +101,12 @@ test('Cfx JSON container identities survive trusted copies and reject metatable 
       json = {
         object = function() return setmetatable({}, objectMeta) end,
         array = function() return setmetatable({}, arrayMeta) end,
-        decode = function() error('fixture decoder is not used') end,
+        decode = function(value, position, nullValue, decoderObjectMeta, decoderArrayMeta)
+          assert(value == 'hybrid-context' and position == 1 and nullValue == nil)
+          return setmetatable({
+            emptyArray = setmetatable({}, decoderArrayMeta)
+          }, decoderObjectMeta)
+        end,
         encode = function(value)
           if next(value) ~= nil then return 'populated' end
           local metatable = debug.getmetatable(value)
@@ -43,6 +121,10 @@ test('Cfx JSON container identities survive trusted copies and reject metatable 
         print = function() end
       })
       local foundation = SynexCoreFactories.foundation({ platform = platform })
+
+      local decoded = platform.jsonDecode('hybrid-context')
+      assert(platform.jsonContainerKind(decoded) == 'object')
+      assert(platform.jsonContainerKind(decoded.emptyArray) == 'array')
 
       local source = setmetatable({
         emptyObject = setmetatable({}, objectMeta),
@@ -127,109 +209,293 @@ test('Cfx JSON container identities survive trusted copies and reject metatable 
   }
 });
 
-test('persisted Cfx JSON saga context reaches its first runtime event and hostile metadata fails closed', async () => {
+test('constructor-less Cfx JSON saga context survives persistence and executes once', async () => {
   const engine = await new LuaFactory().createEngine();
   try {
     await loadCore(engine);
+    await engine.doString(await readFile(
+      path.join(root, 'core/synex_core/server/saga_runtime.lua'),
+      'utf8',
+    ));
     const result = await engine.doString(`
-      local objectMeta = { __jsontype = 'object' }
-      local arrayMeta = { __jsontype = 'array' }
+      local snapshots = {}
+      local snapshotCounter, decodeCalls, suppliedDecodeCalls = 0, 0, 0
+      local decoderObjectMeta, decoderArrayMeta = nil, nil
+
+      local function freeze(value, active)
+        if type(value) ~= 'table' then return value end
+        active = active or {}
+        assert(not active[value], 'fixture cannot encode a cycle')
+        active[value] = true
+        local metatable = debug.getmetatable(value)
+        local kind = type(metatable) == 'table' and rawget(metatable, '__jsontype') or nil
+        if kind ~= 'object' and kind ~= 'array' then
+          local count, maximumIndex = 0, 0
+          kind = 'array'
+          for key in next, value do
+            if type(key) ~= 'number' or math.type(key) ~= 'integer' or key < 1 then
+              kind = 'object'
+              break
+            end
+            count = count + 1
+            maximumIndex = math.max(maximumIndex, key)
+          end
+          if maximumIndex ~= count then kind = 'object' end
+        end
+        local snapshot = { kind = kind }
+        if kind == 'array' then
+          snapshot.values = {}
+          for index = 1, rawlen(value) do
+            snapshot.values[index] = freeze(rawget(value, index), active)
+          end
+        else
+          snapshot.entries = {}
+          for key, child in next, value do
+            snapshot.entries[#snapshot.entries + 1] = {
+              key = key, value = freeze(child, active)
+            }
+          end
+        end
+        active[value] = nil
+        return snapshot
+      end
+
+      local function thaw(snapshot, objectMeta, arrayMeta)
+        if type(snapshot) ~= 'table' then return snapshot end
+        local value = setmetatable({}, snapshot.kind == 'object' and objectMeta or arrayMeta)
+        if snapshot.kind == 'array' then
+          for index, child in ipairs(snapshot.values) do
+            rawset(value, index, thaw(child, objectMeta, arrayMeta))
+          end
+        else
+          for _, entry in ipairs(snapshot.entries) do
+            rawset(value, entry.key, thaw(entry.value, objectMeta, arrayMeta))
+          end
+        end
+        return value
+      end
+
+      local fixtureContext = {
+        kind = 'object', entries = {
+          { key = 'emptyObject', value = { kind = 'object', entries = {} } },
+          { key = 'emptyArray', value = { kind = 'array', values = {} } },
+          { key = 'nodes', value = { kind = 'array', values = {{
+            kind = 'object', entries = {{ key = 'id', value = 'node-a' }}
+          }} } }
+        }
+      }
+
       json = {
-        object = function() return setmetatable({}, objectMeta) end,
-        array = function() return setmetatable({}, arrayMeta) end,
-        decode = function(value)
-          assert(value == 'fixture-context')
-          return setmetatable({
-            emptyObject = setmetatable({}, objectMeta),
-            emptyArray = setmetatable({}, arrayMeta),
-            nodes = setmetatable({
-              setmetatable({ id = 'node-a' }, objectMeta)
-            }, arrayMeta)
-          }, objectMeta)
+        decode = function(value, position, nullValue, ...)
+          decodeCalls = decodeCalls + 1
+          assert(position == nil or position == 1)
+          assert(nullValue == nil)
+          local objectMeta, arrayMeta
+          if select('#', ...) > 0 then
+            assert(select('#', ...) == 2)
+            objectMeta, arrayMeta = ...
+            assert(type(objectMeta) == 'table' and rawget(objectMeta, '__jsontype') == 'object')
+            assert(type(arrayMeta) == 'table' and rawget(arrayMeta, '__jsontype') == 'array')
+            suppliedDecodeCalls = suppliedDecodeCalls + 1
+            if decoderObjectMeta ~= nil then
+              assert(rawequal(objectMeta, decoderObjectMeta))
+              assert(rawequal(arrayMeta, decoderArrayMeta))
+            else
+              decoderObjectMeta, decoderArrayMeta = objectMeta, arrayMeta
+            end
+          else
+            objectMeta = { __jsontype = 'object' }
+            arrayMeta = { __jsontype = 'array' }
+          end
+          local snapshot
+          if value == 'fixture-context' then snapshot = fixtureContext
+          elseif value == '{}' then snapshot = { kind = 'object', entries = {} }
+          elseif value == '[]' then snapshot = { kind = 'array', values = {} }
+          else snapshot = snapshots[value] end
+          assert(snapshot ~= nil, 'fixture received unknown encoded JSON')
+          return thaw(snapshot, objectMeta, arrayMeta)
         end,
         encode = function(value)
-          local kind = debug.getmetatable(value) == objectMeta and 'object'
-            or debug.getmetatable(value) == arrayMeta and 'array' or 'plain'
-          return '{"kind":"' .. kind .. '"}'
+          local snapshot = freeze(value)
+          if snapshot.kind == 'object' and #snapshot.entries == 0 then return '{}' end
+          if snapshot.kind == 'array' and #snapshot.values == 0 then return '[]' end
+          snapshotCounter = snapshotCounter + 1
+          local token = 'fixture-json-' .. snapshotCounter
+          snapshots[token] = snapshot
+          return token
         end
       }
+      assert(json.object == nil and json.array == nil)
+
       local platform = SynexCoreFactories.platform({
         nowGame = function() return 1000 end,
-        random = function() return 11 end,
+        random = function() return 13 end,
         print = function() end
       })
       local foundation = SynexCoreFactories.foundation({ platform = platform })
-      foundation.configureIds('cfx-json-saga')
-      local writes = { steps = 0, sagas = 0 }
+      foundation.configureIds('cfx-json-saga-dispatch')
+
+      local seedContext = platform.jsonDecode('fixture-context')
+      local sagaRow = {
+        id = 91, public_id = 'saga_fixture', owner_resource = 'synex_fixture',
+        saga_type = 'fixture.workflow', correlation_id = 'correlation-a',
+        state = 'pending', current_step = 0, version = 1,
+        context_json = platform.jsonEncode(seedContext), last_error_json = nil,
+        deadline_at = nil, deadline_expired = 0, age_ms = 0
+      }
+      local stepRows, terminalLeaseWrites = {}, 0
       local tick = string.char(96)
       local database = {}
       function database:query(sql)
+        if sql:find('FROM ' .. tick .. 'synex_saga_steps' .. tick, 1, true) then
+          return stepRows, nil
+        end
         if sql:find('FROM ' .. tick .. 'synex_sagas' .. tick, 1, true) then
           return {{
-            id = 91, public_id = 'saga_fixture', owner_resource = 'synex_fixture',
-            saga_type = 'fixture.workflow', correlation_id = 'correlation-a',
-            state = 'pending', current_step = 0, version = 1,
-            context_json = 'fixture-context', last_error_json = nil,
-            deadline_at = nil, deadline_expired = 0, age_ms = 0
+            id = sagaRow.id, public_id = sagaRow.public_id,
+            owner_resource = sagaRow.owner_resource, saga_type = sagaRow.saga_type,
+            correlation_id = sagaRow.correlation_id, state = sagaRow.state,
+            current_step = sagaRow.current_step, version = sagaRow.version,
+            context_json = sagaRow.context_json, last_error_json = sagaRow.last_error_json,
+            deadline_at = sagaRow.deadline_at, deadline_expired = sagaRow.deadline_expired,
+            age_ms = sagaRow.age_ms
           }}, nil
-        end
-        if sql:find('FROM ' .. tick .. 'synex_saga_steps' .. tick, 1, true) then
-          return {}, nil
         end
         error('unexpected saga load SQL')
       end
       function database:withTransaction(handler)
-        local accepted = handler(function(sql)
+        local accepted = handler(function(sql, parameters)
+          parameters = parameters or {}
           if sql:find('FOR UPDATE', 1, true) then
-            return {{ id = 91, state = 'pending', current_step = 0, version = 1 }}
+            return {{
+              id = sagaRow.id, state = sagaRow.state,
+              current_step = sagaRow.current_step, version = sagaRow.version
+            }}
           end
           if sql:find('INSERT INTO ' .. tick .. 'synex_saga_steps' .. tick, 1, true) then
-            writes.steps = writes.steps + 1
+            stepRows[#stepRows + 1] = {
+              sequence_no = parameters[2], step_name = parameters[3],
+              event_type = parameters[4], attempt = parameters[5],
+              payload_json = parameters[6], error_json = parameters[7],
+              occurred_at = '2026-08-24 12:00:00.000000'
+            }
             return { affectedRows = 1 }
           end
           if sql:find('UPDATE ' .. tick .. 'synex_sagas' .. tick, 1, true) then
-            writes.sagas = writes.sagas + 1
+            assert(parameters[7] == sagaRow.id)
+            assert(parameters[8] == sagaRow.version)
+            assert(parameters[9] == sagaRow.owner_resource)
+            sagaRow.state = parameters[1]
+            sagaRow.current_step = parameters[2]
+            sagaRow.context_json = parameters[3]
+            if parameters[4] == 1 then sagaRow.last_error_json = nil
+            elseif parameters[5] ~= nil then sagaRow.last_error_json = parameters[5] end
+            sagaRow.version = sagaRow.version + 1
             return { affectedRows = 1 }
           end
-          error('unexpected saga append SQL')
+          if sql:find('UPDATE ' .. tick .. 'synex_cluster_leases' .. tick, 1, true) then
+            terminalLeaseWrites = terminalLeaseWrites + 1
+            return { affectedRows = 1 }
+          end
+          error('unexpected saga transaction SQL')
         end)
         return accepted == true, accepted == true and nil
           or foundation.error('TRANSACTION_REJECTED', 'fixture rollback')
       end
+
       local sagas = SynexCoreFactories.reliability({
         platform = platform, foundation = foundation, database = database,
         instanceId = 'instance-a', features = { sagas = true }
       }).sagas
-      local saga = assert(sagas:load('saga_fixture', 'synex_fixture'))
-      assert(platform.jsonContainerKind(saga.context) == 'object')
-      assert(platform.jsonContainerKind(saga.context.emptyObject) == 'object')
-      assert(platform.jsonContainerKind(saga.context.emptyArray) == 'array')
-      local appended = assert(sagas:appendRuntimeEvent({
-        ownerResource = 'synex_fixture', publicId = saga.publicId,
-        expectedVersion = saga.version, stepName = 'fixture.started',
-        eventType = 'started', attempt = 1, nextState = 'running',
-        terminal = false, payload = {}, context = saga.context
-      }))
-      assert(appended.state == 'running' and writes.steps == 1 and writes.sagas == 1)
+      function sagas:candidates(_, selectors)
+        assert(#selectors == 1 and selectors[1].ownerResource == sagaRow.owner_resource)
+        assert(selectors[1].sagaType == sagaRow.saga_type)
+        return {{
+          publicId = sagaRow.public_id, ownerResource = sagaRow.owner_resource,
+          sagaType = sagaRow.saga_type, state = sagaRow.state, version = sagaRow.version
+        }}, nil
+      end
 
+      local owners = {}
+      function owners:isCurrent(owner, epoch)
+        return owner == 'synex_fixture' and epoch == 1
+      end
+      function owners:track() return 'tracked', nil end
+      function owners:beginOperation() return 'operation', nil end
+      function owners:finishOperation() return true end
+      local leases = {}
+      function leases:acquire(name, owner, ttl, requesterInstanceId, requesterBootId)
+        return {
+          name = name, owner = owner, fencingToken = 1, ttlSeconds = ttl,
+          requesterInstanceId = requesterInstanceId, requesterBootId = requesterBootId
+        }, nil
+      end
+      function leases:renew() return true, nil end
+      function leases:release() return true, nil end
+      local handlerCalls, handlerContext = 0, nil
+      local runtime = SynexCoreFactories.sagaRuntime({
+        foundation = foundation, platform = platform, sagas = sagas,
+        audit = { append = function() return { eventId = 'audit-a' }, nil end },
+        leases = leases, owners = owners,
+        instances = { bootId = function() return 'boot-a', nil end },
+        instanceId = 'instance-a', enabled = true
+      })
+      assert(runtime:register('synex_fixture', 1, {
+        name = 'fixture.workflow', steps = {{
+          name = 'fixture.step',
+          run = function(context)
+            handlerCalls = handlerCalls + 1
+            handlerContext = context
+            assert(platform.jsonContainerKind(context) == 'object')
+            assert(platform.jsonContainerKind(context.emptyObject) == 'object')
+            assert(platform.jsonContainerKind(context.emptyArray) == 'array')
+            assert(platform.jsonContainerKind(context.nodes) == 'array')
+            assert(context.nodes[1].id == 'node-a')
+            context.completed = true
+            return { context = context, output = { accepted = true } }, nil
+          end,
+          compensate = function() return { output = {} }, nil end
+        }}
+      }))
+      local report, dispatchError = runtime:dispatchBatch(1)
+      assert(dispatchError == nil and report.processed == 1 and report.failed == 0)
+      assert(handlerCalls == 1 and #stepRows == 2 and terminalLeaseWrites == 1)
+      assert(stepRows[1].event_type == 'started' and stepRows[2].event_type == 'succeeded')
+      assert(sagaRow.state == 'completed' and sagaRow.current_step == 2 and sagaRow.version == 3)
+
+      local reloaded = assert(sagas:load(sagaRow.public_id, sagaRow.owner_resource))
+      assert(reloaded.context ~= handlerContext and reloaded.context.completed == true)
+      assert(platform.jsonContainerKind(reloaded.context) == 'object')
+      assert(platform.jsonContainerKind(reloaded.context.emptyObject) == 'object')
+      assert(platform.jsonContainerKind(reloaded.context.emptyArray) == 'array')
+      assert(platform.jsonContainerKind(reloaded.context.nodes) == 'array')
+      assert(platform.jsonEncode(reloaded.context.emptyObject) == '{}')
+      assert(platform.jsonEncode(reloaded.context.emptyArray) == '[]')
+      assert(#reloaded.steps == 2)
+      assert(reloaded.steps[1].event == 'started' and reloaded.steps[2].event == 'succeeded')
+      assert(decodeCalls == 5 and suppliedDecodeCalls == decodeCalls)
+
+      local objectMeta = debug.getmetatable(reloaded.context)
+      local arrayMeta = debug.getmetatable(reloaded.context.emptyArray)
+      local persistedSteps, persistedVersion = #stepRows, sagaRow.version
+      local persistedLeaseWrites = terminalLeaseWrites
       local hostile = setmetatable({}, { __jsontype = 'object' })
       local rejected, rejection = sagas:appendRuntimeEvent({
-        ownerResource = 'synex_fixture', publicId = saga.publicId,
-        expectedVersion = saga.version, stepName = 'fixture.rejected',
+        ownerResource = sagaRow.owner_resource, publicId = sagaRow.public_id,
+        expectedVersion = sagaRow.version, stepName = 'fixture.rejected',
         eventType = 'started', attempt = 1, nextState = 'running',
         terminal = false, payload = {}, context = { nested = hostile }
       })
       assert(rejected == nil and rejection.code == 'INVALID_JSON_VALUE')
-      assert(writes.steps == 1 and writes.sagas == 1)
+
       local trapCalls = 0
-      local mixed = { [1] = 'value', key = 'value' }
       local cyclic = setmetatable({}, objectMeta)
       cyclic.self = cyclic
       local invalidContexts = {
         setmetatable({ [1] = 'numeric' }, objectMeta),
         setmetatable({ key = 'string' }, arrayMeta),
         setmetatable({ [1] = 'one', [3] = 'three' }, arrayMeta),
-        mixed,
+        { [1] = 'value', key = 'value' },
         cyclic,
         { value = 0 / 0 },
         { value = math.huge },
@@ -242,140 +508,22 @@ test('persisted Cfx JSON saga context reaches its first runtime event and hostil
       }
       for index, invalidContext in ipairs(invalidContexts) do
         local value, failure = sagas:appendRuntimeEvent({
-          ownerResource = 'synex_fixture', publicId = saga.publicId,
-          expectedVersion = saga.version, stepName = 'fixture.invalid.' .. index,
+          ownerResource = sagaRow.owner_resource, publicId = sagaRow.public_id,
+          expectedVersion = sagaRow.version, stepName = 'fixture.invalid.' .. index,
           eventType = 'started', attempt = 1, nextState = 'running',
           terminal = false, payload = {}, context = invalidContext
         })
         assert(value == nil and failure.code == 'INVALID_JSON_VALUE', index)
       end
-      assert(writes.steps == 1 and writes.sagas == 1 and trapCalls == 0)
-      return table.concat({ appended.state, writes.steps, writes.sagas, rejection.code }, ':')
+      assert(#stepRows == persistedSteps and sagaRow.version == persistedVersion)
+      assert(terminalLeaseWrites == persistedLeaseWrites and trapCalls == 0)
+      return table.concat({
+        sagaRow.state, handlerCalls, #stepRows,
+        stepRows[1].event_type, stepRows[2].event_type,
+        rejection.code, trapCalls, decodeCalls
+      }, ':')
     `);
-    assert.equal(result, 'running:1:1:INVALID_JSON_VALUE');
-  } finally {
-    engine.global.close();
-  }
-});
-
-test('Saga dispatch invokes its handler once and persists returned Cfx JSON metadata', async () => {
-  const engine = await new LuaFactory().createEngine();
-  try {
-    await loadCore(engine);
-    await engine.doString(await readFile(
-      path.join(root, 'core/synex_core/server/saga_runtime.lua'),
-      'utf8',
-    ));
-    const result = await engine.doString(`
-      local objectMeta = { __jsontype = 'object' }
-      local arrayMeta = { __jsontype = 'array' }
-      json = {
-        object = function() return setmetatable({}, objectMeta) end,
-        array = function() return setmetatable({}, arrayMeta) end,
-        decode = function() error('fixture decoder is not used') end,
-        encode = function() return '{}' end
-      }
-      local platform = SynexCoreFactories.platform({
-        nowGame = function() return 1000 end,
-        random = function() return 13 end,
-        print = function() end
-      })
-      local foundation = SynexCoreFactories.foundation({ platform = platform })
-      foundation.configureIds('cfx-json-saga-dispatch')
-      local handlerCalls, appendCalls = 0, 0
-      local events = {}
-      local saga = {
-        publicId = 'saga_fixture', ownerResource = 'synex_fixture',
-        sagaType = 'fixture.workflow', correlationId = 'correlation-a',
-        state = 'pending', currentStep = 0, version = 1,
-        context = setmetatable({
-          emptyObject = setmetatable({}, objectMeta),
-          emptyArray = setmetatable({}, arrayMeta)
-        }, objectMeta),
-        steps = {}, ageMs = 100000, deadlineExpired = false
-      }
-      local owners = {}
-      function owners:isCurrent(owner, epoch)
-        return owner == 'synex_fixture' and epoch == 1
-      end
-      function owners:track() return 'tracked', nil end
-      function owners:beginOperation() return 'operation', nil end
-      function owners:finishOperation() return true end
-      local store = {}
-      function store:candidates(_, selectors)
-        assert(#selectors == 1 and selectors[1].ownerResource == 'synex_fixture')
-        return {{
-          publicId = saga.publicId, ownerResource = saga.ownerResource,
-          sagaType = saga.sagaType, state = saga.state, version = saga.version
-        }}, nil
-      end
-      function store:load(publicId, owner)
-        assert(publicId == saga.publicId and owner == saga.ownerResource)
-        return foundation.copy(saga), nil
-      end
-      function store:appendRuntimeEvent(command)
-        appendCalls = appendCalls + 1
-        events[appendCalls] = command.eventType
-        assert(platform.jsonContainerKind(command.context) == 'object')
-        assert(platform.jsonContainerKind(command.context.emptyObject) == 'object')
-        assert(platform.jsonContainerKind(command.context.emptyArray) == 'array')
-        if command.eventType == 'started' then assert(handlerCalls == 0) end
-        if command.eventType == 'succeeded' then assert(handlerCalls == 1) end
-        saga.currentStep = saga.currentStep + 1
-        saga.version = saga.version + 1
-        saga.state = command.nextState
-        saga.context = foundation.copy(command.context)
-        saga.steps[#saga.steps + 1] = {
-          sequence = saga.currentStep, name = command.stepName,
-          event = command.eventType, attempt = command.attempt,
-          payload = foundation.copy(command.payload), error = foundation.copy(command.error)
-        }
-        return {
-          publicId = saga.publicId, state = saga.state,
-          currentStep = saga.currentStep, version = saga.version
-        }, nil
-      end
-      local leases = {}
-      function leases:acquire(name, owner, ttl, requesterInstanceId, requesterBootId)
-        return {
-          name = name, owner = owner, fencingToken = 1, ttlSeconds = ttl,
-          requesterInstanceId = requesterInstanceId, requesterBootId = requesterBootId
-        }, nil
-      end
-      function leases:renew() return true, nil end
-      function leases:release() return true, nil end
-      local runtime = SynexCoreFactories.sagaRuntime({
-        foundation = foundation, platform = platform, sagas = store,
-        audit = { append = function() return { eventId = 'audit-a' }, nil end },
-        leases = leases, owners = owners,
-        instances = { bootId = function() return 'boot-a', nil end },
-        instanceId = 'instance-a', enabled = true
-      })
-      assert(runtime:register('synex_fixture', 1, {
-        name = 'fixture.workflow', steps = {{
-          name = 'fixture.step',
-          run = function(context)
-            handlerCalls = handlerCalls + 1
-            assert(platform.jsonContainerKind(context) == 'object')
-            assert(platform.jsonContainerKind(context.emptyObject) == 'object')
-            assert(platform.jsonContainerKind(context.emptyArray) == 'array')
-            context.completed = true
-            return { context = context, output = { accepted = true } }, nil
-          end,
-          compensate = function() return { output = {} }, nil end
-        }}
-      }))
-      local report, dispatchError = runtime:dispatchBatch(1)
-      assert(dispatchError == nil and report.processed == 1 and report.failed == 0)
-      assert(handlerCalls == 1 and appendCalls == 2)
-      assert(events[1] == 'started' and events[2] == 'succeeded')
-      assert(saga.state == 'completed' and saga.context.completed == true)
-      assert(platform.jsonContainerKind(saga.context) == 'object')
-      assert(platform.jsonContainerKind(saga.context.emptyObject) == 'object')
-      assert(platform.jsonContainerKind(saga.context.emptyArray) == 'array')
-      return table.concat({ saga.state, handlerCalls, appendCalls, events[1], events[2] }, ':')
-    `);
-    assert.equal(result, 'completed:1:2:started:succeeded');
+    assert.equal(result, 'completed:1:2:started:succeeded:INVALID_JSON_VALUE:0:5');
   } finally {
     engine.global.close();
   }

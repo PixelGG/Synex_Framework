@@ -4,6 +4,9 @@ factories.platform = function(overrides)
     overrides = overrides or {}
 
     local runtimeJson = type(json) == 'table' and json or nil
+    local runtimeJsonDecode = runtimeJson and rawget(runtimeJson, 'decode') or nil
+    local decoderObjectMetatable = { __jsontype = 'object' }
+    local decoderArrayMetatable = { __jsontype = 'array' }
 
     local function rawMetatable(value)
         if type(debug) ~= 'table' or type(debug.getmetatable) ~= 'function' then
@@ -25,14 +28,29 @@ factories.platform = function(overrides)
         return metatable
     end
 
-    -- Cfx RapidJSON tags decoded objects and arrays with two shared metatables.
-    -- Compare the raw metatable identities so arbitrary __jsontype/__metatable
-    -- lookalikes never cross a plain-JSON boundary.
-    local jsonObjectMetatable = sharedJsonMetatable('object', 'object')
-    local jsonArrayMetatable = sharedJsonMetatable('array', 'array')
-    if jsonObjectMetatable ~= nil and jsonArrayMetatable ~= nil
-        and rawequal(jsonObjectMetatable, jsonArrayMetatable) then
-        jsonObjectMetatable, jsonArrayMetatable = nil, nil
+    -- Cfx runtimes either honor the dkjson decoder metatable arguments, expose
+    -- shared constructor metatables, or do both. Trust only these exact private
+    -- decoder identities and the complete, distinct constructor pair.
+    local sharedObjectMetatable = sharedJsonMetatable('object', 'object')
+    local sharedArrayMetatable = sharedJsonMetatable('array', 'array')
+    if sharedObjectMetatable == nil or sharedArrayMetatable == nil
+        or rawequal(sharedObjectMetatable, sharedArrayMetatable) then
+        sharedObjectMetatable, sharedArrayMetatable = nil, nil
+    end
+
+    local function jsonMetatableKind(metatable)
+        if type(metatable) ~= 'table' then return nil end
+        if (rawequal(metatable, decoderObjectMetatable)
+                or (sharedObjectMetatable ~= nil and rawequal(metatable, sharedObjectMetatable)))
+            and rawget(metatable, '__jsontype') == 'object' then
+            return 'object'
+        end
+        if (rawequal(metatable, decoderArrayMetatable)
+                or (sharedArrayMetatable ~= nil and rawequal(metatable, sharedArrayMetatable)))
+            and rawget(metatable, '__jsontype') == 'array' then
+            return 'array'
+        end
+        return nil
     end
 
     local function jsonContainerKind(value)
@@ -40,23 +58,25 @@ factories.platform = function(overrides)
         if getmetatable(value) == nil then return 'plain' end
         local metatable, readable = rawMetatable(value)
         if not readable then return nil end
-        if jsonObjectMetatable ~= nil and rawequal(metatable, jsonObjectMetatable)
-            and rawget(metatable, '__jsontype') == 'object' then
-            return 'object'
-        end
-        if jsonArrayMetatable ~= nil and rawequal(metatable, jsonArrayMetatable)
-            and rawget(metatable, '__jsontype') == 'array' then
-            return 'array'
-        end
-        return nil
+        return jsonMetatableKind(metatable)
     end
 
     local function copyJsonContainerMetadata(source, target)
         if type(target) ~= 'table' or getmetatable(target) ~= nil then return nil end
         local kind = jsonContainerKind(source)
-        if kind == 'object' then return setmetatable(target, jsonObjectMetatable) end
-        if kind == 'array' then return setmetatable(target, jsonArrayMetatable) end
+        if kind == 'object' or kind == 'array' then
+            local metatable, readable = rawMetatable(source)
+            if not readable or jsonMetatableKind(metatable) ~= kind then return nil end
+            return setmetatable(target, metatable)
+        end
         return target
+    end
+
+    local function decodeJson(value)
+        if type(runtimeJsonDecode) ~= 'function' then
+            error('Cfx JSON decoder is unavailable in this environment', 2)
+        end
+        return runtimeJsonDecode(value, 1, nil, decoderObjectMetatable, decoderArrayMetatable)
     end
 
     local function fallback(name)
@@ -91,7 +111,7 @@ factories.platform = function(overrides)
         setTimeout = overrides.setTimeout or SetTimeout,
         createThread = overrides.createThread or (Citizen and Citizen.CreateThread or nil),
         nowGame = overrides.nowGame or GetGameTimer,
-        jsonDecode = overrides.jsonDecode or function(value) return json.decode(value) end,
+        jsonDecode = overrides.jsonDecode or decodeJson,
         jsonEncode = overrides.jsonEncode or function(value) return json.encode(value) end,
         jsonContainerKind = overrides.jsonContainerKind or jsonContainerKind,
         copyJsonContainerMetadata = overrides.copyJsonContainerMetadata
