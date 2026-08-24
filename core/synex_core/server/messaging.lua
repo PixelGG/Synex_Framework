@@ -871,9 +871,10 @@ factories.messaging = function(deps)
             else
                 local started = foundation.monotonicMs()
                 local invocation = beginInvocation(owner, epoch, entry.owner, entry.epoch)
-                local ok, result = false, nil
+                local ok, result, handlerError = false, nil, nil
                 if invocation then
-                    ok, result = foundation.safeCall(entry.handler, foundation.copy(candidate), foundation.readonly(hookContext))
+                    ok, result, handlerError = foundation.safeCall(
+                        entry.handler, foundation.copy(candidate), foundation.readonly(hookContext))
                     finishInvocation(invocation)
                     if invocation.cancelled then
                         if entry.required then return nil, invocationError(invocation, hookContext.traceId) end
@@ -888,11 +889,13 @@ factories.messaging = function(deps)
                         'The hook deadline expired during execution.', {
                             traceId = hookContext.traceId, retryable = true
                         })
-                elseif not ok or elapsed > entry.timeoutMs then
+                elseif not ok or handlerError ~= nil or elapsed > entry.timeoutMs then
                     logger:error('hook failed', {
                         hook = name, owner = entry.owner, elapsedMs = elapsed,
-                        code = type(result) == 'table' and type(result.code) == 'string'
-                            and result.code:sub(1, 64) or not ok and 'HOOK_EXCEPTION' or 'HOOK_TIMEOUT'
+                        code = foundation.failureCode(not ok and result or handlerError,
+                            not ok and 'HOOK_EXCEPTION'
+                                or handlerError ~= nil and 'HOOK_PROVIDER_FAILED'
+                                or 'HOOK_TIMEOUT')
                     })
                     if entry.required then return nil, foundation.error('REQUIRED_HOOK_FAILED', 'A required hook failed.', { retryable = true }) end
                 elseif type(result) ~= 'table' or getmetatable(result) ~= nil

@@ -13,7 +13,10 @@ local function invoke(descriptor, request, options)
     if type(request) ~= 'table' then
         return sdkError('INVALID_ARGUMENT', 'Contract requests must be objects.')
     end
-    return exports.synex_core:Invoke(descriptor.name, descriptor.version, request, options or {})
+    local value, invokeError = exports.synex_core:Invoke(
+        descriptor.name, descriptor.version, request, options or {})
+    if value == false and invokeError ~= nil then return nil, invokeError end
+    return value, invokeError
 end
 
 function sdk.connect(versionRange)

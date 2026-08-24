@@ -2605,8 +2605,8 @@ test('failed runtime gate blocks owner discovery and cached facade mutations', a
       local schedule, scheduleError = facade.Scheduler.after(100, function() end)
       local registration, registrationError = facade.Events.subscribe(
         'synex.fixture.event', function() end)
-      assert(schedule == nil and scheduleError.code == 'CORE_FAILED')
-      assert(registration == nil and registrationError.code == 'CORE_FAILED')
+      assert(schedule == false and scheduleError.code == 'CORE_FAILED')
+      assert(registration == false and registrationError.code == 'CORE_FAILED')
       assert(lifecycle.scheduler:count() == 0 and timeoutMutations == 0)
       assert(registrationMutations == 0 and registries.owners:pendingCount('synex_fixture', 1) == 0)
       return table.concat({ownerError.code, scheduleError.code, registrationError.code,
@@ -4284,15 +4284,15 @@ test('capability delegation is bridge-granted, target-declared, and limited to a
       local bridge = assert(api.getAPIForCaller('synex_bridge', '^1.0.0'))
       assert(bridge.Capabilities.checkResource('synex_consumer', 'synex.compat.qb.read', 'GetPlayerData'))
       local malformed, malformedError = bridge.Capabilities.checkResource('../consumer', 'synex.compat.qb.read')
-      assert(malformed == nil and malformedError.code == 'INVALID_DELEGATION_TARGET')
+      assert(malformed == false and malformedError.code == 'INVALID_DELEGATION_TARGET')
       states.synex_consumer = 'stopped'
       local stopped, stoppedError = bridge.Capabilities.checkResource(
         'synex_consumer', 'synex.compat.qb.read', 'GetPlayerData')
-      assert(stopped == nil and stoppedError.code == 'DELEGATION_TARGET_UNAVAILABLE')
+      assert(stopped == false and stoppedError.code == 'DELEGATION_TARGET_UNAVAILABLE')
       local attacker = assert(api.getAPIForCaller('synex_attacker', '^1.0.0'))
       local denied, deniedError = attacker.Capabilities.checkResource(
         'synex_bridge', 'synex.capabilities.delegate', 'impersonate')
-      assert(denied == nil and deniedError.code == 'CAPABILITY_DENIED')
+      assert(denied == false and deniedError.code == 'CAPABILITY_DENIED')
       return table.concat({malformedError.code, stoppedError.code, deniedError.code}, ':')
     `);
     assert.equal(result,

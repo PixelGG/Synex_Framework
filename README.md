@@ -141,15 +141,15 @@ These checks are required development gates; they are not by themselves Producti
 
 ```lua
 local api, apiError = exports.synex_core:GetAPI('^1.0.0')
-if not api then error(apiError.message) end
+if apiError then error(apiError.message) end
 
 local status, statusError = api.Runtime.status()
-if not status then error(statusError.message) end
+if statusError then error(statusError.message) end
 
 print(('Synex Core state: %s'):format(status.state))
 ```
 
-The calling server resource must declare `synex.runtime.read`, and operator policy must grant it. Calls return `value, nil` or `nil, error`; capability and caller-epoch validation remains active. This example uses only the Core facade and does not depend on a downstream module.
+The calling server resource must declare `synex.runtime.read`, and operator policy must grant it. Internal operations use `value, nil` or `nil, error`. Raw cross-resource Cfx calls preserve later return values by replacing only intervening `nil` slots with `false`, so a raw failure arrives as `false, error`; always treat the second return slot as authoritative. Capability and caller-epoch validation remains active. This example uses only the Core facade and does not depend on a downstream module.
 
 [Public API](./docs/api/README.md) &middot; [Create a resource](./docs/development/creating-resources.md) &middot; [Generated contracts](./packages/contracts/generated/docs/contracts.md)
 

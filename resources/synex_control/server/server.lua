@@ -139,7 +139,7 @@ end
 local function readValue(handler)
     if not isCallable(handler) then return unavailable('NOT_EXPOSED') end
     local ok, value, readError = pcall(handler)
-    if not ok or value == nil then
+    if not ok or readError or value == nil then
         local code = type(readError) == 'table' and readError.code or 'UNAVAILABLE'
         return unavailable(code)
     end

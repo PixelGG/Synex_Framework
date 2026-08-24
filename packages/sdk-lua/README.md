@@ -20,3 +20,9 @@ local snapshot, requestError = client:request('synex.accounts.get_snapshot', {
 `request` selects the latest generated version for a contract name.
 `requestVersion` pins an exact `name@version` descriptor. Generated metadata
 does not bypass runtime schema validation or capability checks.
+
+Both request methods normalize the raw Cfx `Invoke` failure tuple
+`false, error` back to `nil, error`; use the second return value as the error
+signal. This consumer SDK does not adapt provider callbacks. A callback that
+crosses back into Core must return `false, error` on failure, or use a separate
+provider-side adapter; no such adapter is shipped here.

@@ -16,11 +16,13 @@ Runtime providers and consumers negotiate compatible majors. Unknown fields are 
 
 ## Result model
 
-Lua operations return either `value, nil` or `nil, error`. Errors have a stable shape:
+Internal Core operations and provider-local logic use `value, nil` for success or `nil, error` for failure. Errors have a stable shape:
 
 ```text
 code, message, traceId?, retryable, details?
 ```
+
+Raw cross-resource Cfx calls cannot safely transport a `nil` hole before a later meaningful return. Synex therefore substitutes `false` only for those intervening slots: a failure crosses as `false, error`, `value, nil` remains effectively unchanged, and `value, nil, metadata` crosses as `value, false, metadata`. The second slot is authoritative: a truthy value is an error, while `nil` or `false` means no error. This wire convention does not change the internal result model.
 
 Internal exception text and database details are never returned to clients. Generated TypeScript exposes operation-specific input, output, and error types; the host-provided transport remains responsible for how it represents a failed delivery or returned error.
 

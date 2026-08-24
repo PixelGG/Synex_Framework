@@ -403,11 +403,11 @@ test('public RPC options enforce the documented timeout without accepting forged
       local forged, forgedError = facade.RPC.call('synex.fixture.echo', '1.0.0', {}, {
         session = { id = 'forged' }, source = 77
       })
-      assert(forged == nil and forgedError.code == 'INVALID_RPC_OPTIONS')
+      assert(forged == false and forgedError.code == 'INVALID_RPC_OPTIONS')
       local invalid, invalidError = facade.RPC.call('synex.fixture.echo', '1.0.0', {}, {
         timeoutMs = 15000.5
       })
-      assert(invalid == nil and invalidError.code == 'INVALID_RPC_OPTIONS')
+      assert(invalid == false and invalidError.code == 'INVALID_RPC_OPTIONS')
       local invoked = assert(api.invokeForCaller('synex_fixture', 'synex.fixture.echo', '1.0.0', {}, nil))
       assert(invoked.caller == 'synex_fixture' and captured.deadlineAt == 6000)
       return table.concat({ value.name, forgedError.code, invalidError.code, captured.deadlineAt }, ':')

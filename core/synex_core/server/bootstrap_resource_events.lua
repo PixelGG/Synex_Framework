@@ -38,6 +38,12 @@ factories.bootstrapResourceEvents = function(deps)
         'bootstrap resource events require dependency health refresh')
     local restartController = assert(deps.restartController,
         'bootstrap resource events require restart controller')
+
+    local function cfxExport(handler)
+        return function(...)
+            return foundation.cfxResult(handler, ...)
+        end
+    end
     local commands = assert(deps.commands, 'bootstrap resource events require commands')
     local bound = false
     local events = {}
@@ -332,23 +338,23 @@ factories.bootstrapResourceEvents = function(deps)
     function events:bind()
         if bound then return true end
         bound = true
-        platform.export('GetAPI', function(versionRange)
+        platform.export('GetAPI', cfxExport(function(versionRange)
             local caller = platform.invokingResource()
             if type(caller) ~= 'string' or caller == '' then return nil, foundation.error('CALLER_REQUIRED', 'External Synex exports require an invoking resource.') end
             return getAPIForCaller(caller, versionRange)
-        end)
-        platform.export('Invoke', function(name, version, request, options)
+        end))
+        platform.export('Invoke', cfxExport(function(name, version, request, options)
             local caller = platform.invokingResource()
             if type(caller) ~= 'string' or caller == '' then return nil, foundation.error('CALLER_REQUIRED', 'External Synex exports require an invoking resource.') end
             return invokeForCaller(caller, name, version, request, options)
-        end)
-        platform.export('GetRuntimeStatus', function()
+        end))
+        platform.export('GetRuntimeStatus', cfxExport(function()
             local caller = platform.invokingResource()
             if type(caller) ~= 'string' or caller == '' then return nil, foundation.error('CALLER_REQUIRED', 'External Synex exports require an invoking resource.') end
             local epoch, err = ensureOwner(caller)
             if not epoch then return nil, err end
             return guarded(caller, epoch, 'synex.runtime.read', 'GetRuntimeStatus', function() return lifecycle.core:snapshot(), nil end)
-        end)
+        end))
         messaging.network:bind()
         platform.addEventHandler('playerConnecting', function(name, setKickReason, deferrals)
             local tempSource = source

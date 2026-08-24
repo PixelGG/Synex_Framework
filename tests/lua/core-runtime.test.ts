@@ -115,6 +115,61 @@ test('foundation recognizes callable Cfx proxies and restores execution context'
   }
 });
 
+test('foundation keeps public result tuples array-shaped across Cfx without-hole transport', async () => {
+  const engine = await createKernelEngine(['foundation']);
+  try {
+    const result = await engine.doString(`
+      local foundation = SynexCoreFactories.foundation({ platform = FakePlatform })
+      local failure = foundation.error('FIXTURE_FAILURE', 'fixture')
+
+      local function transportShape(values)
+        local count, maximum = 0, 0
+        for key in pairs(values) do
+          if type(key) == 'number' and math.type(key) == 'integer' and key > 0 then
+            count = count + 1
+            maximum = math.max(maximum, key)
+          end
+        end
+        return maximum == count and 'array' or 'map'
+      end
+
+      local legacyFailure = { (function() return nil, failure end)() }
+      assert(transportShape(legacyFailure) == 'map'
+        and legacyFailure[1] == nil and legacyFailure[2] == failure)
+
+      local publicFailure = { foundation.cfxResult(function()
+        return nil, failure
+      end) }
+      assert(transportShape(publicFailure) == 'array'
+        and #publicFailure == 2 and publicFailure[1] == false
+        and publicFailure[2] == failure)
+
+      local value = { accepted = true }
+      local metadata = { replayed = false }
+      local publicSuccess = table.pack(foundation.cfxResult(function()
+        return value, nil, metadata
+      end))
+      assert(publicSuccess.n == 3 and transportShape(publicSuccess) == 'array'
+        and publicSuccess[1] == value and publicSuccess[2] == false
+        and publicSuccess[3] == metadata)
+
+      local single = table.pack(foundation.cfxResult(function() return 'ready' end))
+      assert(single.n == 1 and single[1] == 'ready')
+
+      local trailingNil = table.pack(foundation.cfxResult(function()
+        return value, nil
+      end))
+      assert(trailingNil.n == 2 and trailingNil[1] == value and trailingNil[2] == nil)
+
+      return table.concat({transportShape(legacyFailure), transportShape(publicFailure),
+        transportShape(publicSuccess), tostring(publicFailure[1])}, ':')
+    `);
+    assert.equal(result, 'map:array:array:false');
+  } finally {
+    engine.global.close();
+  }
+});
+
 test('SHA-256 uses a deterministic canonical digest', async () => {
   const engine = await createKernelEngine(['foundation', 'persistence']);
   const digest = await engine.doString(`

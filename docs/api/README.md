@@ -10,6 +10,8 @@ local status, statusError = exports.synex_core:GetRuntimeStatus()
 
 All three exports capture the immediate calling resource as the principal. Console, client, and indirect calls without an invoking resource fail with `CALLER_REQUIRED`. A caller must have a valid `synex.resource.json`; returned facades are bound to its resource epoch and become stale after a restart.
 
+The internal result convention is `value, nil` or `nil, error`. At a raw cross-resource Cfx boundary, Synex replaces a `nil` slot with `false` only when a later meaningful return must be preserved. A raw failure therefore arrives as `false, error`; `value, nil` success remains effectively `value, nil`; and `value, nil, metadata` crosses as `value, false, metadata`. Check the second slot for a truthy error instead of inferring failure from the first value.
+
 Every public contract in `0.1.0` is marked `experimental`. The API version is `1.0.0`, but that does not make the framework release stable.
 
 > [!IMPORTANT]
@@ -98,6 +100,8 @@ local token, registerError = api.RPC.registerServer(contract, function(request, 
     return { value = request.value }, nil
 end)
 ```
+
+Registered RPC, service, hook, lifecycle, and other provider callbacks execute across a Cfx resource boundary when Core calls them. Return `value, nil` on success and `false, error` on failure. Do not return `nil, error` directly across that boundary: the leading hole can discard the error. A provider-side SDK adapter may perform this conversion, but this repository does not currently ship one.
 
 `registerServer` forces `network = none`. `registerNetwork` creates a client-to-server entry point only for an explicitly declared contract and applies closed-envelope validation, a cycle-safe structural payload walk before encoding, an encoded request-payload bound, a complete serialized response-envelope bound, per-source pending limits, token buckets, session/source-generation checks, contract validation, capability authorization, and response validation. Both transport bounds use `rpc.maximumPayloadBytes`. The handler receives a Core-owned monotonic `deadlineAt` capped by both the RPC timeout and the current local session-authority deadline. Handler errors are copied rather than mutated and cross the boundary only with a plain closed shape and a code listed in that contract's `errors`; every other provider failure is normalized to `INTERNAL_ERROR`.
 

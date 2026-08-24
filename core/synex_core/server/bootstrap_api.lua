@@ -612,8 +612,8 @@ factories.bootstrapApi = function(deps)
                         local guardedHandler = handler
                         namespace[name] = function(...)
                             local available, availabilityError = runtimeGate:requireAvailable()
-                            if not available then return nil, availabilityError end
-                            return guardedHandler(...)
+                            if not available then return false, availabilityError end
+                            return foundation.cfxResult(guardedHandler, ...)
                         end
                     end
                 end

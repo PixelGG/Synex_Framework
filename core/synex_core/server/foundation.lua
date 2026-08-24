@@ -107,6 +107,26 @@ factories.foundation = function(deps)
             and type(rawget(metatable, '__call')) == 'function'
     end
 
+    -- Cfx captures function-reference returns in an array configured with
+    -- `without_hole`. Any nil before the final return slot turns the tuple into
+    -- a map and the receiver's table.unpack then loses values. Keep internal
+    -- APIs on the canonical nil convention, but use false for absent public
+    -- cross-resource slots so errors and trailing metadata survive intact.
+    local function cfxResult(handler, ...)
+        if not isCallable(handler) then
+            error('Cfx result transport requires a callable handler', 2)
+        end
+        local values = table.pack(handler(...))
+        local finalValue = values.n
+        while finalValue > 0 and values[finalValue] == nil do
+            finalValue = finalValue - 1
+        end
+        for index = 1, finalValue do
+            if values[index] == nil then values[index] = false end
+        end
+        return table.unpack(values, 1, values.n)
+    end
+
     local gameTimerModulo = 0x100000000
     local gameTimerHalfRange = 0x80000000
     local previousGameTimer = nil
@@ -505,6 +525,7 @@ factories.foundation = function(deps)
         failureCode = failureCode,
         safeCall = safeCall,
         isCallable = isCallable,
+        cfxResult = cfxResult,
         jsonContainerKind = jsonContainerKind,
         nextId = deps.nextId or nextId,
         configureIds = configureIds,

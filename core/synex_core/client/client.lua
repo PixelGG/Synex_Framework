@@ -50,6 +50,12 @@ local function call(name, version, payload, options)
     return nil, response.error
 end
 
+local function exportedCall(...)
+    local value, callError = call(...)
+    if value == nil and callError ~= nil then return false, callError end
+    return value, callError
+end
+
 RegisterNetEvent(protocol.events.response, function(response)
     if source ~= 65535 then return end
     if type(response) ~= 'table' or response.wire ~= protocol.wire or type(response.requestId) ~= 'string' then return end
@@ -80,4 +86,4 @@ AddEventHandler('onResourceStop', function(resource)
     end
 end)
 
-exports('Call', call)
+exports('Call', exportedCall)

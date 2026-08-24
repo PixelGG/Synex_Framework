@@ -36,6 +36,7 @@ test('resource restart invalidates manifests, capabilities, contracts, consumer 
       local mode = 'v1'
       local states = { synex_fixture = 'started' }
       local handlers, exports, captures, restores = {}, {}, 0, 0
+      local invokingResource = 'synex_fixture'
       local timeouts, restoreUnavailable = {}, 0
       local restartDuringRestore, restoreConflict = false, 0
       local function runTimeouts()
@@ -91,6 +92,7 @@ test('resource restart invalidates manifests, capabilities, contracts, consumer 
         end,
         addEventHandler = function(name, handler) handlers[name] = handler end,
         export = function(name, handler) exports[name] = handler end,
+        invokingResource = function() return invokingResource end,
         getPlayers = function() return {} end,
         dropPlayer = function() error('fixture has no players') end,
         setTimeout = function(_, callback) timeouts[#timeouts + 1] = callback end,
@@ -199,6 +201,16 @@ test('resource restart invalidates manifests, capabilities, contracts, consumer 
       })
       assert(runtime:bind())
 
+      invokingResource = nil
+      local missingApi, missingApiError = exports.GetAPI('^1.0.0')
+      local missingInvoke, missingInvokeError = exports.Invoke(
+        'synex.fixture.old', '1.0.0', {}, {})
+      local missingStatus, missingStatusError = exports.GetRuntimeStatus()
+      assert(missingApi == false and missingApiError.code == 'CALLER_REQUIRED')
+      assert(missingInvoke == false and missingInvokeError.code == 'CALLER_REQUIRED')
+      assert(missingStatus == false and missingStatusError.code == 'CALLER_REQUIRED')
+      invokingResource = 'synex_fixture'
+
       local v1Facade = assert(api.getAPIForCaller('synex_fixture', '^1.0.0'))
       local v1Epoch = registries.owners:epoch('synex_fixture')
       local earlyCleanup = 0
@@ -223,7 +235,7 @@ test('resource restart invalidates manifests, capabilities, contracts, consumer 
         and criticalTombstone[1].code == 'RESOURCE_MANIFEST_UNAVAILABLE'
         and criticalTombstone[1].severity == 'error')
       local stale, staleError = v1Facade.Diagnostics.run()
-      assert(stale == nil and staleError.code == 'STALE_RESOURCE')
+      assert(stale == false and staleError.code == 'STALE_RESOURCE')
 
       mode = 'v2'
       states.synex_fixture = 'started'

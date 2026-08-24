@@ -264,6 +264,114 @@ test('event and hook authority is manifest-declared, namespace-owned, and restar
   }
 });
 
+test('hook providers preserve false-error failures across Cfx callbacks', async () => {
+  const engine = await createEngine([
+    'foundation',
+    'registries',
+    'lifecycle',
+    'contracts',
+    'security',
+    'messaging',
+  ]);
+  try {
+    const result = await engine.doString(`
+      local foundation = SynexCoreFactories.foundation({ platform = FakePlatform })
+      foundation.configureIds('hook-provider-errors')
+      local registries = SynexCoreFactories.registries({ foundation = foundation })
+      local owners = registries.owners
+      local coreEpoch = owners:activate('synex_core')
+      local observerEpoch = owners:activate('synex_observer')
+      local charactersEpoch = owners:activate('synex_characters')
+      local lifecycle = SynexCoreFactories.lifecycle({
+        platform = FakePlatform, foundation = foundation, owners = owners
+      })
+      local security = SynexCoreFactories.security({
+        platform = FakePlatform, foundation = foundation, coreResource = 'synex_core'
+      })
+      assert(security.capabilities:registerManifest('synex_core', {
+        capabilities = { request = {} },
+        events = { publish = {}, subscribe = {} },
+        hooks = { register = {}, run = {'synex.characters.*'} }
+      }))
+      assert(security.capabilities:registerManifest('synex_observer', {
+        capabilities = { request = {} },
+        events = { publish = {}, subscribe = {} },
+        hooks = { register = {'synex.characters.*'}, run = {} }
+      }))
+      assert(security.capabilities:registerManifest('synex_characters', {
+        capabilities = { request = {} },
+        events = { publish = {}, subscribe = {} },
+        hooks = { register = {'synex.characters.*'}, run = {} }
+      }))
+      local messaging = SynexCoreFactories.messaging({
+        platform = FakePlatform, foundation = foundation,
+        contracts = SynexCoreFactories.contracts({
+          foundation = foundation, protocol = SynexProtocol
+        }),
+        security = security, owners = owners, players = registries.players,
+        lifecycle = lifecycle, dependencies = lifecycle.dependencies,
+        protocol = SynexProtocol, config = {}, coreResource = 'synex_core'
+      })
+
+      local optionalFailure = setmetatable({ __cfx_functionReference = 'optional-hook-failure' }, {
+        __metatable = 'protected-cfx-funcref',
+        __call = function()
+          return false, foundation.error('OPTIONAL_HOOK_FAILURE', 'fixture optional failure')
+        end
+      })
+      assert(messaging.hooks:register(
+        'synex_observer', observerEpoch, 'synex.characters.false_error', optionalFailure,
+        { priority = 20 }))
+      assert(messaging.hooks:register(
+        'synex_characters', charactersEpoch, 'synex.characters.false_error', function(value)
+          value.continued = true
+          return { action = 'patch', value = value }
+        end, { priority = 10, required = true }))
+      local continued = assert(messaging.hooks:run(
+        'synex_core', coreEpoch, 'synex.characters.false_error', {}))
+      assert(continued.continued == true)
+
+      local requiredFailure = setmetatable({ __cfx_functionReference = 'required-hook-failure' }, {
+        __metatable = 'protected-cfx-funcref',
+        __call = function()
+          return false, foundation.error('REQUIRED_PROVIDER_FAILURE', 'fixture required failure')
+        end
+      })
+      assert(messaging.hooks:register(
+        'synex_characters', charactersEpoch, 'synex.characters.required_failure',
+        requiredFailure, { required = true }))
+      local rejected, rejectedError = messaging.hooks:run(
+        'synex_core', coreEpoch, 'synex.characters.required_failure', {})
+      assert(rejected == nil and rejectedError.code == 'REQUIRED_HOOK_FAILED')
+
+      assert(messaging.hooks:register(
+        'synex_observer', observerEpoch, 'synex.characters.internal_failure', function()
+          return nil, foundation.error('INTERNAL_PROVIDER_FAILURE', 'fixture internal failure')
+        end))
+      assert(messaging.hooks:register(
+        'synex_characters', charactersEpoch, 'synex.characters.internal_failure', function(value)
+          value.internalContinued = true
+          return { action = 'patch', value = value }
+        end, { required = true }))
+      local internalContinued = assert(messaging.hooks:run(
+        'synex_core', coreEpoch, 'synex.characters.internal_failure', {}))
+      assert(internalContinued.internalContinued == true)
+
+      local logged = {}
+      for _, record in ipairs(CapturedLogs) do
+        if record.message == 'hook failed' then logged[record.fields.code] = true end
+      end
+      assert(logged.OPTIONAL_HOOK_FAILURE and logged.REQUIRED_PROVIDER_FAILURE
+        and logged.INTERNAL_PROVIDER_FAILURE)
+      return table.concat({tostring(continued.continued), rejectedError.code,
+        tostring(internalContinued.internalContinued)}, ':')
+    `);
+    assert.equal(result, 'true:REQUIRED_HOOK_FAILED:true');
+  } finally {
+    engine.global.close();
+  }
+});
+
 test('hook transport bounds reject oversized inputs, contexts, and provider patches', async () => {
   const engine = await createEngine([
     'foundation',

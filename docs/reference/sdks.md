@@ -18,7 +18,9 @@ local snapshot, requestError = client:request('synex.accounts.get_snapshot', {
 })
 ```
 
-`request(name, ...)` selects the latest generated descriptor. `requestVersion(name, version, ...)` pins an exact descriptor. Neither path bypasses runtime contract validation or capability policy.
+`request(name, ...)` selects the latest generated descriptor. `requestVersion(name, version, ...)` pins an exact descriptor. Both methods normalize a raw `Invoke` failure from Cfx's `false, error` transport form back to the SDK convention `nil, error`; callers should check `requestError`. Neither path bypasses runtime contract validation or capability policy.
+
+This consumer SDK does not adapt callbacks registered by a provider. A provider callback crossing back into Core must return `false, error` on failure, or the provider must supply its own boundary adapter; the repository currently includes no provider-side adapter.
 
 Source and usage notes live in [`packages/sdk-lua`](../../packages/sdk-lua/README.md).
 

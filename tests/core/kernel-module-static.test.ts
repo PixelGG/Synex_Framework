@@ -112,6 +112,10 @@ test('GetAPI facade categories and kernel exports preserve their public surface'
     .map((match) => match[1])
     .sort();
   assert.deepEqual(exports, ['GetAPI', 'GetRuntimeStatus', 'Invoke']);
+  assert.match(api, /return foundation\.cfxResult\(guardedHandler, \.\.\.\)/u);
+  assert.match(resourceEvents, /platform\.export\('GetAPI', cfxExport\(/u);
+  assert.match(resourceEvents, /platform\.export\('Invoke', cfxExport\(/u);
+  assert.match(resourceEvents, /platform\.export\('GetRuntimeStatus', cfxExport\(/u);
   const contracts = [...api.matchAll(/\['(synex\.[^']+)'\]\s*=\s*function/gu)]
     .map((match) => match[1])
     .sort();
@@ -134,6 +138,11 @@ test('client RPC responses are accepted only from the server sentinel source', a
     handler.indexOf('source ~= 65535') < handler.indexOf('pending[response.requestId]'),
     'response authenticity must be checked before pending state is accessed',
   );
+  assert.match(
+    client,
+    /local function exportedCall\([\s\S]*?value == nil and callError ~= nil[\s\S]*?return false, callError/u,
+  );
+  assert.match(client, /exports\('Call', exportedCall\)/u);
 });
 
 test('boot validates UTC and fail-closes named recurring worker registration', async () => {

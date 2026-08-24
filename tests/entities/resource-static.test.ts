@@ -192,6 +192,8 @@ test('official Core API consumers accept only genuine Cfx-callable exports', asy
   }
   assert.match(entityService, /foundation\.isCallable\(api\.Audit\.append\)/u);
   assert.equal((control.match(/if not isCallable\(handler\)/gu) ?? []).length, 2);
+  assert.match(control, /if not ok or readError or value == nil then/u);
+  assert.doesNotMatch(control, /readError ~= nil/u);
 });
 
 test('control plane has every read-only section with ACE, masking, and payload bounds', async () => {
