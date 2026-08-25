@@ -1,8 +1,8 @@
 # Getting started
 
-Synex `0.1.0` is an experimental source release, not a packaged drag-and-drop server distribution. The current Production-Beta candidate covers `synex_core` only. `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, every later resource, and all non-Core libraries, bridges, SDK integrations, and examples are experimental rework snapshots or scaffolds entirely outside that certification boundary.
+Synex `0.1.0` is an experimental source release, not a packaged drag-and-drop server distribution. The accepted Production-Beta profile covers `synex_core` only. `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, every later resource, and all non-Core libraries, bridges, SDK integrations, and examples are experimental rework snapshots or scaffolds entirely outside that certification boundary.
 
-This guide installs only the Core candidate. Do not add `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, compatibility bridges, or other downstream modules to a deployment that is intended to match the documented Core acceptance profile.
+This guide installs only the accepted Core profile. Do not add `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, compatibility bridges, or other downstream modules to a deployment that is intended to match the documented Core acceptance profile.
 
 ## Requirements
 
@@ -36,7 +36,7 @@ npm run certify
 
 ## Place the resources
 
-FXServer must discover each runnable directory as a resource. To exercise the current Core-only candidate profile, deploy:
+FXServer must discover each runnable directory as a resource. To run the accepted Core-only profile, deploy:
 
 ```text
 core/synex_core
@@ -70,7 +70,7 @@ ensure oxmysql
 ensure synex_core
 ```
 
-The sequential start order is intentional. Core validates installed Synex manifests and critical dependencies before it opens admission. A Core-only candidate installation includes no downstream critical resource; adding an experimental resource can introduce new critical dependencies and makes that deployment different from the acceptance target.
+The sequential start order is intentional. Core validates installed Synex manifests and critical dependencies before it opens admission. The accepted Core-only installation includes no downstream critical resource; adding an experimental resource can introduce new critical dependencies and makes that deployment different from the accepted profile.
 
 Configure the database connection according to the installed oxmysql release before starting `oxmysql`. Keep credentials outside this repository and never put them in `config/default.json`. Grant the dedicated principal the normal schema/DML rights required by Core and the migration-specific `CREATE ROUTINE`, table `ALTER`, `EXECUTE`, and `ALTER ROUTINE` rights listed above; do not look for a MariaDB `DROP ROUTINE` privilege. The Core transaction model expects oxmysql isolation level `2` (`READ COMMITTED`); set it explicitly and verify the effective server configuration rather than relying on an adapter default.
 
@@ -108,7 +108,7 @@ The current [`examples/synex_example`](../examples/synex_example/) and [resource
 
 - There is no packaged release installer or automatic updater.
 - Repository tests do not launch FXServer or a FiveM client. Current-tree live-database, fresh-boot, public-API, capacity, restart, crash-recovery, and stale-facade evidence is separate from the headless suite. See [Testing](testing.md#current-acceptance-baseline).
-- Production-Beta acceptance is in its frozen completion phase. Database-outage/recovery, the final automated run, documentation/final-diff/secret review, and publication to `main` have passed. Only one client join/disconnect/reconnect smoke test remains open, so the release decision remains **NO-GO**.
+- The documented Core-only profile reached Production Beta on 2026-08-25. Database-outage/recovery, the final automated run, documentation/final-diff/secret review, publication to `main`, and the real-client join/clean-disconnect/reconnect smoke passed for the accepted Core tree. This does not certify another host, dependency combination, topology, or downstream resource.
 - A lost oxmysql callback does not imply automatic recovery. Admission remains closed; after restoring the database service, restart the complete FXServer process before reopening admission.
 - Public contracts and the consumer API surface remain `experimental` even when the Core runtime reaches Production-Beta acceptance.
 - MySQL, multi-instance operation, `kick_old`, `replace_old`, and `allow` are outside the initial acceptance target. Strict production configuration accepts only `deny_new`.

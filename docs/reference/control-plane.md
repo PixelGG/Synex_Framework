@@ -1,7 +1,7 @@
 # Read-only control plane
 
 > [!WARNING]
-> `synex_control` is an experimental rework snapshot. It is unsupported, excluded from the `synex_core` Production-Beta deployment and NUI certification boundary, and must not be presented as an accepted operator interface.
+> `synex_control` is an experimental rework snapshot. It is unsupported, excluded from the accepted `synex_core` Production-Beta deployment and NUI certification boundary, and must not be presented as an accepted operator interface.
 
 The current snapshot is a dependency-free NUI for bounded Synex operational snapshots. It is a read surface, not an admin dashboard, and contains no actions that mutate players, resources, configuration, entities, accounts, or database state.
 
@@ -9,7 +9,7 @@ Everything below describes the checked-in historical snapshot. It is not operato
 
 ## Historical access design
 
-The snapshot expected Core to start before `synex_control` and used the following ACE. This block is retained for source review only and must not be applied to the Core candidate:
+The snapshot expected Core to start before `synex_control` and used the following ACE. This block is retained for source review only and must not be applied to the accepted Core profile:
 
 ```cfg
 ensure synex_core

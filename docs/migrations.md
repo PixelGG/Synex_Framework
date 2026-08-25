@@ -2,7 +2,7 @@
 
 Synex migrations are resource-owned, forward-only SQL files. Each runnable data-owning resource declares its ordered files in `synex.resource.json`. The current `synex_core` manifest declares 26 migrations in strict order.
 
-Only those 26 Core migrations belong to the current Production-Beta candidate. Migration files under `synex_groups`, `synex_accounts`, `synex_entities`, or any future downstream resource are experimental rework snapshots; they are retained for review and repository regression tests but are not part of the Core candidate installation or upgrade path.
+Only those 26 Core migrations belong to the accepted Production-Beta profile. Migration files under `synex_groups`, `synex_accounts`, `synex_entities`, or any future downstream resource are experimental rework snapshots; they are retained for review and repository regression tests but are not part of the accepted Core installation or upgrade path.
 
 ## Discovery and execution
 

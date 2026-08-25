@@ -8,7 +8,7 @@ The current compatibility snapshots explore an optional migration aid. They expo
 The current implementation matrix is `Partial` and `Deprecated` by design. Those labels describe only the checked-in snapshot; they are not support levels or a claim that an unchanged legacy resource will run. Consumers would need to change their export target from `qb-core`, `qbx_core`, or `es_extended` to the selected Synex bridge and handle the explicit `(result, error)` return convention.
 
 > [!CAUTION]
-> Every command, capability example, export call, and configuration fragment below is retained only to explain the historical snapshot during rework. It is not current installation or migration guidance. Do not start these bridges or their downstream dependencies in the Core candidate profile.
+> Every command, capability example, export call, and configuration fragment below is retained only to explain the historical snapshot during rework. It is not current installation or migration guidance. Do not start these bridges or their downstream dependencies in the accepted Core Production-Beta profile.
 
 ## Snapshot component catalog
 

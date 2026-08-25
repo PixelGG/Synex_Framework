@@ -1,9 +1,9 @@
 # Groups and memberships
 
 > [!WARNING]
-> `synex_groups` requires a complete rework. The entire current resource—including its manifest, contracts, service surface, runtime ownership, workers, migrations, tests, and documentation—is provisional. It is unsupported, excluded from the `synex_core` Production-Beta candidate, and must not be deployed or advertised as ready.
+> `synex_groups` requires a complete rework. The entire current resource—including its manifest, contracts, service surface, runtime ownership, workers, migrations, tests, and documentation—is provisional. It is unsupported, excluded from the accepted `synex_core` Production-Beta profile, and must not be deployed or advertised as ready.
 
-The checked-in snapshot models durable groups, grades, grade capability rules, primary selection, and versioned user/character memberships. It is regression input for the rework, not its accepted design. Nothing in this page freezes an API, table, event, capability, migration, or compatibility promise. The rework starts only after the Core Production-Beta gate is complete; its own Security, Runtime, and Database acceptance must then pass before any maturity claim changes.
+The checked-in snapshot models durable groups, grades, grade capability rules, primary selection, and versioned user/character memberships. It is regression input for the rework, not its accepted design. Nothing in this page freezes an API, table, event, capability, migration, or compatibility promise. The Core Production-Beta gate is complete, so the groups rework may begin; its own Security, Runtime, and Database acceptance must pass before any maturity claim changes.
 
 ## Rework boundary and acceptance
 

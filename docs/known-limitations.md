@@ -4,17 +4,17 @@ These boundaries are part of the current `0.1.x` release decision. They must not
 
 ## Release and support boundary
 
-- No stable Synex `1.0` release exists yet. The `synex_core` Production-Beta gate is in its [frozen completion phase](release-readiness.md). Recovery, automation, documentation/final-diff/secret review, and publication to `main` have passed. Only the client join/disconnect/reconnect smoke remains open, so the release decision is **NO-GO**.
+- No stable Synex `1.0` release exists yet. The documented `synex_core` profile passed its frozen [Production-Beta gate](release-readiness.md) on 2026-08-25. This is a Production-ready beta of Core within the supported profile, not a framework-wide stable release.
 - The beta target covers `synex_core` only. `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, compatibility bridges, examples, and every other downstream resource/library are experimental rework snapshots or scaffolds. They are unsupported for the Core beta and must not be started or advertised as production-ready components.
 - Public contracts are marked `experimental`; breaking API, schema, and migration changes remain possible before a stable release.
 - There is no packaged installer, automatic updater, supported rollback migration, in-place downgrade, or zero-downtime upgrade path. Deployments use reviewed resource copies and forward-only migrations. Backout requires a separately preserved or restored schema compatible with the older Core; older code must never run against a schema already advanced to migration `026`.
 
-## Candidate deployment profile
+## Accepted deployment profile
 
-- MariaDB `11.8.8` is the Production-Beta database target. MySQL `8.4` is a documented compatibility target but remains outside the candidate until the complete live gate runs against MySQL.
+- MariaDB `11.8.8` is the Production-Beta database target. MySQL `8.4` is a documented compatibility target but remains outside the accepted profile until the complete live gate runs against MySQL.
 - The initial target topology is one active Core instance using `deny_new`. Multi-instance operation, cross-instance replacement, and `kick_old` remain outside the beta profile until the dedicated two-instance gate passes.
 - Exact FXServer artifact, oxmysql version, host operating system, and configuration must be recorded in release evidence. Passing headless tests on another environment does not accept an operator deployment.
-- Automated repository tests do not replace a real FiveM client. The frozen Beta scope requires one exact-candidate join, disconnect, and reconnect smoke test. Aborted-deferral, repeated-retry, and active-player restart scenarios remain later hardening work unless a release-blocking defect appears.
+- Automated repository tests do not replace a real FiveM client. The accepted Core revision completed its required exact-candidate join, clean disconnect, reconnect, and final cleanup smoke test. Aborted-deferral, repeated-retry, and active-player restart scenarios remain later hardening work unless a release-blocking defect appears.
 - A long server soak, permanent evidence runner, historical supported-version upgrade drill, extensive backup/restore certification, and additional non-critical ABI coverage are post-Beta promotion work. Their deferral does not broaden the supported Beta profile or remove normal operator backup responsibilities.
 
 ## Runtime and operations
@@ -33,8 +33,8 @@ These boundaries are part of the current `0.1.x` release decision. They must not
 - Logs and acceptance evidence must remain redacted. Never commit Cfx keys, database credentials, raw player identifiers, private endpoints, local test-server state, or database dumps.
 - The committed archive/retention behavior is not a legal compliance program. Operators must establish lawful access, retention, erasure, disclosure, and incident-response processes for their jurisdiction.
 
-Use the [release-readiness gate](release-readiness.md) as the canonical decision source and the [backup/restore runbook](backup-and-restore.md) before any candidate deployment.
+Use the [release-readiness gate](release-readiness.md) as the canonical decision source and the [backup/restore runbook](backup-and-restore.md) before any Production-Beta deployment.
 
-## Current candidate evidence
+## Current acceptance evidence
 
-Current-tree repository, live-database, fresh-boot, public-API, capacity, restart, crash-recovery, stale-facade, database-outage/recovery, final automated, documentation/final-diff/secret-review, and publication-to-`main` evidence has passed. Only one real-client join/disconnect/reconnect smoke test remains open. See [Release readiness](release-readiness.md) for the canonical status.
+Commit `7ad4b72ee9bcd0a2a0481cfacfe5f807eb1b3ec5` with Core tree `9f0960f1e27fe43195ae4602cb2ef447cbc0509b` passed repository, live-database, fresh-boot, public-API, capacity, restart, crash-recovery, stale-facade, database-outage/recovery, final automated, real-client, and review gates. The client smoke completed both nine-stage connections, clean disconnect, reconnect, and final cleanup with Doctor `PASS`, 26/26 migrations, and database aggregate `3 / 0 / 0 / 0`. See [Release readiness](release-readiness.md) for the canonical status and exact support boundary.

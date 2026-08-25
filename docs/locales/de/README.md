@@ -23,7 +23,7 @@
 <p align="center">
   <img alt="Ziel: FiveM" src="https://img.shields.io/badge/target-FiveM-5ed7ff?style=flat-square&amp;labelColor=111827">
   <img alt="Version: 0.1.0" src="https://img.shields.io/badge/version-0.1.0-4b94ff?style=flat-square&amp;labelColor=111827">
-  <img alt="Reifegrad: experimental" src="https://img.shields.io/badge/maturity-experimental-8b73ff?style=flat-square&amp;labelColor=111827">
+  <img alt="Core-Reifegrad: Production Beta" src="https://img.shields.io/badge/core-Production--Beta-8b73ff?style=flat-square&amp;labelColor=111827">
   <a href="https://github.com/PixelGG/Synex_Framework/actions/workflows/framework-ci.yml?query=branch%3Amain"><img alt="Framework CI" src="https://github.com/PixelGG/Synex_Framework/actions/workflows/framework-ci.yml/badge.svg?branch=main"></a>
   <a href="../../../LICENSE"><img alt="Lizenz: AGPL-3.0-only" src="https://img.shields.io/badge/license-AGPL--3.0--only-45c9a5?style=flat-square&amp;labelColor=111827"></a>
 </p>
@@ -32,24 +32,25 @@
   <img src="../../../.github/assets/readme/runtime-flow.svg" width="1200" alt="Modularer Synex-Runtime-Flow">
 </p>
 
-> [!CAUTION]
-> **Core-Production-Beta-Kandidat — IN PROGRESS / NO-GO.** Synex `0.1.0` ist weiterhin ein experimenteller Source-Release. Nur `synex_core` wird für das erste Production-Beta-Profil abgenommen; der exakte aktuelle Kandidat hat noch nicht alle Pflicht-Gates bestanden. Öffentliche Contracts bleiben `experimental`. Es gibt keinen frameworkweiten Stable- oder Production-Support-Anspruch.
+> [!IMPORTANT]
+> **Synex Core — PRODUCTION BETA.** Der exakte `synex_core`-Kandidat hat das erste Core-only-Production-Beta-Profil bestanden. Synex `0.1.0` bleibt ein experimenteller Source-Release mit `experimental` markierten öffentlichen Contracts. Dies ist weder ein Stable-/1.0-Release noch eine Aussage zur frameworkweiten Reife oder ein allgemeiner Production-Support-Anspruch.
 
 ## Aktueller Prüfstand
 
-`synex_core` befindet sich in der finalen Production-Beta-Abnahme. Die Beta-Ziellinie ist eingefroren: Nur die folgenden fünf Abschlussarbeiten können diese Entscheidung noch blockieren, sofern kein kritischer Produktfehler entdeckt wird.
+`synex_core` hat die eingefrorene Production-Beta-Ziellinie am **25.08.2026** für das exakte Profil unten bestanden. Die Entscheidung gilt ausschließlich für Core-Commit `7ad4b72ee9bcd0a2a0481cfacfe5f807eb1b3ec5` und Core-Tree `9f0960f1e27fe43195ae4602cb2ef447cbc0509b`.
 
 | Abschlussarbeit | Aktueller Stand |
 | --- | --- |
 | Abschließender Datenbankausfall- und Recovery-Lauf | PASS |
-| Vollständiger automatisierter Abschlusslauf | PASS — 416 bestanden, 0 fehlgeschlagen, 19 erwartete Live-DB-Skips; Security: 0 Findings |
+| Vollständiger automatisierter Abschlusslauf | PASS — `npm run check`; 416 bestanden, 0 fehlgeschlagen, 19 erwartete Live-DB-Skips; Security: 0 Findings; Audit: 0 Schwachstellen |
 | Synchronisierung der gesamten Repository-Dokumentation | PASS |
-| Client-Smoke-Test: Join, Disconnect, Reconnect | PENDING |
+| Client-Smoke-Test: Join, Disconnect, Reconnect | PASS — geordnete neunstufige Join-Pipeline, sauberer Disconnect, Reconnect und finales Cleanup |
 | Abschließender Diff- und Secret-Check; Commit und Veröffentlichung auf `main` | PASS |
 
-- **VERIFIZIERTER ABSCHLUSS.** Datenbankausfall-Recovery, automatisierter Abschlusslauf, Dokumentationssynchronisierung, finaler Diff- und Secret-Check sowie die Veröffentlichung auf `main` sind abgeschlossen. Die Automation bestand mit 416 bestandenen, 0 fehlgeschlagenen und 19 erwarteten Live-DB-Skips sowie 0 Security-Findings.
-- **KEIN VORWEGGENOMMENER PASS.** Nur der Client-Smoke-Test des exakten Kandidaten steht noch aus. Bis Join, Disconnect und Reconnect erfolgreich sind, bleibt die Production-Beta-Entscheidung **IN PROGRESS / NO-GO**.
-- **NICHT ZERTIFIZIERT.** MySQL und Multi-Instance-Betrieb einschließlich `kick_old` gehören nicht zum ersten Kandidatenprofil.
+- **PRODUCTION-BETA ABGENOMMEN.** Datenbankausfall-Recovery, automatisierter Abschlusslauf, Dokumentationssynchronisierung, Client-Smoke-Test, Abschlussprüfung und Veröffentlichungs-Gates sind für das exakte Core-only-Profil bestanden.
+- **LIVE-CLIENT VERIFIZIERT.** Der Join durchlief alle neun Verbindungsstufen in der vorgesehenen Reihenfolge; anschließend folgten ein sauberer Disconnect und ein erfolgreicher Reconnect. Doctor meldete `PASS`, alle 26 Migrationen waren angewendet und das finale Cleanup hinterließ 3 geschlossene Sessions, 0 offene Sessions sowie 0 aktive Session- oder Admission-Leases.
+- **BEGRENZTER REIFEGRAD.** Diese Abnahme macht Synex nicht zu Stable/1.0, zertifiziert nicht das gesamte Framework und ändert die öffentlichen Core-Contracts nicht von `experimental`.
+- **NICHT ZERTIFIZIERT.** MySQL und Multi-Instance-Betrieb einschließlich `kick_old` gehören nicht zum abgenommenen Production-Beta-Profil.
 - **AUSSERHALB DES SCOPES.** Jede Resource, Library, Bridge und jedes Beispiel hinter `synex_core` ist ein experimenteller Rework-Snapshot oder Scaffold und gehört nicht zur Core-Zertifizierung.
 
 <details>
@@ -67,9 +68,9 @@ Diese Prüfungen gehören zu den Arbeiten für den späteren Austritt aus der Be
 
 [Release-Gate](../../release-readiness.md) &middot; [Testabdeckung](../../testing.md) &middot; [Bekannte Grenzen](../../known-limitations.md)
 
-### Erstes Zielprofil für die Abnahme
+### Abgenommenes Production-Beta-Profil
 
-| Grenze | Kandidatenwert |
+| Grenze | Abgenommener Wert |
 | --- | --- |
 | Produkt | ausschließlich `synex_core` |
 | Host | Windows |
@@ -79,27 +80,27 @@ Diese Prüfungen gehören zu den Arbeiten für den späteren Austritt aus der Be
 | Topologie | eine aktive Core-Instanz |
 | Production-Policy | `synex_environment "production"`, `synex_strict "1"`, `synex_duplicate_policy "deny_new"` |
 
-Diese Werte definieren den Kandidaten und sind noch keine PASS-Aussage.
+Die Production-Beta-Entscheidung gilt nur innerhalb dieser Grenzen. Andere Plattformen, Abhängigkeitsversionen, Topologien oder Policies benötigen eigene Abnahmenachweise.
 
 ## Core-Beta-Scope
 
 | Bereich | Pfad | Aktuelle Rolle |
 | --- | --- | --- |
-| Runtime-Kandidat | [`synex_core`](../../../core/synex_core/) | Boot, Connection-/Session-/Character-Lifecycle, Contracts, RPC, Events, Hooks, Services, Capabilities, persistente Access-Policy, State, Reliability, Audit, Metrics, Health und eigene Migrationen |
+| Abgenommene Core-Runtime | [`synex_core`](../../../core/synex_core/) | Boot, Connection-/Session-/Character-Lifecycle, Contracts, RPC, Events, Hooks, Services, Capabilities, persistente Access-Policy, State, Reliability, Audit, Metrics, Health und eigene Migrationen |
 | Contract-Pipeline | [`packages/contracts`](../../../packages/contracts/) | Kanonische Inputs und deterministisch generierte Runtime-/Referenzartefakte für die Core-Entwicklung |
 | SDKs und Tools | [`packages`](../../../packages/) / [`tools`](../../../tools/) | Generierte Clients/Typen, Validierung, Migration, Security, Certification und Tests; keine separat zertifizierten Server-Features |
 
-Nur `core/synex_core` kann im aktuellen Durchlauf Production-Beta-ready werden. Die öffentliche Core-API bleibt auch nach einem bestandenen Beta-Gate experimentell.
+Nur `core/synex_core` ist für das exakte Profil oben als Production-Beta-ready abgenommen. Die öffentliche Core-API bleibt experimentell.
 
 ### Downstream-Rework-Grenze
 
-`synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, alle späteren oder sonstigen separaten Verzeichnisse unter `resources/`, sämtliche Libraries und Bridges unter `libraries/` (einschließlich `synex_bridge`) sowie die ausführbaren Beispiele sind **experimentelle Rework-Snapshots oder Scaffolds**. Sie sind vollständig aus der Core-Beta ausgeschlossen und dürfen nicht als zertifizierte Komponenten gestartet, gebündelt oder beworben werden. OneSync-abhängiges Downstream-Verhalten liegt ebenfalls außerhalb dieses Core-only-Profils.
+`synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, alle späteren oder sonstigen separaten Verzeichnisse unter `resources/`, sämtliche Libraries und Bridges unter `libraries/` (einschließlich `synex_bridge`) sowie die ausführbaren Beispiele stehen vor einem **Rework**; ihre aktuellen Inhalte sind experimentelle Snapshots oder Scaffolds. Sie sind vollständig aus der Core-Beta ausgeschlossen und dürfen nicht als zertifizierte Komponenten gestartet, gebündelt oder beworben werden. OneSync-abhängiges Downstream-Verhalten liegt ebenfalls außerhalb dieses Core-only-Profils.
 
 Das gilt auch für `synex_character`, `synex_identity`, `synex_inventory`, `synex_banking`, `synex_phone`, `synex_radio`, `synex_jobs`, `synex_shops`, `synex_vehicles`, `synex_garages` und `synex_ui`. Ein Verzeichnisname belegt kein fertiges Feature. Der vorhandene Character-/Session-Lifecycle gehört zu `synex_core`.
 
 ## Einstieg
 
-Das erste Kandidatenprofil benötigt Windows, FXServer-Build `35245`, `oxmysql 2.14.1`, MariaDB `11.8.8`, eine stabile eindeutige `synex_instance_id`, strikten Production-Modus und `deny_new`. Node.js `>=22.12.0` mit npm `>=10.0.0` wird für Repository-Tools und Tests benötigt, nicht für die Lua-Runtime.
+Das abgenommene Production-Beta-Profil benötigt Windows, FXServer-Build `35245`, `oxmysql 2.14.1`, MariaDB `11.8.8`, eine stabile eindeutige `synex_instance_id`, strikten Production-Modus und `deny_new`. Node.js `>=22.12.0` mit npm `>=10.0.0` wird für Repository-Tools und Tests benötigt, nicht für die Lua-Runtime.
 
 ```bash
 git clone https://github.com/PixelGG/Synex_Framework.git
@@ -111,7 +112,7 @@ npm run security
 npm run certify
 ```
 
-Diese Befehle sind Entwicklungs-Gates und allein kein Production-Beta-Nachweis. Das Repository ist ein Entwicklungs-Monorepo und kein fertiges Server-Paket. Für den ersten Kandidaten dürfen nur `oxmysql` und `synex_core` deployed werden. Details stehen im [Getting-started-Guide](../../getting-started.md), in der [Core-Konfigurationsvorlage](../../../examples/server.cfg.example) und im [Release-Gate](../../release-readiness.md).
+Diese Befehle sind Entwicklungs-Gates und allein kein Production-Beta-Nachweis. Das Repository ist ein Entwicklungs-Monorepo und kein fertiges Server-Paket. Für das abgenommene Profil dürfen nur `oxmysql` und `synex_core` deployed werden. Details stehen im [Getting-started-Guide](../../getting-started.md), in der [Core-Konfigurationsvorlage](../../../examples/server.cfg.example) und im [Release-Gate](../../release-readiness.md).
 
 ## Dokumentation
 

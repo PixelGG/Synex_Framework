@@ -2,7 +2,7 @@
 
 Status: Accepted
 
-Scope: architecture direction. Only the `synex_core` side is in the current Production-Beta candidate; every named foundation or gameplay resource is a rework target, not an accepted implementation.
+Scope: architecture direction. Only the `synex_core` side is in the accepted Production-Beta profile; every named foundation or gameplay resource is a rework target, not an accepted implementation.
 
 ## Context
 

@@ -6,7 +6,7 @@ Scope: the relational and forward-only direction is accepted for Core. Non-Core 
 
 ## Decision
 
-Use InnoDB, relational columns for queried domain state, positional parameters, explicit transactions, optimistic versions, and forward-only checksummed migrations. Use JSON only for bounded opaque metadata. The first Core candidate targets MariaDB `11.8.8`; MySQL and any downstream schema require separate acceptance.
+Use InnoDB, relational columns for queried domain state, positional parameters, explicit transactions, optimistic versions, and forward-only checksummed migrations. Use JSON only for bounded opaque metadata. The accepted initial Core Production-Beta profile targets MariaDB `11.8.8`; MySQL and any downstream schema require separate acceptance.
 
 ## Consequences
 

@@ -15,7 +15,7 @@ The internal result convention is `value, nil` or `nil, error`. At a raw cross-r
 Every public contract in `0.1.0` is marked `experimental`. The API version is `1.0.0`, but that does not make the framework release stable.
 
 > [!IMPORTANT]
-> The Production-Beta candidate covers the `synex_core` runtime only. Its three ABI exports and caller-bound facade remain experimental integration surfaces. Catalog entries and providers owned by `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, bridges, SDKs, examples, or other downstream modules are rework snapshots outside certification.
+> The accepted Production-Beta profile covers the `synex_core` runtime only. Its three ABI exports and caller-bound facade remain experimental integration surfaces. Catalog entries and providers owned by `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, bridges, SDKs, examples, or other downstream modules are rework snapshots outside certification.
 
 ## Facade groups
 
@@ -43,7 +43,7 @@ This table is a navigation aid, not a substitute for a contract. Internal factor
 A normally returned database-probe failure can recover automatically only after two consecutive successful probes and successful dependency/instance reconciliation. The five-second watchdog cannot cancel an oxmysql `Await`. If oxmysql `2.14.1` loses the callback for a rejected pool `getConnection()`, Core stays fail-closed even if an independent query later succeeds; no public API may clear that fence or start a recovery loop. Restore and verify MariaDB, then restart the complete FXServer process once. A raw Core or oxmysql-only restart is not supported for this incident.
 
 > [!IMPORTANT]
-> The API remains experimental even if the Core runtime reaches Production-Beta. Current-candidate database-outage/recovery, automated, documentation/final-diff/secret-review, and publication-to-`main` stages have passed. Only the client join/disconnect/reconnect smoke remains open, so the aggregate release decision remains **NO-GO**.
+> The API remains experimental even though the documented Core-only runtime profile reached Production Beta on 2026-08-25. Database-outage/recovery, automated, review, publication, and client join/clean-disconnect/reconnect gates passed for the accepted Core tree. This runtime maturity decision does not make the public contracts stable or place any downstream provider inside the accepted profile.
 
 `Idempotency.run` uses a fail-closed, at-most-once execution claim. Its optional settings object is closed and plain: `lockSeconds` is an integer from 5 through 300, `ttlSeconds` is an integer from `lockSeconds` through 604800, and `maximumRequestBytes` / `maximumResponseBytes` are integers from 1 through 65536. Requests and results must be bounded plain JSON before encoding. A completed record is replayed while its tombstone exists; failed or expired pending executions are never automatically reclaimed. They return `IDEMPOTENCY_FAILED` or `IDEMPOTENCY_INDETERMINATE` and require domain reconciliation. `ttlSeconds` bounds response-retention metadata; it does not make reusing an existing key safe. Core intentionally has no automatic tombstone reaper: deleting an expired completed/failed row would make the key executable again without domain-specific proof that reuse is safe.
 

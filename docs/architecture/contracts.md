@@ -28,4 +28,4 @@ Internal exception text and database details are never returned to clients. Gene
 
 ## Stability boundary
 
-Only the three Core ABI exports and their documented caller-bound facade are part of the current Core candidate's integration boundary, and that boundary is still experimental in `0.1.0`. Versioned contracts/services and generated SDK surfaces are public in the source-level sense but remain outside Production-Beta support. Internal factory tables, registries, persistence adapters, and resource-local events may change without compatibility guarantees.
+Only the three Core ABI exports and their documented caller-bound facade are part of the accepted Core Production-Beta integration boundary, and that boundary is still experimental in `0.1.0`. Versioned contracts/services and generated SDK surfaces are public in the source-level sense but remain outside Production-Beta support. Internal factory tables, registries, persistence adapters, and resource-local events may change without compatibility guarantees.

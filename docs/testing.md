@@ -2,7 +2,7 @@
 
 Synex uses Node.js' built-in test runner. TypeScript tests compile into `.build/tests`; Lua modules run headlessly inside Wasmoon with deterministic platform fakes.
 
-The Production-Beta acceptance decision covers `synex_core` only. Repository suites for `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, bridges, SDKs, examples, or migration tooling are regression evidence for rework snapshots; a passing suite does not add those components to the Core candidate deployment profile.
+The Production-Beta acceptance decision covers `synex_core` only. Repository suites for `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, bridges, SDKs, examples, or migration tooling are regression evidence for rework snapshots; a passing suite does not add those components to the accepted Core deployment profile.
 
 ## Local workflow
 
@@ -31,18 +31,18 @@ The test runner fails if the selected compiled suite does not exist. This preven
 
 ## Current acceptance baseline
 
-The Production-Beta scope is frozen around the Core-only single-instance profile. Current-tree repository, live-database, fresh-boot, public-API, capacity, restart, crash-recovery, stale-facade, database-outage/recovery, final automated, documentation/final-diff/secret-review, and publication-to-`main` evidence has passed. Only one real-client join/disconnect/reconnect smoke test remains open, so the release decision remains **NO-GO**. Manual FXServer results remain separate from repository automation because the ordinary test suite does not launch FXServer or a FiveM client.
+The frozen Core-only single-instance Production-Beta profile is accepted. On 2026-08-25, commit `7ad4b72ee9bcd0a2a0481cfacfe5f807eb1b3ec5` with Core tree `9f0960f1e27fe43195ae4602cb2ef447cbc0509b` completed the repository, live-database, fresh-boot, public-API, capacity, restart, crash-recovery, stale-facade, database-outage/recovery, final automated, real-client, and review gates. Manual FXServer results remain separate from repository automation because the ordinary test suite does not launch FXServer or a FiveM client. The decision applies only to the exact supported Core profile and is not a stable `1.0` or framework-wide acceptance.
 
 | Gate | Status | Current evidence |
 | --- | --- | --- |
-| Final automated validation | **PASS** | `npm ci`, `npm run check`, `npm test`, `npm run security`, and `npm run certify` exited successfully; 416 tests passed, 0 failed, 19 expected live-database cases were gated, and security reported 0 findings |
+| Final automated validation | **PASS** | `npm ci`, `npm run check`, `npm test`, `npm run security`, `npm run certify`, and the high-severity dependency audit exited successfully; 416 tests passed, 0 failed, 19 expected live-database cases were gated, security reported 0 findings, and `npm audit` reported 0 vulnerabilities |
 | Live database, fresh boot, and public Core API | **PASS ON CURRENT RUNTIME TREE** | 26 Core migrations, caller-bound API/Cfx callables, RPC, services, events, hooks, scheduler, idempotency, connection gates, and persisted Saga execution passed |
 | Capacity boundary | **PASS ON CURRENT RUNTIME TREE** | Configured boundary and one-over-bound behavior fail closed with the expected bounded results |
 | Probe, prepared/unprepared restart, crash recovery, and stale facades | **PASS ON CURRENT RUNTIME TREE** | Restart ownership, cleanup, fresh facade acquisition, and next-boot recovery passed |
 | Runtime database outage and recovery | **PASS** | `DEGRADED` with admission closed in 6.73 s; full FXServer stop; MariaDB plus fresh FXServer `READY` in 10.86 s; 26/26 migrations, attempts, and fences applied; zero nonterminal migration or open session/authority/Saga/outbox/idempotency work; idempotent probe replay |
 | Documentation, final diff, and secret review | **PASS** | Technical docs, commands, links, maturity statements, dependency audit, secrets, and final candidate integrity/diff were reviewed without an unresolved blocker |
 | Commit and publication to `main` | **PASS** | The reviewed candidate is committed and published without private test assets or unrelated files |
-| Exact-candidate FiveM client smoke | **PENDING** | One join, disconnect, and reconnect must pass after server and automated gates |
+| Exact-candidate FiveM client smoke | **PASS** | Join, clean disconnect, reconnect, and final cleanup passed; both connections completed all nine ordered stages, Doctor remained `PASS`, all 26 migrations were applied, and the final database aggregate was `3 / 0 / 0 / 0` |
 | Soak, permanent evidence runner, historical upgrade, extensive restore drill, and extra non-critical ABI cases | **POST-BETA** | Deliberately deferred until work begins on moving out of Beta; these do not block the initial Production-Beta decision |
 | Two-instance and alternate duplicate policies | **OUTSIDE BETA SCOPE** | Strict production accepts only the single-instance `deny_new` profile; `kick_old`, `replace_old`, and `allow` remain development/staging verification modes |
 
@@ -121,11 +121,11 @@ Owner epochs are process-local. Assert only that the new owner epoch is greater 
 ## FXServer join acceptance
 
 > [!IMPORTANT]
-> **Current status: pending.** One join, disconnect, and reconnect smoke test is required against the selected candidate after the final server and automated gates pass. The acceptance target is the single-instance `deny_new` profile.
+> **Current status: PASS.** On 2026-08-25, one real FiveM client completed join, clean disconnect, reconnect, and final cleanup against the selected single-instance `deny_new` candidate. Both accepted connections completed all nine ordered connection stages; Core remained `READY`, Doctor returned `PASS`, and all 26 migrations were applied.
 
 The prepared-restart evidence included a pending connection blocked on database work. Preparation closed the normal database activity gate, waited for the tracked work to drain, and only then quiesced resource owners before using its private database control lane. It did not unload a live database callback.
 
-Treat the final client smoke as passed only after the exact deployment completes this sequence with a real FiveM client:
+The accepted run completed the following sequence. Repeat it after any change that invalidates the runtime evidence:
 
 1. Start the server, wait for Core `READY`, then run `synex overview` and `synex doctor`. Core resource health must be `HEALTHY` and Doctor must not report `UNKNOWN` as a pass.
 2. Join once without an immediate retry. One correlation ID must progress through `received`, `identity_ok`, `access_ok`, `lease_acquired`, `deferral_accepted`, `player_joining_received`, `join_identity_verified`, `join_lease_verified`, and `session_opened`, in that order.
@@ -133,6 +133,8 @@ Treat the final client smoke as passed only after the exact deployment completes
 4. Disconnect and confirm that the session closes, its network state is purged, and no active fenced session lease remains.
 5. Reconnect once. Require a fresh session/source generation without `LEASE_BUSY`, a duplicate active session, or stale source authority.
 6. Run `synex sessions` and `synex doctor` again. The accepted attempt must no longer be pending, exactly one new session may be active, and Core health must remain consistent.
+
+After the final cleanup, the privacy-safe database aggregate was `3 / 0 / 0 / 0`: three retained closed sessions, zero open sessions, zero active session leases, and zero active admission leases. No raw player identity, source, session, or endpoint value is part of the retained acceptance record.
 
 The more extensive aborted-deferral, repeated-retry, active-player restart, two-instance, soak, and load scenarios remain valuable later hardening work. They are not part of the frozen initial Production-Beta completion scope.
 

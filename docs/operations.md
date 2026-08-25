@@ -2,7 +2,7 @@
 
 Synex is fail-closed during boot. `synex_core` does not accept gated contract work until its lifecycle reaches `READY`.
 
-This runbook's Production-Beta acceptance target is `synex_core` on the candidate Core-only profile. Operational notes for `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, bridges, or other non-Core code describe experimental rework snapshots and are not accepted deployment procedures.
+This runbook's accepted Production-Beta target is `synex_core` on the documented Core-only profile. Operational notes for `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, bridges, or other non-Core code describe experimental rework snapshots and are not accepted deployment procedures.
 
 ## Boot sequence
 
@@ -41,7 +41,7 @@ Recovery has two distinct paths. When oxmysql returns a probe failure or adapter
 
 The five-second watchdog is a fail-closed admission deadline, not query cancellation. With oxmysql `2.14.1`, a rejected pool `getConnection()` can fail to invoke the Lua callback; the corresponding `Await` and tracked probe then cannot settle even though a later independent Doctor query succeeds. Core intentionally keeps admission closed and does not start superseding probes or a restart loop. Restore MariaDB first, verify that it is reachable, and then perform one controlled restart of the complete FXServer process so the oxmysql runtime, pending promise, and Core state end together. A raw `restart synex_core`, repeated Core restarts, or repeatedly restarting FXServer while MariaDB is unavailable is not a supported recovery path. Operator diagnostics and cleanup paths that intentionally touch persistence continue to fail closed with stable Core errors during the outage.
 
-The final current-candidate database-outage/recovery gate passed. The isolated outage moved Core to `DEGRADED` with player admission closed in 6.73 seconds. After a complete FXServer stop, MariaDB plus a fresh FXServer process returned to `READY` in 10.86 seconds with 26/26 migrations, attempts, and fences applied; no nonterminal migration, open session/authority, Saga, outbox, or idempotency work remained, and the probe replayed idempotently.
+The accepted profile's final database-outage/recovery gate passed. The isolated outage moved Core to `DEGRADED` with player admission closed in 6.73 seconds. After a complete FXServer stop, MariaDB plus a fresh FXServer process returned to `READY` in 10.86 seconds with 26/26 migrations, attempts, and fences applied; no nonterminal migration, open session/authority, Saga, outbox, or idempotency work remained, and the probe replayed idempotently.
 
 ```text
 synex ban <id> <userId> <reason>
@@ -255,4 +255,4 @@ Before using `0.1.0` outside an isolated environment, operators must independent
 - capacity and latency under the server's actual resources;
 - retention, backup, privacy, and incident-response policy.
 
-The current database-outage/recovery, final automated, documentation/final-diff/secret-review, and publication-to-`main` stages have passed, but the aggregate Production-Beta decision remains **NO-GO**. Only one real-client join/disconnect/reconnect smoke test remains open. Longer soak, historical upgrade, extensive restore, permanent evidence-runner, and extra non-critical ABI work are deferred to post-Beta promotion.
+The database-outage/recovery, final automated, documentation/final-diff/secret-review, publication-to-`main`, and real-client join/clean-disconnect/reconnect stages passed for the accepted Core tree. Final client cleanup reported Doctor `PASS`, 26/26 applied migrations, three retained closed sessions, and zero open sessions, active session leases, or active admission leases. The documented Core-only profile reached Production Beta on 2026-08-25. Longer soak, historical upgrade, extensive restore, permanent evidence-runner, and extra non-critical ABI work remain deferred to post-Beta promotion and do not broaden the accepted profile.

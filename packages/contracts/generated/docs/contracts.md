@@ -3,7 +3,7 @@
 Source hash: `5c35131d99272ec77c0512ce54fdac50322c86f80b29aac076c8e0caf1357248`
 
 > [!WARNING]
-> This generated catalog aggregates source declarations from `synex_core` and downstream rework snapshots. A listed contract, provider, version, or stability value is source metadata, not release support or runtime acceptance. Only Core belongs to the current Production-Beta candidate; do not deploy against downstream entries until their rework receives separate acceptance.
+> This generated catalog aggregates source declarations from `synex_core` and downstream rework snapshots. A listed contract, provider, version, or stability value is source metadata, not release support or runtime acceptance. Only Core belongs to the accepted Production-Beta profile; do not deploy against downstream entries until their rework receives separate acceptance.
 
 | Contract | Version | Kind | Provider | Network | Stability | Capability |
 | --- | --- | --- | --- | --- | --- | --- |

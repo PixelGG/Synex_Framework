@@ -42,7 +42,7 @@ These files contain sensitive legacy identifiers and names. Keep them outside ve
 
 ## 3. Historical target-rehearsal design
 
-The snapshot expected a new disposable database and the following dependency order. This block is retained to describe that design only; it is not a runnable instruction for the current Core candidate:
+The snapshot expected a new disposable database and the following dependency order. This block is retained to describe that design only; it is not a runnable instruction for the accepted Core Production-Beta profile:
 
 ```cfg
 ensure oxmysql

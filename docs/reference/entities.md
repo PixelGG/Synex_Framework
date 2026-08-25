@@ -12,7 +12,7 @@ Everything below is a source-level description of that snapshot, not installatio
 - The snapshot expects OneSync `on`, declares the `/onesync` manifest constraint, and repeats the check at runtime.
 - Its manifest declares oxmysql `>=2.14.1 <3.0.0` and `synex_core` API `^1.0.0` dependencies.
 - Its historical dependency order is oxmysql, Core, then entities; this is not a current start instruction.
-- Its manifest lists `migrations/001_entities.sql`. The file contains one DDL statement and is marked non-transactional because MySQL/MariaDB DDL performs implicit commits; it is not part of the Core candidate schema.
+- Its manifest lists `migrations/001_entities.sql`. The file contains one DDL statement and is marked non-transactional because MySQL/MariaDB DDL performs implicit commits; it is not part of the accepted Core schema.
 
 The resource becomes unhealthy instead of registering its public contracts when OneSync, Core, or persistence is unavailable. `synex.entities.health@1.0.0` reports only the resource's actual state.
 

@@ -1,18 +1,20 @@
 # Core Production-Beta release readiness
 
 > [!IMPORTANT]
-> **Current decision: NO-GO / acceptance in progress.** The current `synex_core` runtime tree has passed its repository, live-database, fresh-boot, public-API, capacity, restart, crash-recovery, stale-facade, database-outage/recovery, post-documentation automated, documentation/final-diff/secret-review, and publication-to-`main` stages. Only one real-client join/disconnect/reconnect smoke test remains open. Do not describe the candidate as an accepted Production-Beta until that final frozen closure item passes for the selected revision.
+> **Current decision: PASS / Production Beta.** On 2026-08-25, the documented Core-only profile completed its repository, live-database, fresh-boot, public-API, capacity, restart, crash-recovery, stale-facade, database-outage/recovery, automated, real-client, and review gates. This is a Production-ready beta of `synex_core` for the exact supported profile below; it is not a stable `1.0` or framework-wide release.
+
+The runtime acceptance was performed on commit `7ad4b72ee9bcd0a2a0481cfacfe5f807eb1b3ec5` with tracked Core tree `9f0960f1e27fe43195ae4602cb2ef447cbc0509b`. Documentation-only synchronization may reuse that runtime evidence only while the tracked Core tree remains byte-identical.
 
 ## Frozen Beta completion scope
 
-The following list is the complete remaining Production-Beta scope. New non-critical hardening ideas do not extend it.
+The following frozen Production-Beta scope is complete. New non-critical hardening ideas do not retroactively extend it.
 
 | Stage | Current status | Acceptance boundary |
 | --- | --- | --- |
 | Database outage and recovery | **PASS** | `DEGRADED` with admission closed in 6.73 s; full FXServer stop; MariaDB plus fresh FXServer `READY` in 10.86 s; 26/26 migrations, attempts, and fences applied; zero nonterminal migration or open session/authority/Saga/outbox/idempotency work; idempotent probe replay |
-| Final automated run | **PASS** | `npm ci`, check, test, security, and certification exited successfully; 416 tests passed, 0 failed, 19 expected live-DB cases were gated, and security reported 0 findings |
+| Final automated run | **PASS** | `npm ci`, check, test, security, certification, and dependency audit exited successfully; 416 tests passed, 0 failed, 19 expected live-DB cases were gated, security reported 0 findings, and `npm audit` reported 0 vulnerabilities |
 | Documentation, final diff, and secret review | **PASS** | Tracked documentation, links, paths, commands, maturity claims, dependency audit, secrets, and final candidate integrity/diff were reviewed without an unresolved blocker |
-| Real-client smoke test | **PENDING** | One real FiveM client completes join, disconnect, and reconnect without a stale session, lease, or pending admission |
+| Real-client smoke test | **PASS** | A real FiveM client completed join, clean disconnect, and reconnect; both connections traversed all nine ordered stages, Doctor remained `PASS`, and final cleanup left no open session or connection authority |
 | Commit and publication | **PASS** | The reviewed candidate is committed and published to `main` without secrets, private test assets, or unrelated files |
 
 Already completed runtime evidence remains valid across documentation-only changes when the release record proves that the tracked Core bytes and generated runtime artifacts did not change. Any later runtime, migration, dependency, generated-contract, or production-configuration change invalidates the affected runtime evidence and requires that stage to be repeated.
@@ -73,9 +75,11 @@ The final report records the exact pass/fail/skip counts and explains gated live
 
 The separate destructive live-database gate remains documented in [Testing](testing.md#live-database-gate). Existing current-tree live-database and capacity evidence can carry across documentation-only changes when Core bytes remain identical; it must be repeated after any affected product change.
 
-## Final client smoke test
+## Final client smoke test — PASS
 
-Run this only after the server and automated gates pass:
+This gate passed on 2026-08-25 against the accepted runtime revision. Both accepted connections traversed `received`, `identity_ok`, `access_ok`, `lease_acquired`, `deferral_accepted`, `player_joining_received`, `join_identity_verified`, `join_lease_verified`, and `session_opened` in order. The clean disconnect and reconnect produced no stale session, duplicate authority, `LEASE_BUSY`, pending deferral, or admission reservation. Core remained `READY`, `synex doctor` returned `PASS`, all 26 Core migrations were applied, and the final database aggregate was `3 / 0 / 0 / 0`: three retained closed sessions, zero open sessions, zero active session leases, and zero active admission leases.
+
+Use the following sequence to reproduce the gate after any runtime change:
 
 1. Start the exact candidate and require `synex overview` plus `synex doctor` to agree on a healthy `READY` Core.
 2. Join once with a real FiveM client and require exactly one active session with no generic Cfx rejection.
@@ -138,4 +142,4 @@ Documentation and diff review: <result>
 Known limitations accepted: <list>
 ```
 
-The project owner makes the final release decision. A PASS permits the wording **Production-ready beta for the documented Core profile**; it does not permit a framework-wide or stable-release claim.
+The current PASS permits the wording **Production-ready beta for the documented Core profile**; it does not permit a framework-wide or stable-release claim. Any future release decision remains the project owner's responsibility.

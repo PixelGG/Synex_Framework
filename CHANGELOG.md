@@ -6,8 +6,8 @@ All notable project changes are recorded here. The format follows [Keep a Change
 
 ### Release status
 
-- The current Core tree has passed the repository, live-database, fresh-boot, capacity, restart, crash-recovery, stale-facade, database-outage, post-documentation automated, documentation/final-diff/secret-review, and publication-to-`main` stages of the frozen Production-Beta gate.
-- Only one FiveM client join/disconnect/reconnect smoke test remains open. The aggregate decision therefore remains **NO-GO**, and no Production-Beta is claimed until the [release-readiness document](docs/release-readiness.md) is complete for one immutable revision.
+- The immutable Core tree `9f0960f1e27fe43195ae4602cb2ef447cbc0509b` has passed the complete frozen Production-Beta gate: repository, live-database, fresh-boot, capacity, restart, crash-recovery, stale-facade, database-outage/recovery, automated closure, documentation/final-diff/secret review, publication, and the real-client join/disconnect/reconnect smoke test.
+- The aggregate decision for the documented Core-only profile is **PASS — Production Beta**. This is not a Stable/1.0 or framework-wide production-support claim; the canonical evidence and exact runtime profile remain defined in [release readiness](docs/release-readiness.md).
 - The target applies to `synex_core` only. All non-Core resources and libraries are experimental rework snapshots and are not supported components of the Core beta.
 
 ### Added
