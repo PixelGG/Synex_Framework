@@ -340,7 +340,7 @@ test('RPC responses enforce the encoded byte cap and keep error fallbacks bounde
   }
 });
 
-test('public RPC options enforce the documented timeout without accepting forged session context', async () => {
+test('public facades enforce RPC options and preserve idempotency metadata tuples', async () => {
   const engine = await coreEngine(['foundation', 'registries', 'bootstrap_api']);
   try {
     const result = await engine.doString(`
@@ -356,6 +356,7 @@ test('public RPC options enforce the documented timeout without accepting forged
       local registries = SynexCoreFactories.registries({ foundation = foundation })
       local epoch = registries.owners:activate('synex_fixture')
       local captured = nil
+      local idempotencyRuns, idempotencyHandlerCalls = 0, 0
       local messaging = {
         gateway = {
           invoke = function(_, caller, callerEpoch, name, version, request, options)
@@ -378,7 +379,18 @@ test('public RPC options enforce the documented timeout without accepting forged
         runtime = {},
         stateService = {},
         lifecycle = {},
-        reliability = {},
+        reliability = { idempotency = { run = function(_, owner, operation, key, request, handler)
+          assert(owner == 'synex_fixture' and operation == 'fixture.operation'
+            and key == 'fixture_key' and request.marker == 'fixture')
+          idempotencyRuns = idempotencyRuns + 1
+          if idempotencyRuns == 1 then
+            local handlerValue, handlerError = handler()
+            idempotencyHandlerCalls = idempotencyHandlerCalls + 1
+            assert(handlerValue.accepted == true and handlerError == nil)
+            return handlerValue, nil, { replayed = false }
+          end
+          return { accepted = true }, nil, { replayed = true }
+        end } },
         sagaRuntime = {},
         facadeCache = {},
         runtimeGate = runtimeGate,
@@ -399,6 +411,18 @@ test('public RPC options enforce the documented timeout without accepting forged
         and captured.idempotencyKey == 'idem_fixture')
       assert(captured.timeoutMs == nil and captured.session == nil and captured.source == nil
         and captured.sourceGeneration == nil)
+
+      local idempotent, idempotencyError, idempotencyMetadata = facade.Idempotency.run(
+        'fixture.operation', 'fixture_key', { marker = 'fixture' },
+        function() return { accepted = true }, nil end)
+      assert(idempotent.accepted == true and idempotencyError == false
+        and idempotencyMetadata.replayed == false)
+      local replay, replayError, replayMetadata = facade.Idempotency.run(
+        'fixture.operation', 'fixture_key', { marker = 'fixture' },
+        function() error('replay handler must not run') end)
+      assert(replay.accepted == true and replayError == false
+        and replayMetadata.replayed == true and idempotencyRuns == 2
+        and idempotencyHandlerCalls == 1)
 
       local forged, forgedError = facade.RPC.call('synex.fixture.echo', '1.0.0', {}, {
         session = { id = 'forged' }, source = 77

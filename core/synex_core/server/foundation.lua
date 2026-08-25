@@ -85,11 +85,14 @@ factories.foundation = function(deps)
 
     local function safeCall(handler, ...)
         local arguments = table.pack(...)
-        local ok, first, second = xpcall(function()
+        -- Successful handlers may expose metadata after their canonical error
+        -- slot. Preserve the complete tuple so later public boundaries can make
+        -- any interior nil transport-safe without losing trailing values.
+        local results = table.pack(xpcall(function()
             return handler(table.unpack(arguments, 1, arguments.n))
-        end, debug.traceback)
-        if ok then return true, first, second end
-        return false, first
+        end, debug.traceback))
+        if results[1] then return table.unpack(results, 1, results.n) end
+        return false, results[2]
     end
 
     -- Cfx serializes cross-resource functions as callable table/userdata proxies.

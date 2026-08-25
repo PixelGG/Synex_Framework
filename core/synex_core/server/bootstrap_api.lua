@@ -40,9 +40,10 @@ factories.bootstrapApi = function(deps)
             invocation.reason = tostring(reason or 'owner quiesced')
         end)
         if not token then return nil, operationError end
-        local ok, value, handlerError = foundation.safeCall(function()
+        local results = table.pack(foundation.safeCall(function()
             return foundation.withContext({ traceId = traceId, caller = caller, contract = operation }, handler, traceId)
-        end)
+        end))
+        local ok, value = results[1], results[2]
         registries.owners:finishOperation(caller, epoch, token)
         if invocation.cancelled then
             return nil, foundation.error('REQUEST_ABORTED', 'The operation was aborted while its owner was quiescing.', {
@@ -60,7 +61,7 @@ factories.bootstrapApi = function(deps)
             })
             return nil, foundation.error('INTERNAL_ERROR', 'The Synex API operation failed.', { traceId = traceId })
         end
-        return value, handlerError
+        return table.unpack(results, 2, results.n)
     end
 
     local function guarded(caller, epoch, capability, operation, handler)

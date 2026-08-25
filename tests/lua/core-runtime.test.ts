@@ -146,6 +146,13 @@ test('foundation keeps public result tuples array-shaped across Cfx without-hole
 
       local value = { accepted = true }
       local metadata = { replayed = false }
+      local safeSuccess = table.pack(foundation.safeCall(function()
+        return value, nil, metadata
+      end))
+      assert(safeSuccess.n == 4 and safeSuccess[1] == true
+        and safeSuccess[2] == value and safeSuccess[3] == nil
+        and safeSuccess[4] == metadata)
+
       local publicSuccess = table.pack(foundation.cfxResult(function()
         return value, nil, metadata
       end))
