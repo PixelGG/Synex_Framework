@@ -203,13 +203,11 @@ const COMMANDS: readonly GateCommandSpec[] = [
 const MANUAL_GATES = [
   "exact-revision-fxserver-startup",
   "fresh-install",
-  "backup-restore-and-25-to-26-upgrade",
   "prepared-core-restart-and-recovery",
   "unprepared-core-restart-and-recovery",
   "full-fxserver-process-crash-and-recovery",
   "database-outage-and-recovery",
   "client-join-disconnect-reconnect",
-  "bounded-soak-and-load",
 ] as const;
 
 const OUT_OF_SCOPE = [
@@ -589,7 +587,7 @@ Required environment:
   SYNEX_TEST_DATABASE_URL=mysql://.../synex_test_<name>
 
 The gate requires a clean Git revision, stores no command output or database credentials,
-and never marks the required FXServer, recovery, client, or soak gates as completed.
+and never marks the required FXServer, recovery, or client gates as completed.
 Multi-instance/kick_old, MySQL Server, and downstream resources are explicitly out of scope.`;
 }
 

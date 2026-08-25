@@ -1,17 +1,13 @@
 # MariaDB backup and restore
 
-This runbook defines the candidate logical-backup drill for the initial `synex_core` Production-Beta target: MariaDB `11.8.8`, InnoDB, UTC, one Core instance, and no non-Core Synex resources. Predecessor `888a7326b88b9815983c132855a10f1fe8d6996a` passed this drill; that evidence does not certify the clean post-documentation revision containing the fix introduced by `e0cbf45` and is not permission to overwrite a production database.
+This runbook defines a logical-backup and isolated-restore drill for the documented `synex_core` profile: MariaDB `11.8.8`, InnoDB, UTC, one Core instance, and no non-Core Synex resources. It is operational guidance and the basis for the post-Beta restore certification; it is never permission to overwrite a production database.
 
 > [!CAUTION]
 > Never run a restore drill against production or a shared development schema. Use a new schema named exactly `synex_test_restore_drill_YYYYMMDDHHMMSS`, verify the target twice, and retain failed drill data for investigation until an operator deliberately removes it.
 
-## Retained predecessor evidence
+## Acceptance boundary
 
-On 2026-08-24, predecessor `888a7326b88b9815983c132855a10f1fe8d6996a` passed logical backup, SHA-256 verification, encrypted recovery, restore into a new isolated schema, exact parity across 36 restored tables, 26/26 migration verification, isolated Core/probe startup, and Doctor validation. The decrypted dump matched the source dump byte-for-byte by SHA-256; the measured SQL import took 813 ms. That import duration is not a complete recovery-time objective because it excludes quiesce, transfer, Core boot, validation, and cutover.
-
-A separate upgrade rehearsal started from commit `cd4b3cd5a1da9123359e7da8db9ca2a0ab1c4f9f` with exactly 25 applied Core migrations, dumped and hash-verified that baseline, restored it into a new schema, and started only the predecessor to reach 26/26 with no non-applied attempt or fence. This is retained regression evidence, not a claim that an older production release is supported or that the current candidate has passed. Release review still requires the current exact-candidate drill and operator-approved RPO/RTO objectives.
-
-The predecessor also passed database-outage fencing and controlled complete-FXServer recovery after database restore, but its planned minimum soak failed at the first hourly outbox-retention execution before the minimum duration completed. The current runtime tree fixes that trusted Cfx JSON-container path through `e0cbf45`; the selected clean post-documentation revision must repeat this drill, the server gate, a fresh soak, and the client lifecycle. The aggregate release decision remains **NO-GO**.
+The full exact-candidate encrypted restore drill, historical supported-version upgrade drill, and operator RPO/RTO approval are intentionally scheduled for the post-Beta promotion phase. They do not block the frozen initial Production-Beta scope. Operators must still maintain verified backups before using real server data; deferral of certification is not a recommendation to run without recovery protection.
 
 ## Prerequisites
 

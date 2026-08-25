@@ -10,6 +10,7 @@ This guide installs only the Core candidate. Do not add `synex_groups`, `synex_a
 - MariaDB `11.8.8` with InnoDB;
 - `oxmysql` `2.14.1`;
 - an oxmysql database session configured and verified to use UTC;
+- a dedicated MariaDB principal with the normal schema/DML rights required by Core plus `CREATE ROUTINE`, table `ALTER`, `EXECUTE`, and `ALTER ROUTINE`; MariaDB uses `ALTER ROUTINE` to authorize removal of the temporary migration procedures and has no separate `DROP ROUTINE` privilege (see [Database foundation](reference/database.md#migration-protocol));
 - one `synex_core` instance using strict production mode and duplicate policy `deny_new`;
 - Node.js `22.12.0` or newer and npm `10` or newer for generation, validation, and tests. CI uses Node.js 24.
 
@@ -71,7 +72,7 @@ ensure synex_core
 
 The sequential start order is intentional. Core validates installed Synex manifests and critical dependencies before it opens admission. A Core-only candidate installation includes no downstream critical resource; adding an experimental resource can introduce new critical dependencies and makes that deployment different from the acceptance target.
 
-Configure the database connection according to the installed oxmysql release before starting `oxmysql`. Keep credentials outside this repository and never put them in `config/default.json`. The Core transaction model expects oxmysql isolation level `2` (`READ COMMITTED`); set it explicitly and verify the effective server configuration rather than relying on an adapter default.
+Configure the database connection according to the installed oxmysql release before starting `oxmysql`. Keep credentials outside this repository and never put them in `config/default.json`. Grant the dedicated principal the normal schema/DML rights required by Core and the migration-specific `CREATE ROUTINE`, table `ALTER`, `EXECUTE`, and `ALTER ROUTINE` rights listed above; do not look for a MariaDB `DROP ROUTINE` privilege. The Core transaction model expects oxmysql isolation level `2` (`READ COMMITTED`); set it explicitly and verify the effective server configuration rather than relying on an adapter default.
 
 The database session used by oxmysql must use UTC. Synex stores and compares `DATETIME(6)` values with `CURRENT_TIMESTAMP(6)` throughout persistence and uses `UTC_TIMESTAMP(6)` for archive cutoffs; a non-UTC session can shift expiry, lease, queue, outbox, audit, and retention decisions. Before running any migration, Core compares both functions in one database statement and refuses to start when the offset is not zero or the validation query fails. Synex does not set the database session time zone, and this guide intentionally does not assume a connection-string option for a particular oxmysql/database build.
 
@@ -106,9 +107,10 @@ The current [`examples/synex_example`](../examples/synex_example/) and [resource
 ## Current platform limits
 
 - There is no packaged release installer or automatic updater.
-- Repository tests do not launch FXServer. Predecessor `888a7326` passed the automated gate and the major server stages, including the retained `cd4b3cd5` 25-to-26 rehearsal, but its planned minimum soak failed at the first hourly outbox-retention execution before the minimum duration completed. The current runtime tree contains the trusted Cfx JSON-container fix introduced by `e0cbf45`. See [Testing](testing.md#current-acceptance-baseline).
-- Repository validation passes on that runtime tree; the selected clean post-documentation revision still needs its complete exact server gate, fresh 120-minute soak, and client lifecycle. Acceptance therefore remains **IN PROGRESS / NO-GO**; this is not yet a production-stable beta.
+- Repository tests do not launch FXServer or a FiveM client. Current-tree live-database, fresh-boot, public-API, capacity, restart, crash-recovery, and stale-facade evidence is separate from the headless suite. See [Testing](testing.md#current-acceptance-baseline).
+- Production-Beta acceptance is in its frozen completion phase. Database-outage/recovery, the final automated run, documentation/final-diff/secret review, and publication to `main` have passed. Only one client join/disconnect/reconnect smoke test remains open, so the release decision remains **NO-GO**.
 - A lost oxmysql callback does not imply automatic recovery. Admission remains closed; after restoring the database service, restart the complete FXServer process before reopening admission.
 - Public contracts and the consumer API surface remain `experimental` even when the Core runtime reaches Production-Beta acceptance.
 - MySQL, multi-instance operation, `kick_old`, `replace_old`, and `allow` are outside the initial acceptance target. Strict production configuration accepts only `deny_new`.
 - `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, all later resources, bridges, libraries, integrations, and examples are rework snapshots or scaffolds. None is included in Core Production-Beta certification.
+- A 125-minute soak, permanent evidence runner, historical supported-version upgrade drill, extensive backup/restore certification, and extra non-critical ABI cases are deferred to the post-Beta promotion phase.

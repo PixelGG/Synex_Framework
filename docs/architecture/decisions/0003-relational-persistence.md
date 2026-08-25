@@ -10,4 +10,4 @@ Use InnoDB, relational columns for queried domain state, positional parameters, 
 
 ## Consequences
 
-Schema changes are reviewable and integrity constraints live close to the data. DDL is never mixed with assumptions about transactional rollback. A future accepted deployment must use a compensating forward migration or an application rollback compatible with the newer schema; the current NO-GO candidate does not claim a supported rollback path.
+Schema changes are reviewable and integrity constraints live close to the data. DDL is never mixed with assumptions about transactional rollback. A deployment must use a compensating forward migration or an application rollback paired with a separately preserved schema compatible with that older version; in-place downgrade is unsupported.

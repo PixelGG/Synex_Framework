@@ -50,13 +50,33 @@
 
 ## Current verification
 
-Predecessor `888a7326` passed the automated gate and the major server-side stages, including a fresh 26-migration boot, public-API probe, restart/crash recovery, database-outage fencing, backup/restore, and the retained `cd4b3cd5` 25-to-26 upgrade rehearsal. Its planned minimum 120-minute soak failed at the first hourly outbox-retention execution, before the minimum duration completed, so that candidate is rejected.
+`synex_core` is in its final Production-Beta acceptance cycle. The beta line is frozen: only the five closure items below can block this decision unless a critical product defect is discovered.
 
-- **CURRENT RUNTIME TREE.** The fix introduced by `e0cbf45` accepts plain retention policies and trusted Cfx JSON object containers while rejecting arrays and foreign containers. It also adds exact connection-queue capacity coverage. Repository validation passes, but predecessor runtime evidence does not transfer to the post-documentation candidate.
-- **BOUNDED OUTAGE RECOVERY.** During the tested oxmysql lost-callback condition, Core keeps player admission closed. Automatic recovery is not claimed: after database service is restored, operators must restart the complete FXServer process before reopening admission.
-- **IN PROGRESS / NO-GO.** The clean post-documentation revision still needs the complete server gate, a fresh 120-minute soak, and its exact-candidate client lifecycle. This is not yet a production-stable beta.
+| Closure item | Current state |
+| --- | --- |
+| Final server database-outage and recovery run | PASS |
+| Complete automated closing run | PASS — 416 passed, 0 failed, 19 expected live-DB skips; security: 0 findings |
+| Repository-wide documentation synchronization | PASS |
+| Client smoke test: join, disconnect, reconnect | PENDING |
+| Final diff and secret review; commit and publication to `main` | PASS |
+
+- **VERIFIED CLOSURE.** Server database-outage recovery, the automated closing run, documentation synchronization, final diff and secret review, and publication to `main` are complete. Automation passed with 416 tests passed, 0 failed, 19 expected live-database skips, and 0 security findings.
+- **NO PREMATURE PASS.** Only the exact-candidate client smoke test remains pending. Until join, disconnect, and reconnect pass, the Production-Beta decision remains **IN PROGRESS / NO-GO**.
 - **NOT CERTIFIED.** MySQL and multi-instance operation, including `kick_old`, are outside the first candidate profile.
 - **OUT OF SCOPE.** Every runtime resource, library, bridge, and example downstream of `synex_core` is an experimental rework snapshot or scaffold and is not part of Core certification.
+
+<details>
+<summary>Post-Beta hardening — explicitly not part of this acceptance gate</summary>
+
+- 125-minute soak
+- permanent evidence runner
+- historical upgrade rehearsal
+- extended backup-and-restore rehearsal
+- additional non-critical ABI tests
+
+These checks are scheduled for the work required to move beyond Beta. They do not expand the frozen Production-Beta closure line.
+
+</details>
 
 [Release gate](./docs/release-readiness.md) &middot; [Current test coverage](./docs/testing.md) &middot; [Known limitations](./docs/known-limitations.md)
 

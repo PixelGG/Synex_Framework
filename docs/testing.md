@@ -31,20 +31,19 @@ The test runner fails if the selected compiled suite does not exist. This preven
 
 ## Current acceptance baseline
 
-The next clean post-documentation revision will be the current exact-revision acceptance target. Its runtime tree contains the trusted Cfx JSON-container fix introduced by `e0cbf45` and exact connection-queue capacity coverage; repository validation passes. Predecessor `888a7326` passed the automated and major server-side stages, but its planned minimum 120-minute soak exposed `INVALID_OUTBOX_RETENTION` at the first hourly outbox execution and ended **FAIL / NO-GO** before the minimum duration completed. The selected revision must repeat the complete exact automated/server gate, a fresh soak, backup/upgrade evidence, and the real-client lifecycle. Manual FXServer results remain separate from the automated artifact because repository automation does not launch FXServer or a FiveM client.
+The Production-Beta scope is frozen around the Core-only single-instance profile. Current-tree repository, live-database, fresh-boot, public-API, capacity, restart, crash-recovery, stale-facade, database-outage/recovery, final automated, documentation/final-diff/secret-review, and publication-to-`main` evidence has passed. Only one real-client join/disconnect/reconnect smoke test remains open, so the release decision remains **NO-GO**. Manual FXServer results remain separate from repository automation because the ordinary test suite does not launch FXServer or a FiveM client.
 
 | Gate | Status | Current evidence |
 | --- | --- | --- |
-| Repository/headless validation | **PASS ON CURRENT RUNTIME TREE** | `npm run check` passed; Lua 232/232; repository tests 413 passed, 0 failed, 19 live-database skips; static security 0 findings; `git diff --check` passed |
-| Exact automated Core evidence gate | **PENDING** | Regenerate the full clean-checkout artifact, including live database, certification, audit, and integrity stages, for the selected post-documentation revision |
-| Fresh MariaDB / FXServer boot | **PENDING** | Predecessor evidence does not certify the current runtime tree |
-| Public Core API and probe | **PENDING** | Repeat caller-bound API, Cfx callables, RPC, services, events, hooks, scheduler, idempotency metadata, Connection Gate, and persisted Saga execution |
-| Probe restart protocol | **PENDING** | Repeat both phases and confirm run-scoped KVP cleanup on the current candidate |
-| Restart and process recovery | **PENDING** | Repeat prepared restart, unprepared recovery, full-process termination, and next-boot recovery |
-| Runtime database outage | **PENDING** | Repeat fail-closed fencing and the documented full-process recovery after database restoration |
-| Backup/restore and rehearsal upgrade | **PENDING; RPO/RTO REVIEW PENDING** | Repeat encrypted recovery/parity and the retained 25-to-26 rehearsal; explicit operator RPO/RTO approval remains open |
-| Server-only soak | **PENDING** | Start a new minimum 120-minute run; the predecessor run failed and cannot be resumed or transferred |
-| Exact-candidate FiveM client lifecycle | **PENDING** | Join, disconnect, and reconnect must run against the selected revision; predecessor evidence does not transfer |
+| Final automated validation | **PASS** | `npm ci`, `npm run check`, `npm test`, `npm run security`, and `npm run certify` exited successfully; 416 tests passed, 0 failed, 19 expected live-database cases were gated, and security reported 0 findings |
+| Live database, fresh boot, and public Core API | **PASS ON CURRENT RUNTIME TREE** | 26 Core migrations, caller-bound API/Cfx callables, RPC, services, events, hooks, scheduler, idempotency, connection gates, and persisted Saga execution passed |
+| Capacity boundary | **PASS ON CURRENT RUNTIME TREE** | Configured boundary and one-over-bound behavior fail closed with the expected bounded results |
+| Probe, prepared/unprepared restart, crash recovery, and stale facades | **PASS ON CURRENT RUNTIME TREE** | Restart ownership, cleanup, fresh facade acquisition, and next-boot recovery passed |
+| Runtime database outage and recovery | **PASS** | `DEGRADED` with admission closed in 6.73 s; full FXServer stop; MariaDB plus fresh FXServer `READY` in 10.86 s; 26/26 migrations, attempts, and fences applied; zero nonterminal migration or open session/authority/Saga/outbox/idempotency work; idempotent probe replay |
+| Documentation, final diff, and secret review | **PASS** | Technical docs, commands, links, maturity statements, dependency audit, secrets, and final candidate integrity/diff were reviewed without an unresolved blocker |
+| Commit and publication to `main` | **PASS** | The reviewed candidate is committed and published without private test assets or unrelated files |
+| Exact-candidate FiveM client smoke | **PENDING** | One join, disconnect, and reconnect must pass after server and automated gates |
+| Soak, permanent evidence runner, historical upgrade, extensive restore drill, and extra non-critical ABI cases | **POST-BETA** | Deliberately deferred until work begins on moving out of Beta; these do not block the initial Production-Beta decision |
 | Two-instance and alternate duplicate policies | **OUTSIDE BETA SCOPE** | Strict production accepts only the single-instance `deny_new` profile; `kick_old`, `replace_old`, and `allow` remain development/staging verification modes |
 
 The automated artifact intentionally labels every manual field `NOT_RUN`; it reports only work executed by that command. Separate runtime evidence never rewrites those artifact fields. This is not a stable-release, downstream-resource, external-framework, or deployment-certification claim.
@@ -91,7 +90,7 @@ GitHub Actions supplies an isolated MariaDB service and enables this gate. A nor
 
 The stress suite is a deterministic, sequential Wasmoon model. It does not run FXServer, OneSync/network scheduling, concurrent Lua threads, or the SQL ledger path, and its operation counts are not benchmark results.
 
-The repository currently does not start FXServer in CI. Predecessor `888a7326` has separate evidence for fresh boot, public API/probe behavior, restart/process-crash recovery, live database-outage fencing and full-process recovery, backup/restore, and the retained 25-to-26 rehearsal, but its planned minimum soak failed before completion. The selected post-documentation revision must repeat every applicable runtime stage. There is no automated end-to-end Cfx client/server test, external-framework integration environment, browser automation run, production load test, or multi-instance `kick_old` requester-restart test. Strict production excludes that mode rather than treating the gap as accepted risk.
+The repository currently does not start FXServer in CI. There is no automated end-to-end Cfx client/server test, external-framework integration environment, browser automation run, production load test, or multi-instance `kick_old` requester-restart test. The final real-client smoke test is therefore manual. Multi-instance and alternate duplicate policies remain outside the supported Beta profile rather than being treated as accepted untested behavior.
 
 ## Disposable Core live-test bundle
 
@@ -122,19 +121,19 @@ Owner epochs are process-local. Assert only that the new owner epoch is greater 
 ## FXServer join acceptance
 
 > [!IMPORTANT]
-> **Current status: pending for the selected post-documentation revision.** Earlier real-client evidence remains useful regression history but does not certify that exact revision. Join, disconnect, and reconnect are still required before the current NO-GO decision can change. The acceptance target is the single-instance `deny_new` profile; the multi-instance duplicate-policy scenario below remains future development evidence, not an initial Beta release gate.
+> **Current status: pending.** One join, disconnect, and reconnect smoke test is required against the selected candidate after the final server and automated gates pass. The acceptance target is the single-instance `deny_new` profile.
 
 The prepared-restart evidence included a pending connection blocked on database work. Preparation closed the normal database activity gate, waited for the tracked work to drain, and only then quiesced resource owners before using its private database control lane. It did not unload a live database callback.
 
-Treat a join fix as live-verified only after the exact deployment has passed this sequence with a real FiveM client:
+Treat the final client smoke as passed only after the exact deployment completes this sequence with a real FiveM client:
 
 1. Start the server, wait for Core `READY`, then run `synex overview` and `synex doctor`. Core resource health must be `HEALTHY` and Doctor must not report `UNKNOWN` as a pass.
 2. Join once without an immediate retry. One correlation ID must progress through `received`, `identity_ok`, `access_ok`, `lease_acquired`, `deferral_accepted`, `player_joining_received`, `join_identity_verified`, `join_lease_verified`, and `session_opened`, in that order.
 3. Run `synex sessions`. The accepted attempt must no longer be pending and must own exactly one persisted session. No successful deferral may produce the generic Cfx `Unknown error` rejection.
 4. Disconnect and confirm that the session closes, its network state is purged, and no active fenced session lease remains.
-5. Abort one connection after deferral acceptance. Without manual database intervention, pending count and admission reservation count must return to zero after `connections.pendingTtlMs` plus the bounded connection-heartbeat and batch-cleanup delay; a later retry must not remain blocked by `LEASE_BUSY`.
-6. Repeat ten clean join/disconnect cycles and five rapid retry attempts. For each planned restart, run `synex prepare-restart`, require its structured result to report `state = "prepared"`, and only then run the returned `restart synex_core` command. Test once while a player is pending and once while a player is active: connected players must be disconnected, prior local sessions must be `CLOSED`, local session leases and pending control requests must be expired, and reconnects must receive fresh sessions without `LEASE_BUSY`. Hold a disposable database row lock during the pending case, release it before the bounded preparation drain expires, and require preparation to wait for database activity to reach zero before owner/producer quiesce rather than unload a live callback. Separately exercise one unprepared restart without an injected database blocker to verify next-boot durable recovery; do not misclassify its non-yielding stop handler as a graceful drain. An isolated raw Core restart during blocked interactive oxmysql work is outside the callback-clean guarantee and must be tested as an expected operational rejection/incident path, not as the supported restart workflow. Every deliberate rejection must carry a stable `Synex [CODE]` message, and `synex status`, `synex resources`, and `synex doctor` must agree on health.
-7. Keep Core running and stop only the verified disposable MariaDB process. Once the runtime database-health probe fails or reaches its five-second watchdog, require lifecycle `DEGRADED` with `operational = true`, admission closed, and only the redacted `database-runtime` reason. Ordinary database-backed workers suspend while the bounded connection cleanup path remains fail-closed. A timed-out oxmysql await is not claimed as cancelled and no replacement probe may accumulate beside it. After MariaDB returns, use the documented full FXServer-process recovery path: stop the isolated process, start a new process, and require recovery reconciliation, Core `READY`, admission open, persisted instance `ready`, Doctor `PASS`, healthy workers, and no leaked session/admission authority. Same-process recovery after an unsettled driver promise is not part of the supported beta profile.
-8. Outside the initial Beta support profile, a future two-instance test must start a `kick_old` replacement and restart the requesting Core while the control request is in flight. The target instance must not consume a request from a `stopping`, `stopped`, stale, or previous-boot requester. Until this passes, strict production continues to reject `kick_old`, `replace_old`, and `allow`.
+5. Reconnect once. Require a fresh session/source generation without `LEASE_BUSY`, a duplicate active session, or stale source authority.
+6. Run `synex sessions` and `synex doctor` again. The accepted attempt must no longer be pending, exactly one new session may be active, and Core health must remain consistent.
+
+The more extensive aborted-deferral, repeated-retry, active-player restart, two-instance, soak, and load scenarios remain valuable later hardening work. They are not part of the frozen initial Production-Beta completion scope.
 
 Connection-stage records intentionally contain a correlation ID, stage, elapsed time, and stable code only. Do not add raw identifiers, player names, source IDs, or database error text while collecting this evidence.

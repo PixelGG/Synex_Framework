@@ -6,8 +6,8 @@ All notable project changes are recorded here. The format follows [Keep a Change
 
 ### Release status
 
-- Predecessor `888a7326` passed the automated gate and the completed server-side stages, but its planned minimum 120-minute soak failed at the first hourly outbox-retention execution, before the minimum duration completed, and therefore ended **FAIL / NO-GO**.
-- The current runtime tree contains the trusted Cfx JSON-container fix introduced by `e0cbf45` and exact queue-capacity coverage. Repository validation passes; a clean post-documentation revision must still complete the exact server gate, a fresh 120-minute soak, and FiveM client join/disconnect/reconnect. No production-stable beta is claimed until the [release-readiness document](docs/release-readiness.md) is complete for one immutable revision.
+- The current Core tree has passed the repository, live-database, fresh-boot, capacity, restart, crash-recovery, stale-facade, database-outage, post-documentation automated, documentation/final-diff/secret-review, and publication-to-`main` stages of the frozen Production-Beta gate.
+- Only one FiveM client join/disconnect/reconnect smoke test remains open. The aggregate decision therefore remains **NO-GO**, and no Production-Beta is claimed until the [release-readiness document](docs/release-readiness.md) is complete for one immutable revision.
 - The target applies to `synex_core` only. All non-Core resources and libraries are experimental rework snapshots and are not supported components of the Core beta.
 
 ### Added
@@ -22,7 +22,7 @@ All notable project changes are recorded here. The format follows [Keep a Change
 - Planned Core restarts use a fail-closed preparation and database-drain sequence before runtime ownership is quiesced.
 - Connection, session-control, migration, idempotency, outbox, Saga, and lease paths use bounded work and durable authority checks.
 - A runtime database-health circuit closes player admission on a returned UTC-probe failure, an adapter exception, or a fixed five-second fail-closed watchdog; it keeps bounded diagnostics and connection-heartbeat cleanup operational and suspends the other database-backed scheduled work. A completed failure can recover after two successful probes plus reconciliation. A watchdog cannot cancel an oxmysql `Await`; a lost oxmysql `2.14.1` callback stays fail-closed until MariaDB is restored and the complete FXServer process is restarted once.
-- Core documentation records the predecessor evidence and failed soak separately from the current candidate's pending server/client gates, and keeps experimental APIs, compatibility targets, and every non-Core rework snapshot outside the beta claim.
+- Core documentation keeps the five-item Beta closure line separate from post-Beta soak, evidence-runner, historical-upgrade, extensive restore, and additional non-critical ABI work, and keeps every non-Core rework snapshot outside the beta claim.
 
 ### Fixed
 

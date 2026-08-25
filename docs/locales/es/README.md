@@ -37,13 +37,33 @@
 
 ## Estado actual de validación
 
-El candidato exacto anterior `888a7326` superó el gate automatizado y las principales etapas de aceptación del servidor: arranque limpio del Core con 26 migraciones, prueba externa de las API públicas, reinicios preparados y no preparados del Core, caída completa del proceso con recuperación, corte fail-closed de la base de datos con recuperación mediante un reinicio completo de FXServer, copia/restauración y actualización real de la línea base `cd4b3cd5` de 25 a 26 migraciones. Sin embargo, el soak mínimo previsto de 120 minutos falló en la primera ejecución horaria del worker de retención del outbox, antes de completar la duración mínima, porque se rechazó una configuración de retención válida decodificada por Cfx.
+`synex_core` está en su ciclo final de aceptación Production-Beta. La línea de cierre de la beta está congelada: solo los cinco puntos siguientes pueden bloquear la decisión, salvo que aparezca un defecto crítico del producto.
 
-- **EVIDENCIA DEL CANDIDATO ANTERIOR.** Las etapas de servidor, recuperación, copia/restauración y actualización indicadas pasaron para `888a7326`, pero el fallo posterior del soak impide considerarlas un PASS completo del candidato.
-- **RECUPERACIÓN ACOTADA ANTE CORTES.** En la condición probada de callback perdido de oxmysql, la admisión de jugadores permanece cerrada. No se afirma una recuperación automática: tras restaurar el servicio de base de datos, los operadores deben reiniciar el proceso FXServer completo antes de reabrir la admisión.
-- **ÁRBOL DE RUNTIME ACTUAL / IN PROGRESS.** La corrección introducida por `e0cbf45` acepta los contenedores de objeto JSON de Cfx confiables en la ruta de retención del outbox; las comprobaciones del repositorio y headless han pasado. La revisión limpia seleccionada después de la documentación todavía necesita el gate exacto de servidor, un nuevo soak de 120 minutos y la prueba del ciclo de vida del cliente. Hasta que las tres evidencias pasen, la decisión sigue siendo NO-GO y esta no es una beta estable para producción.
+| Punto de cierre | Estado actual |
+| --- | --- |
+| Prueba final de caída y recuperación de la base de datos | PASS |
+| Ejecución automatizada completa de cierre | PASS — 416 aprobadas, 0 fallidas, 19 skips live-DB esperados; seguridad: 0 findings |
+| Sincronización de toda la documentación del repositorio | PASS |
+| Smoke test del cliente: conexión, desconexión y reconexión | PENDING |
+| Revisión final del diff y secretos; commit y publicación en `main` | PASS |
+
+- **CIERRE VERIFICADO.** La recuperación de la base de datos, la ejecución automatizada de cierre, la sincronización de la documentación, la revisión final del diff y los secretos, y la publicación en `main` están completas. La automatización pasó con 416 pruebas aprobadas, 0 fallidas, 19 skips live-DB esperados y 0 findings de seguridad.
+- **SIN PASS ANTICIPADO.** Solo queda pendiente el smoke test del cliente para el candidato exacto. Hasta que conexión, desconexión y reconexión pasen, la decisión Production-Beta permanece **IN PROGRESS / NO-GO**.
 - **NO CERTIFICADO.** MySQL y la operación multiinstancia, incluido `kick_old`, quedan fuera del primer perfil candidato.
 - **FUERA DE ALCANCE.** Cada recurso, biblioteca, bridge y ejemplo posterior a `synex_core` es un snapshot de rework experimental o un scaffold y no forma parte de la certificación del Core.
+
+<details>
+<summary>Hardening posterior a la beta — explícitamente fuera de este gate de aceptación</summary>
+
+- soak de 125 minutos
+- runner permanente de evidencias
+- ensayo histórico de actualización
+- ensayo ampliado de copia de seguridad y restauración
+- pruebas ABI no críticas adicionales
+
+Estas comprobaciones pertenecen al trabajo necesario para salir de la beta más adelante. No amplían la línea de cierre Production-Beta congelada.
+
+</details>
 
 [Gate de release](../../release-readiness.md) &middot; [Cobertura de pruebas](../../testing.md) &middot; [Limitaciones conocidas](../../known-limitations.md)
 

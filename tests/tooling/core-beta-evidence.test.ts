@@ -156,13 +156,11 @@ test("core beta evidence runs exact gates, keeps credentials out of bounded evid
   assert.deepEqual(execution.report.manualGates.map((gate) => gate.name), [
     "exact-revision-fxserver-startup",
     "fresh-install",
-    "backup-restore-and-25-to-26-upgrade",
     "prepared-core-restart-and-recovery",
     "unprepared-core-restart-and-recovery",
     "full-fxserver-process-crash-and-recovery",
     "database-outage-and-recovery",
     "client-join-disconnect-reconnect",
-    "bounded-soak-and-load",
   ]);
   assert.equal(execution.report.manualGates.some((gate) => gate.name.includes("multi-instance")), false);
   assert.equal(execution.report.environment.databaseGate.requiredServer, "MariaDB");

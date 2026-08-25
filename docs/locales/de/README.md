@@ -37,13 +37,33 @@
 
 ## Aktueller Prüfstand
 
-Der vorherige exakte Kandidat `888a7326` hat das automatische Gate und die wesentlichen serverseitigen Abnahmestufen bestanden: frischer Core-Start mit 26 Migrationen, externe Probe der öffentlichen APIs, vorbereitete und unvorbereitete Core-Neustarts, vollständiger Prozessabsturz mit Recovery, fail-closed Datenbankausfall mit Wiederherstellung durch einen vollständigen FXServer-Prozessneustart, Backup/Restore sowie das reale Upgrade der Baseline `cd4b3cd5` von 25 auf 26 Migrationen. Sein geplanter Mindest-Soak von 120 Minuten ist jedoch bei der ersten stündlichen Ausführung des Outbox-Retention-Workers fehlgeschlagen, bevor die Mindestdauer erreicht war, weil eine gültige, von Cfx dekodierte Retention-Konfiguration abgelehnt wurde.
+`synex_core` befindet sich in der finalen Production-Beta-Abnahme. Die Beta-Ziellinie ist eingefroren: Nur die folgenden fünf Abschlussarbeiten können diese Entscheidung noch blockieren, sofern kein kritischer Produktfehler entdeckt wird.
 
-- **NACHWEIS DES VORGÄNGERS.** Die genannten Server-, Recovery-, Backup- und Upgrade-Stufen waren für `888a7326` erfolgreich, gelten wegen des anschließenden Soak-Fehlers aber nicht als vollständiger Kandidaten-PASS.
-- **BEGRENZTE OUTAGE-RECOVERY.** Beim getesteten oxmysql-Lost-Callback bleibt die Player-Admission geschlossen. Eine automatische Wiederherstellung wird nicht behauptet: Nach Wiederherstellung der Datenbank müssen Operatoren den vollständigen FXServer-Prozess neu starten, bevor Admission wieder geöffnet wird.
-- **AKTUELLER RUNTIME-STAND / IN PROGRESS.** Der mit `e0cbf45` eingeführte Fix korrigiert die Annahme vertrauenswürdiger Cfx-JSON-Objektcontainer im Outbox-Retention-Pfad; die Repository- und Headless-Prüfungen sind bestanden. Der nach der Dokumentation ausgewählte saubere Commit benötigt noch das exakte serverseitige Gate, einen frischen 120-Minuten-Soak und den Client-Lifecycle-Test. Bis alle drei Nachweise erfolgreich vorliegen, bleibt die Entscheidung NO-GO und dies ist keine produktionsstabile Beta.
+| Abschlussarbeit | Aktueller Stand |
+| --- | --- |
+| Abschließender Datenbankausfall- und Recovery-Lauf | PASS |
+| Vollständiger automatisierter Abschlusslauf | PASS — 416 bestanden, 0 fehlgeschlagen, 19 erwartete Live-DB-Skips; Security: 0 Findings |
+| Synchronisierung der gesamten Repository-Dokumentation | PASS |
+| Client-Smoke-Test: Join, Disconnect, Reconnect | PENDING |
+| Abschließender Diff- und Secret-Check; Commit und Veröffentlichung auf `main` | PASS |
+
+- **VERIFIZIERTER ABSCHLUSS.** Datenbankausfall-Recovery, automatisierter Abschlusslauf, Dokumentationssynchronisierung, finaler Diff- und Secret-Check sowie die Veröffentlichung auf `main` sind abgeschlossen. Die Automation bestand mit 416 bestandenen, 0 fehlgeschlagenen und 19 erwarteten Live-DB-Skips sowie 0 Security-Findings.
+- **KEIN VORWEGGENOMMENER PASS.** Nur der Client-Smoke-Test des exakten Kandidaten steht noch aus. Bis Join, Disconnect und Reconnect erfolgreich sind, bleibt die Production-Beta-Entscheidung **IN PROGRESS / NO-GO**.
 - **NICHT ZERTIFIZIERT.** MySQL und Multi-Instance-Betrieb einschließlich `kick_old` gehören nicht zum ersten Kandidatenprofil.
 - **AUSSERHALB DES SCOPES.** Jede Resource, Library, Bridge und jedes Beispiel hinter `synex_core` ist ein experimenteller Rework-Snapshot oder Scaffold und gehört nicht zur Core-Zertifizierung.
+
+<details>
+<summary>Post-Beta-Hardening — ausdrücklich kein Teil dieses Abnahme-Gates</summary>
+
+- 125-Minuten-Soak
+- permanenter Evidence-Runner
+- historischer Upgrade-Drill
+- ausführlicher Backup-/Restore-Drill
+- zusätzliche nicht kritische ABI-Tests
+
+Diese Prüfungen gehören zu den Arbeiten für den späteren Austritt aus der Beta. Sie erweitern die eingefrorene Production-Beta-Ziellinie nicht.
+
+</details>
 
 [Release-Gate](../../release-readiness.md) &middot; [Testabdeckung](../../testing.md) &middot; [Bekannte Grenzen](../../known-limitations.md)
 

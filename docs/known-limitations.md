@@ -4,7 +4,7 @@ These boundaries are part of the current `0.1.x` release decision. They must not
 
 ## Release and support boundary
 
-- No production-stable Synex release exists yet. The `synex_core` Production-Beta gate is [in progress](release-readiness.md).
+- No stable Synex `1.0` release exists yet. The `synex_core` Production-Beta gate is in its [frozen completion phase](release-readiness.md). Recovery, automation, documentation/final-diff/secret review, and publication to `main` have passed. Only the client join/disconnect/reconnect smoke remains open, so the release decision is **NO-GO**.
 - The beta target covers `synex_core` only. `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, compatibility bridges, examples, and every other downstream resource/library are experimental rework snapshots or scaffolds. They are unsupported for the Core beta and must not be started or advertised as production-ready components.
 - Public contracts are marked `experimental`; breaking API, schema, and migration changes remain possible before a stable release.
 - There is no packaged installer, automatic updater, supported rollback migration, in-place downgrade, or zero-downtime upgrade path. Deployments use reviewed resource copies and forward-only migrations. Backout requires a separately preserved or restored schema compatible with the older Core; older code must never run against a schema already advanced to migration `026`.
@@ -14,7 +14,8 @@ These boundaries are part of the current `0.1.x` release decision. They must not
 - MariaDB `11.8.8` is the Production-Beta database target. MySQL `8.4` is a documented compatibility target but remains outside the candidate until the complete live gate runs against MySQL.
 - The initial target topology is one active Core instance using `deny_new`. Multi-instance operation, cross-instance replacement, and `kick_old` remain outside the beta profile until the dedicated two-instance gate passes.
 - Exact FXServer artifact, oxmysql version, host operating system, and configuration must be recorded in release evidence. Passing headless tests on another environment does not accept an operator deployment.
-- Automated repository tests do not replace a real FiveM client. Join, disconnect, reconnect, aborted-deferral, and restart behavior require manual client evidence on the exact candidate.
+- Automated repository tests do not replace a real FiveM client. The frozen Beta scope requires one exact-candidate join, disconnect, and reconnect smoke test. Aborted-deferral, repeated-retry, and active-player restart scenarios remain later hardening work unless a release-blocking defect appears.
+- A long server soak, permanent evidence runner, historical supported-version upgrade drill, extensive backup/restore certification, and additional non-critical ABI coverage are post-Beta promotion work. Their deferral does not broaden the supported Beta profile or remove normal operator backup responsibilities.
 
 ## Runtime and operations
 
@@ -36,4 +37,4 @@ Use the [release-readiness gate](release-readiness.md) as the canonical decision
 
 ## Current candidate evidence
 
-Predecessor `888a7326b88b9815983c132855a10f1fe8d6996a` passed outage fencing, controlled complete-process recovery after database restore, backup/restore, and the real `cd4b3cd5a1da9123359e7da8db9ca2a0ab1c4f9f` 25-to-26 migration rehearsal. Its planned minimum soak then failed at the first hourly outbox-retention execution before the minimum duration completed. The current runtime tree contains the trusted Cfx JSON-container fix introduced by `e0cbf45`, but the selected clean post-documentation revision still needs the complete exact server gate, fresh soak, and client acceptance. The current release decision is **NO-GO**.
+Current-tree repository, live-database, fresh-boot, public-API, capacity, restart, crash-recovery, stale-facade, database-outage/recovery, final automated, documentation/final-diff/secret-review, and publication-to-`main` evidence has passed. Only one real-client join/disconnect/reconnect smoke test remains open. See [Release readiness](release-readiness.md) for the canonical status.

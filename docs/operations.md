@@ -41,7 +41,7 @@ Recovery has two distinct paths. When oxmysql returns a probe failure or adapter
 
 The five-second watchdog is a fail-closed admission deadline, not query cancellation. With oxmysql `2.14.1`, a rejected pool `getConnection()` can fail to invoke the Lua callback; the corresponding `Await` and tracked probe then cannot settle even though a later independent Doctor query succeeds. Core intentionally keeps admission closed and does not start superseding probes or a restart loop. Restore MariaDB first, verify that it is reachable, and then perform one controlled restart of the complete FXServer process so the oxmysql runtime, pending promise, and Core state end together. A raw `restart synex_core`, repeated Core restarts, or repeatedly restarting FXServer while MariaDB is unavailable is not a supported recovery path. Operator diagnostics and cleanup paths that intentionally touch persistence continue to fail closed with stable Core errors during the outage.
 
-The 2026-08-24 predecessor evidence for `888a7326b88b9815983c132855a10f1fe8d6996a` records the database-outage fence, controlled complete-process recovery, backup/restore, and the real `cd4b3cd5a1da9123359e7da8db9ca2a0ab1c4f9f` 25-to-26 rehearsal as **PASS**. That candidate's planned minimum soak later failed at the first hourly outbox-retention execution before the minimum duration completed. The current runtime tree contains the fix introduced by `e0cbf45`, but the selected clean post-documentation revision must repeat the exact server, soak, backup/upgrade, and client gates; the release decision remains **NO-GO**.
+The final current-candidate database-outage/recovery gate passed. The isolated outage moved Core to `DEGRADED` with player admission closed in 6.73 seconds. After a complete FXServer stop, MariaDB plus a fresh FXServer process returned to `READY` in 10.86 seconds with 26/26 migrations, attempts, and fences applied; no nonterminal migration, open session/authority, Saga, outbox, or idempotency work remained, and the probe replayed idempotently.
 
 ```text
 synex ban <id> <userId> <reason>
@@ -214,7 +214,7 @@ On Core boot, residual players are evicted and the stable instance is atomically
 
 ## Backup and migration operations
 
-Use the executable [MariaDB backup and isolated restore drill](backup-and-restore.md) for release evidence. It is scoped to the candidate Core-only profile and never restores over an existing database. Predecessor `888a7326` passed the encrypted recovery/parity drill and the restored-copy `cd4b3cd5` 25-to-26 rehearsal; the selected clean post-documentation revision containing the fix introduced by `e0cbf45` must repeat both. Explicit operator RPO/RTO approval remains required. The canonical pass/fail criteria are in [Core Production-Beta release readiness](release-readiness.md).
+Use the executable [MariaDB backup and isolated restore drill](backup-and-restore.md) before handling real server data. It is scoped to the Core-only profile and never restores over an existing database. A full exact-candidate restore certification, historical supported-version upgrade rehearsal, and explicit operator RPO/RTO approval are post-Beta promotion work rather than initial Beta blockers. This deferral does not remove the operator's responsibility to keep and verify recoverable backups.
 
 Database migrations are forward-only. Backout switches to an untouched or separately restored pre-upgrade schema that is compatible with the older Core; it never runs older code against the candidate schema and never edits migration markers or reverses candidate DDL in place.
 
@@ -255,4 +255,4 @@ Before using `0.1.0` outside an isolated environment, operators must independent
 - capacity and latency under the server's actual resources;
 - retention, backup, privacy, and incident-response policy.
 
-The repository contains headless and database tests, but no production certification claim. The next selected clean revision remains **NO-GO** until its exact server gates, fresh server-only soak, and real-client lifecycle pass.
+The current database-outage/recovery, final automated, documentation/final-diff/secret-review, and publication-to-`main` stages have passed, but the aggregate Production-Beta decision remains **NO-GO**. Only one real-client join/disconnect/reconnect smoke test remains open. Longer soak, historical upgrade, extensive restore, permanent evidence-runner, and extra non-critical ABI work are deferred to post-Beta promotion.
