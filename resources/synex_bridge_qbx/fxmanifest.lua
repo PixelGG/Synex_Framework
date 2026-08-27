@@ -13,6 +13,7 @@ dependency 'synex_groups'
 synex_manifest 'synex.resource.json'
 
 server_scripts {
+    '@synex_bridge/kernel/foundation.lua',
     '@synex_bridge/native_server.lua',
     'server.lua'
 }

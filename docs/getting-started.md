@@ -1,8 +1,10 @@
 # Getting started
 
-Synex `0.1.0` is an experimental source release, not a packaged drag-and-drop server distribution. The accepted Production-Beta profile covers `synex_core` only. `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, every later resource, and all non-Core libraries, bridges, SDK integrations, and examples are experimental rework snapshots or scaffolds entirely outside that certification boundary.
+Synex `0.1.0` is an experimental source release, not a packaged drag-and-drop server distribution. The accepted Production-Beta profile covers `synex_core` only. `synex_groups` is an Experimental Alpha Organizations Engine with separate working-tree evidence and open acceptance items. `synex_accounts` is a server-only Experimental Alpha Financial Engine whose automated implementation is largely complete; real MariaDB, FXServer, restart/recovery, restored-upgrade, and exact-candidate acceptance remain deferred. `synex_entities` is a server-only Development / Experimental Alpha Entity Authority Engine whose implementation and repository regression surface are present; fresh MariaDB, live FXServer/OneSync, restart/recovery, cluster, real-client/Control, and exact-candidate acceptance remain open. Its read-only `synex_control` projection is experimental. Every later resource and all non-Core libraries, bridges, SDK integrations, and examples remain rework snapshots or scaffolds. All downstream components are outside Core certification.
 
 This guide installs only the accepted Core profile. Do not add `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, compatibility bridges, or other downstream modules to a deployment that is intended to match the documented Core acceptance profile.
+
+Developers reviewing the Financial Engine should use the [Accounts reference](reference/accounts.md) and [server-only consumer example](../examples/synex_accounts-server.md). Those pages describe an Alpha candidate and do not extend this Core installation guide. Accounts exposes no client or NUI; future gameplay and UI belong to `synex_banking`.
 
 ## Requirements
 
@@ -20,7 +22,7 @@ Other FXServer artifacts, operating systems, oxmysql versions, MySQL, multi-inst
 
 ## Validate the source tree
 
-For a fresh checkout:
+For a fresh checkout of the current development candidate:
 
 ```bash
 git clone https://github.com/PixelGG/Synex_Framework.git
@@ -32,7 +34,7 @@ npm run security
 npm run certify
 ```
 
-`npm run check` verifies generated contract consistency, compiles TypeScript, and validates contracts, resource manifests, state definitions, runtime configuration, capability policy, and explicit configuration cross-field rules. The default local test run is headless; the live database test is skipped unless its destructive-test gate is explicitly enabled. See [Testing](testing.md).
+`npm run check` verifies generated contract consistency, compiles TypeScript, and validates contracts, resource manifests, state definitions, runtime configuration, capability policy, and explicit configuration cross-field rules. The default local test run is headless; the live database test is skipped unless its destructive-test gate is explicitly enabled. These commands validate the checked-out candidate; they do not make its current Core additions part of the frozen acceptance decision. See [Testing](testing.md).
 
 ## Place the resources
 
@@ -51,9 +53,9 @@ server-data/
         └── synex_core/
 ```
 
-Copy or link only the selected resource directories while preserving the contents and names inside each one. This repository does not provide a deploy command that flattens the monorepo automatically.
+Copy or link only the selected resource directories while preserving the contents and names inside each one. This repository does not provide a deploy command that flattens the monorepo automatically. Reproducing the accepted profile requires the exact frozen Core revision named in [Release readiness](release-readiness.md); the current workspace includes later Core domain primitives and is a separate candidate.
 
-Do not start the other repository entries automatically. They remain useful implementation and contract references while their rework is in progress, but they are unsupported in the Core Production-Beta profile. Directories that contain only `.gitkeep` are planned boundaries and are not runnable resources.
+Do not start the other repository entries automatically. Groups, Accounts, Entities, and the read-only Entity Control projection are implemented experimental candidates, while other entries may still be rework snapshots or scaffolds. None is supported by the Core Production-Beta profile. Directories that contain only `.gitkeep` are planned boundaries and are not runnable resources.
 
 ## Configure and start
 
@@ -76,7 +78,7 @@ Configure the database connection according to the installed oxmysql release bef
 
 The database session used by oxmysql must use UTC. Synex stores and compares `DATETIME(6)` values with `CURRENT_TIMESTAMP(6)` throughout persistence and uses `UTC_TIMESTAMP(6)` for archive cutoffs; a non-UTC session can shift expiry, lease, queue, outbox, audit, and retention decisions. Before running any migration, Core compares both functions in one database statement and refuses to start when the offset is not zero or the validation query fails. Synex does not set the database session time zone, and this guide intentionally does not assume a connection-string option for a particular oxmysql/database build.
 
-At Core boot, Synex applies its documented ConVar overrides and validates `config/default.json` plus `config/capabilities.json` before database access. It then verifies the UTC database session, discovers `synex.resource.json` through each resource's `synex_manifest` metadata, acquires a database-time migration lease, verifies checksums, applies the 26 declared Core migrations, and validates declared service dependencies and generated contracts before entering `READY`. A boot failure is fail-closed. Migrations owned by experimental resources are intentionally absent from the Core-only installation.
+At Core boot, Synex applies its documented ConVar overrides and validates `config/default.json` plus `config/capabilities.json` before database access. It then verifies the UTC database session, discovers `synex.resource.json` through each resource's `synex_manifest` metadata, acquires a database-time migration lease, verifies checksums, applies the migrations declared by that exact Core revision, and validates declared service dependencies and generated contracts before entering `READY`. A boot failure is fail-closed. The frozen accepted revision declares 26 Core migrations; the current candidate declares the additional `027_domain_primitives` migration and does not inherit that evidence. Migrations owned by experimental resources are intentionally absent from the Core-only installation.
 
 ## Verify the runtime
 
@@ -112,5 +114,5 @@ The current [`examples/synex_example`](../examples/synex_example/) and [resource
 - A lost oxmysql callback does not imply automatic recovery. Admission remains closed; after restoring the database service, restart the complete FXServer process before reopening admission.
 - Public contracts and the consumer API surface remain `experimental` even when the Core runtime reaches Production-Beta acceptance.
 - MySQL, multi-instance operation, `kick_old`, `replace_old`, and `allow` are outside the initial acceptance target. Strict production configuration accepts only `deny_new`.
-- `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, all later resources, bridges, libraries, integrations, and examples are rework snapshots or scaffolds. None is included in Core Production-Beta certification.
+- `synex_groups` is an Experimental Alpha Organizations Engine, `synex_accounts` is a server-only Experimental Alpha Financial Engine, and `synex_entities` is a server-only Development / Experimental Alpha Entity Authority Engine with an experimental read-only Control projection. Entity implementation and repository checks are present, but fresh MariaDB, live FXServer/OneSync, restart/recovery, cluster, real-client/Control, and exact-candidate acceptance remain open. Later resources, bridges, libraries, integrations, and examples remain rework snapshots or scaffolds. None is included in Core Production-Beta certification.
 - A 125-minute soak, permanent evidence runner, historical supported-version upgrade drill, extensive backup/restore certification, and extra non-critical ABI cases are deferred to the post-Beta promotion phase.

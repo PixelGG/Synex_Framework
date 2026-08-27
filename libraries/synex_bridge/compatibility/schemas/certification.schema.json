@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:synex:compatibility:certification:schema:1",
+  "title": "Synex bridge compatibility certification artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "artifactKind",
+    "status",
+    "certified",
+    "profileId",
+    "checks",
+    "certificate",
+    "disclaimer"
+  ],
+  "properties": {
+    "schema": { "type": "integer", "const": 1 },
+    "artifactKind": {
+      "type": "string",
+      "const": "synex-compatibility-certification"
+    },
+    "status": { "type": "string", "const": "CERTIFIED" },
+    "certified": { "type": "boolean", "const": true },
+    "profileId": { "$ref": "#/$defs/name" },
+    "checks": {
+      "type": "array",
+      "minItems": 23,
+      "maxItems": 54,
+      "items": { "$ref": "#/$defs/check" }
+    },
+    "certificate": { "$ref": "#/$defs/certificate" },
+    "disclaimer": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+    }
+  },
+  "$defs": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "provider": {
+      "type": "string",
+      "enum": ["qb", "qbx", "esx"]
+    },
+    "version": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 64,
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_./-]{0,255}$"
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "message"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 384,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,383}$"
+        },
+        "status": { "type": "string", "const": "PASS" },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "tracked"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "tracked": { "type": "boolean", "const": true }
+      }
+    },
+    "test": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "status", "tracked"],
+      "properties": {
+        "path": { "$ref": "#/$defs/path" },
+        "sha256": { "$ref": "#/$defs/hash" },
+        "status": { "type": "string", "const": "PASS" },
+        "tracked": { "type": "boolean", "const": true }
+      }
+    },
+    "certificate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "kind",
+        "profileId",
+        "profileVersion",
+        "provider",
+        "providerResource",
+        "providerVersion",
+        "targetFrameworkApiRange",
+        "script",
+        "tests",
+        "sourceUrls",
+        "bindings",
+        "fingerprint"
+      ],
+      "properties": {
+        "schema": { "type": "integer", "const": 1 },
+        "kind": {
+          "type": "string",
+          "const": "synex-compatibility-certificate"
+        },
+        "profileId": { "$ref": "#/$defs/name" },
+        "profileVersion": { "$ref": "#/$defs/version" },
+        "provider": { "$ref": "#/$defs/provider" },
+        "providerResource": {
+          "type": "string",
+          "enum": ["synex_bridge_qb", "synex_bridge_qbx", "synex_bridge_esx"]
+        },
+        "providerVersion": { "$ref": "#/$defs/version" },
+        "targetFrameworkApiRange": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 64,
+          "pattern": "^[0-9A-Za-z*<>=~^| .+-]+$"
+        },
+        "script": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version"],
+          "properties": {
+            "name": { "$ref": "#/$defs/name" },
+            "version": { "$ref": "#/$defs/version" }
+          }
+        },
+        "tests": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/test" }
+        },
+        "sourceUrls": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 12,
+            "maxLength": 512,
+            "pattern": "^https://[^\\s]+$"
+          }
+        },
+        "bindings": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profileCatalog",
+            "surfaceCatalog",
+            "consumerCatalog",
+            "moneyPolicyCatalog",
+            "reviewLock",
+            "schemas"
+          ],
+          "properties": {
+            "profileCatalog": { "$ref": "#/$defs/binding" },
+            "surfaceCatalog": { "$ref": "#/$defs/binding" },
+            "consumerCatalog": { "$ref": "#/$defs/binding" },
+            "moneyPolicyCatalog": { "$ref": "#/$defs/binding" },
+            "reviewLock": { "$ref": "#/$defs/binding" },
+            "schemas": {
+              "type": "array",
+              "minItems": 8,
+              "maxItems": 8,
+              "items": { "$ref": "#/$defs/binding" }
+            }
+          }
+        },
+        "fingerprint": { "$ref": "#/$defs/hash" }
+      }
+    }
+  }
+}

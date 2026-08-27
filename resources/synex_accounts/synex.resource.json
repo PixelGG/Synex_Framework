@@ -6,7 +6,270 @@
   "synex": "^1.0.0",
   "critical": true,
   "capabilities": {
-    "request": ["synex.events.durable", "synex.runtime.read"]
+    "request": [
+      "synex.audit.append",
+      "synex.capabilities.delegate",
+      "synex.deletions.provider",
+      "synex.events.durable",
+      "synex.metrics.write",
+      "synex.runtime.read",
+      "synex.control.provider.register"
+    ]
+  },
+  "controlProvider": {
+    "schemaVersion": 1,
+    "namespace": "accounts",
+    "label": "Accounts",
+    "category": "domain",
+    "version": "1.0.0",
+    "operations": ["summary", "health", "list", "inspect", "search", "metrics", "findings"],
+    "views": [
+      {
+        "id": "overview",
+        "label": "Accounts overview",
+        "operation": "summary",
+        "presentation": "key-value",
+        "order": 10,
+        "description": "Compact financial-domain totals.",
+        "accessClass": "financial"
+      },
+      {
+        "id": "health",
+        "label": "Accounts health",
+        "operation": "health",
+        "presentation": "key-value",
+        "order": 20,
+        "description": "Read-only ledger and account consistency checks.",
+        "accessClass": "financial"
+      },
+      {
+        "id": "currencies",
+        "label": "Currencies",
+        "operation": "list",
+        "presentation": "table",
+        "order": 30,
+        "description": "Bounded currency and topology read models.",
+        "accessClass": "financial"
+      },
+      {
+        "id": "accounts",
+        "label": "Accounts",
+        "operation": "list",
+        "presentation": "table",
+        "order": 40,
+        "description": "Cursor-based account read model.",
+        "accessClass": "financial"
+      },
+      {
+        "id": "ledger",
+        "label": "Ledger",
+        "operation": "metrics",
+        "presentation": "metrics",
+        "order": 50,
+        "description": "Measured double-entry ledger totals.",
+        "accessClass": "financial"
+      },
+      {
+        "id": "transactions",
+        "label": "Transactions",
+        "operation": "list",
+        "presentation": "table",
+        "order": 60,
+        "description": "Cursor-based posted transaction metadata.",
+        "accessClass": "financial"
+      },
+      {
+        "id": "holds",
+        "label": "Holds",
+        "operation": "list",
+        "presentation": "table",
+        "order": 70,
+        "description": "Cursor-based hold lifecycle state.",
+        "accessClass": "financial"
+      },
+      {
+        "id": "access",
+        "label": "Access",
+        "operation": "list",
+        "presentation": "table",
+        "order": 80,
+        "description": "Bounded access-role and grant aggregates.",
+        "accessClass": "financial"
+      },
+      {
+        "id": "integrity",
+        "label": "Integrity",
+        "operation": "list",
+        "presentation": "findings",
+        "order": 90,
+        "description": "Currency integrity read models.",
+        "accessClass": "financial"
+      },
+      {
+        "id": "reconciliation",
+        "label": "Reconciliation",
+        "operation": "list",
+        "presentation": "table",
+        "order": 100,
+        "description": "Bounded completed reconciliation runs.",
+        "accessClass": "financial"
+      },
+      {
+        "id": "anomalies",
+        "label": "Anomalies",
+        "operation": "findings",
+        "presentation": "findings",
+        "order": 110,
+        "description": "Cursor-based reconciliation findings.",
+        "accessClass": "financial"
+      },
+      {
+        "id": "economy",
+        "label": "Economy",
+        "operation": "metrics",
+        "presentation": "metrics",
+        "order": 120,
+        "description": "Measured 24-hour, 7-day, and 30-day economy windows.",
+        "accessClass": "financial"
+      },
+      {
+        "id": "outbox",
+        "label": "Outbox",
+        "operation": "list",
+        "presentation": "table",
+        "order": 130,
+        "description": "Bounded delivery metadata without event payloads.",
+        "accessClass": "financial"
+      },
+      {
+        "id": "account",
+        "label": "Account inspector",
+        "operation": "inspect",
+        "presentation": "detail",
+        "order": 140,
+        "description": "Inspect one account and its bounded activity.",
+        "input": {
+          "fields": [
+            {
+              "key": "id",
+              "label": "Account ID",
+              "source": "id",
+              "type": "string",
+              "format": "uuid",
+              "required": true,
+              "minLength": 36,
+              "maxLength": 36
+            }
+          ]
+        },
+        "accessClass": "financial"
+      },
+      {
+        "id": "transaction",
+        "label": "Transaction inspector",
+        "operation": "inspect",
+        "presentation": "detail",
+        "order": 150,
+        "description": "Inspect one transaction and its bounded entries.",
+        "input": {
+          "fields": [
+            {
+              "key": "id",
+              "label": "Transaction ID",
+              "source": "id",
+              "type": "string",
+              "format": "uuid",
+              "required": true,
+              "minLength": 36,
+              "maxLength": 36
+            }
+          ]
+        },
+        "accessClass": "financial"
+      },
+      {
+        "id": "hold",
+        "label": "Hold inspector",
+        "operation": "inspect",
+        "presentation": "detail",
+        "order": 160,
+        "description": "Inspect one hold without mutating it.",
+        "input": {
+          "fields": [
+            {
+              "key": "id",
+              "label": "Hold ID",
+              "source": "id",
+              "type": "string",
+              "format": "uuid",
+              "required": true,
+              "minLength": 36,
+              "maxLength": 36
+            }
+          ]
+        },
+        "accessClass": "financial"
+      },
+      {
+        "id": "outbox_detail",
+        "label": "Outbox inspector",
+        "operation": "inspect",
+        "presentation": "detail",
+        "order": 170,
+        "description": "Inspect delivery metadata without exposing its payload.",
+        "input": {
+          "fields": [
+            {
+              "key": "id",
+              "label": "Outbox ID",
+              "source": "id",
+              "type": "string",
+              "format": "uuid",
+              "required": true,
+              "minLength": 36,
+              "maxLength": 36
+            }
+          ]
+        },
+        "accessClass": "financial"
+      },
+      {
+        "id": "search",
+        "label": "Search",
+        "operation": "search",
+        "presentation": "table",
+        "order": 180,
+        "description": "Exact lookup by account or transaction identifier.",
+        "accessClass": "financial",
+        "search": {
+          "kinds": [
+            {
+              "id": "account",
+              "modes": [
+                "exact"
+              ],
+              "accessClass": "financial"
+            },
+            {
+              "id": "transaction",
+              "modes": [
+                "exact"
+              ],
+              "accessClass": "financial"
+            }
+          ]
+        }
+      },
+      {
+        "id": "character_relations",
+        "label": "Character relations",
+        "operation": "inspect",
+        "presentation": "detail",
+        "order": 190,
+        "description": "Bounded account links for one exact character identifier without balances.",
+        "accessClass": "financial"
+      }
+    ]
   },
   "services": {
     "provide": ["synex.accounts@1"],
@@ -33,7 +296,47 @@
       "synex.accounts.revoke_access",
       "synex.accounts.get_access",
       "synex.accounts.run_reconciliation",
-      "synex.accounts.get_integrity"
+      "synex.accounts.get_integrity",
+      "synex.accounts.currency.register",
+      "synex.accounts.currency.get",
+      "synex.accounts.currency.list",
+      "synex.accounts.currency.update",
+      "synex.accounts.get",
+      "synex.accounts.list_by_owner",
+      "synex.accounts.freeze",
+      "synex.accounts.unfreeze",
+      "synex.accounts.close",
+      "synex.accounts.balance.get",
+      "synex.accounts.balance.get_at",
+      "synex.accounts.transfer_v2",
+      "synex.accounts.post",
+      "synex.accounts.mint_v2",
+      "synex.accounts.burn_v2",
+      "synex.accounts.hold.get",
+      "synex.accounts.hold.create",
+      "synex.accounts.hold.capture",
+      "synex.accounts.hold.release",
+      "synex.accounts.transaction.get",
+      "synex.accounts.transaction.list",
+      "synex.accounts.transaction.reverse",
+      "synex.accounts.transaction.refund",
+      "synex.accounts.access.role.create",
+      "synex.accounts.access.grant",
+      "synex.accounts.access.revoke",
+      "synex.accounts.access.check",
+      "synex.accounts.access.explain",
+      "synex.accounts.policy.get",
+      "synex.accounts.policy.set",
+      "synex.accounts.restriction.create",
+      "synex.accounts.restriction.revoke",
+      "synex.accounts.restriction.get",
+      "synex.accounts.restriction.list",
+      "synex.accounts.reason.register",
+      "synex.accounts.reason.get",
+      "synex.accounts.reason.list",
+      "synex.accounts.integrity.get",
+      "synex.accounts.integrity.reconcile",
+      "synex.accounts.outbox.retry"
     ],
     "consume": []
   },
@@ -43,7 +346,11 @@
   },
   "hooks": {
     "register": [],
-    "run": []
+    "run": [
+      "synex.accounts.before_transaction",
+      "synex.accounts.before_transfer",
+      "synex.accounts.before_hold_capture"
+    ]
   },
   "dependencies": {
     "required": [
@@ -89,6 +396,61 @@
       "id": "006_financial_archive",
       "path": "migrations/006_financial_archive.sql",
       "transactional": false
+    },
+    {
+      "id": "007_operation_scope_and_provenance",
+      "path": "migrations/007_operation_scope_and_provenance.sql",
+      "transactional": false
+    },
+    {
+      "id": "008_reason_currency_topology",
+      "path": "migrations/008_reason_currency_topology.sql",
+      "transactional": false
+    },
+    {
+      "id": "009_multileg_ledger",
+      "path": "migrations/009_multileg_ledger.sql",
+      "transactional": false
+    },
+    {
+      "id": "010_refunds",
+      "path": "migrations/010_refunds.sql",
+      "transactional": false
+    },
+    {
+      "id": "011_hold_lifecycle_v2",
+      "path": "migrations/011_hold_lifecycle_v2.sql",
+      "transactional": false
+    },
+    {
+      "id": "012_access_policies",
+      "path": "migrations/012_access_policies.sql",
+      "transactional": false
+    },
+    {
+      "id": "013_group_deletion_journal",
+      "path": "migrations/013_group_deletion_journal.sql",
+      "transactional": false
+    },
+    {
+      "id": "014_integrity_outbox_control",
+      "path": "migrations/014_integrity_outbox_control.sql",
+      "transactional": false
+    },
+    {
+      "id": "015_financial_archive_v2",
+      "path": "migrations/015_financial_archive_v2.sql",
+      "transactional": false
+    },
+    {
+      "id": "016_financial_entry_bounds",
+      "path": "migrations/016_financial_entry_bounds.sql",
+      "transactional": false
+    },
+    {
+      "id": "017_idempotency_principal_scope",
+      "path": "migrations/017_idempotency_principal_scope.sql",
+      "transactional": false
     }
   ],
   "dataOwnership": {
@@ -112,12 +474,28 @@
       "synex_economy_reconciliation_runs",
       "synex_economy_anomaly_findings",
       "synex_account_character_deletions",
-      "synex_financial_transaction_archive"
+      "synex_financial_transaction_archive",
+      "synex_account_migration_assertions",
+      "synex_account_reason_codes",
+      "synex_currency_system_topology",
+      "synex_ledger_entries",
+      "synex_ledger_refund_anchors",
+      "synex_ledger_refunds",
+      "synex_account_hold_events_v2",
+      "synex_account_restrictions",
+      "synex_account_policies",
+      "synex_account_policy_allowed_operations",
+      "synex_account_policy_daily_usage",
+      "synex_account_group_deletions",
+      "synex_account_outbox_attempts",
+      "synex_account_outbox_retry_requests",
+      "synex_financial_transaction_archive_v2",
+      "synex_financial_entry_archive_v2"
     ],
     "characterDelete": "anonymize"
   },
   "stateSnapshot": {
     "supported": true,
-    "schemaVersion": 1
+    "schemaVersion": 2
   }
 }

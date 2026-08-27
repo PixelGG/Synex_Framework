@@ -15,7 +15,7 @@ The internal result convention is `value, nil` or `nil, error`. At a raw cross-r
 Every public contract in `0.1.0` is marked `experimental`. The API version is `1.0.0`, but that does not make the framework release stable.
 
 > [!IMPORTANT]
-> The accepted Production-Beta profile covers the `synex_core` runtime only. Its three ABI exports and caller-bound facade remain experimental integration surfaces. Catalog entries and providers owned by `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, bridges, SDKs, examples, or other downstream modules are rework snapshots outside certification.
+> The frozen Production-Beta profile covers one exact `synex_core` tree only. Its three ABI exports and caller-bound facade remain experimental integration surfaces. The current Core DataPort/domain-deletion additions, the Experimental Alpha `synex_groups` Organizations Engine, the server-only Experimental Alpha `synex_accounts` Financial Engine, and every other downstream provider remain outside that certification.
 
 ## Facade groups
 
@@ -35,8 +35,32 @@ The caller-bound facade currently includes:
 | `Scheduler` | owner-aware delayed and periodic callbacks with cooperative cancellation |
 | `Connections` | bounded custom connection-gate registration |
 | `Idempotency`, `Outbox`, `Sagas`, `Audit` | persistence-backed reliability primitives; durable publish, saga, and audit facade operations are capability-gated |
+| `Database` | caller-bound, manifest-ownership-checked read/write/transaction/maintenance DataPort for reviewed server domains |
+| `DomainDeletions` | owner-aware domain-deletion provider registration and coordinated preflight/execute/reconcile lifecycle |
 
 This table is a navigation aid, not a substitute for a contract. Internal factory objects and mutable registries are not public APIs.
+
+### Domain database access
+
+`api.Database` is a server-only DataPort for reviewed domain resources. It is not a raw oxmysql export. Every call remains bound to the immediate caller and its current resource epoch, requires the matching `synex.database.*` capability, and may reference only tables declared under `dataOwnership.tables` in that caller's validated `synex.resource.json`.
+
+- `read(request)` accepts one bounded parameterized `SELECT` statement and returns a bounded copy of its rows.
+- `write(request)` accepts one bounded parameterized `INSERT`, `UPDATE`, or `DELETE` statement and commits it transactionally.
+- `transaction(request, handler)` claims and locks the exact owner/operation/idempotency receipt before invoking the bounded transaction adapter. Reusing that key with another request fails closed; an exact completed request is replayed without running the handler again. Different idempotency keys may execute their handlers concurrently. Only after the handler returns and its response passes validation does Core lock the global and owner receipt-capacity rows and finalize the receipt and counters atomically.
+- `maintenance(request, handler)` provides the same ownership-checked transaction adapter for bounded reconciliation and worker batches, without claiming public-request idempotency.
+- `null()` returns the explicit SQL-`NULL` sentinel used in parameter arrays.
+
+The adapter exposes `query`, `many`, `one`, `affected`, `update`, and `insert` inside a transaction. SQL comments, multiple statements, DDL, schema-qualified identifiers, unowned tables, placeholder mismatches, stale owner epochs, and out-of-bound requests or results are rejected before the domain receives a successful result. The receipt is replay protection, not a mutex for domain entities: handlers must still use deterministic row locks and/or compare-and-swap versions for conflicting state. A handler can be rolled back or retried and must not perform irreversible external effects. Direct `oxmysql` access remains a Core implementation detail.
+
+### Coordinated domain deletion
+
+`api.DomainDeletions` coordinates deletion decisions across current, owner-bound providers. Providers register `preflight` and idempotent `execute` callbacks for a named domain and schema version. Preflight decisions are limited to `allow`, `block`, `delete`, `anonymize`, or `retain`; the resulting provider snapshot and plan are persisted before execution.
+
+Only the resource that owns a domain may create its plans through `plan(request)`. `get(planId)` reads a persisted plan, while `process(planId)` executes pending destructive or anonymizing actions behind a fenced lease. Missing provider rebinds and retryable execution failures keep the plan pending for reconciliation; a blocked plan never executes destructive actions. The caller must declare and be granted `synex.deletions.provider`, `synex.deletions.read`, or `synex.deletions.manage` as appropriate.
+
+The coordinator retains at most 10,000 plans globally and 1,000 for one requester owner. Every plan state consumes capacity until the row is physically purged; pending and executing plans are never selected for automatic purge. Terminal plans retain their idempotent replay result for 30 days, after which a bounded compare-and-swap compactor locks candidates in `plan -> global capacity -> sorted requester-owner capacity` order and removes only rows still due. Once that physical purge succeeds, the old replay record no longer exists and the same idempotency key may create a new plan.
+
+Provider schema changes fail closed while a pending action still requires the previous schema version. Plan persistence locks and rechecks the provider catalog after preflight, so a concurrent re-registration returns `DELETION_PROVIDER_SCHEMA_CHANGED` instead of recording a mixed-schema plan. Provider execution remains idempotent and must reconcile retryable outcomes rather than claiming that an unconfirmed destructive effect completed.
 
 `GetRuntimeStatus()` reports lifecycle availability and player admission separately. During a runtime database outage it can validly return `state = "DEGRADED"`, `operational = true`, and `playerAdmission = false`: Core remains available for bounded diagnostics, but it is not healthy and must not admit a new player. Consumers must not treat `operational` alone, or a separate successful Doctor query, as readiness; only `READY` with `playerAdmission = true` and no health reasons is the healthy admission state. The current `synex.runtime.status@2.0.0` contract includes `playerAdmission`; version `1.0.0` is the legacy shape without that field.
 
@@ -105,7 +129,7 @@ Registered RPC, service, hook, lifecycle, and other provider callbacks execute a
 
 `registerServer` forces `network = none`. `registerNetwork` creates a client-to-server entry point only for an explicitly declared contract and applies closed-envelope validation, a cycle-safe structural payload walk before encoding, an encoded request-payload bound, a complete serialized response-envelope bound, per-source pending limits, token buckets, session/source-generation checks, contract validation, capability authorization, and response validation. Both transport bounds use `rpc.maximumPayloadBytes`. The handler receives a Core-owned monotonic `deadlineAt` capped by both the RPC timeout and the current local session-authority deadline. Handler errors are copied rather than mutated and cross the boundary only with a plain closed shape and a code listed in that contract's `errors`; every other provider failure is normalized to `INTERNAL_ERROR`.
 
-All generated contracts in the current `0.1.0` catalog declare `network: none`, and every current provider registers only server-local handlers. The shared client request transport exists, but this checkout exposes no domain contract through it; a future or third-party provider must make network registration an explicit reviewed choice.
+The current `0.1.0` source catalog contains 171 versioned definitions: seven from Core, one example definition, 71 from Groups, 59 from Accounts and 33 Entity definitions across 32 names. Exactly one is client-callable: `synex.groups.self.snapshot` declares `client-to-server` and is registered through `registerNetwork`; the other 170 definitions declare `network: none`. The projection accepts only an optional cursor and limit of at most 8, requires an active Core session, derives the character from that session, applies the contract rate bucket, and returns only the caller's bounded membership/grade/role/duty view. It cannot select another actor or invoke a mutation. All Accounts and Entity definitions are server-local.
 
 Client cancellation frames are accepted only for an active session and a request ID of 8–96 characters in the transport's restricted character set. They use a per-source token bucket and can cancel only an active request keyed to that source and its current Synex generation; invalid or excess cancellation traffic is ignored. Cancellation is cooperative and does not make an already committed mutation reversible.
 
@@ -127,31 +151,46 @@ Generic idempotency keeps every terminal key tombstone so the same namespace/key
 
 Persisted session-control requests use database-authoritative retained-row capacity. An exact valid pending request remains replayable when a limit is reached; only a new request is denied. Completed and expired requests become deletion-eligible after `sessionControlAfterDays`, but pending requests never do, even when their action deadline has elapsed. The authority worker terminalizes those rows first. Request and authority rows are operationally ephemeral after this grace and must not be used as durable audit history; request IDs are never reused.
 
-Core itself registers `synex.runtime@1`; its `status` and `snapshot` methods accept an empty request and require `synex.runtime.read`. The source tree also contains the following provider declarations in downstream rework snapshots. This table is a source catalog only: do not start those resources, depend on these methods, or infer release support from a declaration.
+Core itself registers `synex.runtime@1`; its `status` and `snapshot` methods accept an empty request and require `synex.runtime.read`. The source tree also contains the following provider declarations in downstream experimental candidates or snapshots. This table is a source catalog only: do not infer release support from a declaration.
 
-| Snapshot provider declaration | Read-only methods | Method capability |
+| Experimental provider declaration | Methods | Method capability |
 | --- | --- | --- |
-| `synex.groups@1` | `get`, `get_read_model`, `list_subject_memberships`, `check_capability`, `get_control_summary` | `synex.groups.read` |
-| `synex.accounts@1` | `get_snapshot`, `list_owner_accounts`, `get_hold` | `synex.accounts.read` |
-| `synex.accounts@1` | `get_access` | `synex.accounts.access.read` |
-| `synex.accounts@1` | `get_integrity`, `get_control_summary` | `synex.accounts.integrity.read` |
+| `synex.groups@1` | the schema-validated operations in the current Groups contract catalog, with dotted suffixes mapped to underscores | per Groups contract; see [Groups reference](../reference/groups.md) |
+| `synex.accounts@1` | all 59 schema-validated Accounts operations, with dotted suffixes mapped to underscores | per Accounts contract; see [Accounts reference](../reference/accounts.md) |
+| `synex.accounts@1` | `get_control_summary`, `doctor`, `inspect_transaction`, `inspect_account`, `inspect_outbox` | `synex.accounts.integrity.read` |
 | `synex.entities@1` | `getHealth` | `synex.entities.health` |
-| `synex.entities@1` | `getControlSummary` | `synex.entities.read` |
+| `synex.entities@1` | `getControlSummary`, `getDiagnosticSnapshot`, `inspectEntity` | `synex.entities.read` |
+| `synex.entities@1` | `queryByBucket`, `queryByOwner`, `queryByResource` | `synex.entities.query` |
 | `synex.example@1` | `echo` | none; optional example provider |
 
-Identity, messaging, and state remain facade/contract surfaces in `0.1.0`; manifests do not advertise unregistered services for them. Service methods are local server calls, not client endpoints. Domain mutations remain versioned RPC contracts so Core preserves the immediate consumer identity and enforces contract and capability policy.
+Identity, messaging, and state remain facade/contract surfaces in `0.1.0`; manifests do not advertise unregistered services for them. Service methods are local server calls, not client endpoints. The Groups Alpha exposes its 70 server-only operations through both versioned server RPC contracts and its versioned service; both routes preserve the immediate caller, apply the same contract validation, and enforce the method capability. `self.snapshot` is deliberately excluded from the service and exists only as the session-bound network projection. Extension providers must call the server-only `synex.groups.registries.begin` once per owner epoch before registering their complete desired definition set. The Accounts Alpha similarly exposes its 59 server-only operations through versioned RPC contracts and the service with the same validation and per-method capability map. Neither route creates a client endpoint or bypasses account ownership, policy, restriction, or actor checks.
 
 The non-Core rows above may change or disappear during rework. A manifest declaration, generated type, test, or checked-in provider implementation is not evidence that the owning resource is deployment-ready.
 
 ## Operator command surface
 
-The restricted, console-only `synex` command exposes `overview`, typed read operations for `status`, `doctor`, `resources`, `sessions`, `permissions`, `migrations`, `ledger`, and `entities`, plus the explicit restart and access surfaces documented below. Exact audit lookup uses:
+The restricted, console-only `synex` command exposes `overview`, typed read operations for `status`, `doctor`, `resources`, `sessions`, `permissions`, `migrations`, `ledger`, `entities`, and the Accounts operations below, plus the explicit restart and access surfaces documented afterward. Exact Core audit lookup uses:
 
 ```text
 synex trace <trace|character|transaction|resource> <value> [limit]
 ```
 
 The optional limit is `1..64`; output is structured JSON. `synex overview` is the bounded human-readable summary for initial runtime verification. `synex_status` and `synex_doctor` remain restricted compatibility aliases. The `ledger` and `entities` commands call their read-only service summaries and return a bounded service error when that optional provider is unavailable.
+
+The exact Accounts command surface in the current Core implementation is:
+
+```text
+synex doctor accounts
+synex ledger
+synex accounts status
+synex accounts trace <transaction>
+synex accounts inspect <account>
+synex accounts outbox [limit]
+synex accounts outbox-retry <event-uuid> <idempotency-uuid>
+synex accounts reconcile <currency> <idempotency-uuid>
+```
+
+`outbox` defaults to 25 and accepts `1..50`. Every command is console-only and registered as a restricted Cfx command. Status, Doctor, trace, inspect, outbox, and ledger are bounded reads. `synex accounts reconcile` is a capability-declared, idempotent financial-integrity mutation that persists a reconciliation run, findings, domain audit, and outbox evidence. `synex accounts outbox-retry` is separately capability-gated and can requeue exactly one eligible dead event while retaining a durable retry request and audit trail. Neither operation repairs balances or rewrites financial history.
 
 Prepared Core restarts use the one-way command below while Core is still running:
 
@@ -185,4 +224,4 @@ npm run generate
 
 CI uses `npm run generate:check` and fails on drift. Generated artifacts include runtime JSON, Lua registries, the core Lua registry, TypeScript types, and the [generated contract catalog](../../packages/contracts/generated/docs/contracts.md). Generated files must not be edited by hand.
 
-See [Contracts and API stability](../architecture/contracts.md), [SDKs](../reference/sdks.md), and the runnable [`synex_example`](../../examples/synex_example/).
+See [Contracts and API stability](../architecture/contracts.md), [SDKs](../reference/sdks.md), the runnable [`synex_example`](../../examples/synex_example/), and the documentation-only [server Accounts consumer example](../../examples/synex_accounts-server.md).

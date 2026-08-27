@@ -16,7 +16,7 @@ factories.commands = function(deps)
     local registry = {}
     local bound = false
     local maximumEntries = 256
-    local usage = 'synex <overview|status|doctor|resources|sessions|permissions|trace|migrations|ledger|entities|prepare-restart|access|ban|unban|allow|unallow>'
+    local usage = 'synex <overview|status|doctor|resources|sessions|permissions|trace|migrations|accounts|ledger|entities|prepare-restart|access|ban|unban|allow|unallow>'
 
     local function commandError(code, message, retryable)
         return foundation.error(code, message, { retryable = retryable == true })
@@ -109,7 +109,7 @@ factories.commands = function(deps)
         }
     end
 
-    local function serviceSummary(name, method, resource)
+    local function serviceSummary(name, method, resource, request)
         local state = platform.resourceState(resource)
         if state == 'missing' then
             return { available = false, status = 'NOT_INSTALLED', resource = resource }, nil
@@ -130,7 +130,8 @@ factories.commands = function(deps)
         if not registries.owners:isCurrent(coreResource, epoch) then
             return { available = false }, commandError('CORE_NOT_READY', 'The Core service owner is not active.', true)
         end
-        local result, err = messaging.services:call(coreResource, epoch, name, '^1.0.0', method, {}, {
+        local result, err = messaging.services:call(coreResource, epoch, name, '^1.0.0', method,
+            request or {}, {
             traceId = foundation.nextId('trace')
         })
         if err then
@@ -198,8 +199,22 @@ factories.commands = function(deps)
         end
     }
     registry.doctor = {
-        minimum = 1, maximum = 1,
-        run = function() return runtime:doctor() end
+        minimum = 1, maximum = 2,
+        run = function(arguments)
+            if arguments[2] == nil then return runtime:doctor() end
+            if arguments[2] == 'groups' then
+                return serviceSummary('synex.groups', 'doctor', 'synex_groups')
+            end
+            if arguments[2] == 'accounts' then
+                return serviceSummary('synex.accounts', 'doctor', 'synex_accounts')
+            end
+            if arguments[2] == 'entities' then
+                return serviceSummary(
+                    'synex.entities', 'getDiagnosticSnapshot', 'synex_entities')
+            end
+            return nil, commandError(
+                'INVALID_ARGUMENT', 'usage: synex doctor [groups|accounts|entities]')
+        end
     }
     registry.resources = {
         minimum = 1, maximum = 1,
@@ -235,6 +250,52 @@ factories.commands = function(deps)
     registry.ledger = {
         minimum = 1, maximum = 1,
         run = function() return serviceSummary('synex.accounts', 'get_control_summary', 'synex_accounts') end
+    }
+    registry.accounts = {
+        minimum = 2, maximum = 4,
+        run = function(arguments)
+            local operation = arguments[2]
+            if operation == 'status' and arguments[3] == nil then
+                return serviceSummary('synex.accounts', 'get_control_summary',
+                    'synex_accounts')
+            end
+            if operation == 'trace' and arguments[3] ~= nil and arguments[4] == nil then
+                return serviceSummary('synex.accounts', 'inspect_transaction',
+                    'synex_accounts', { transaction_id = arguments[3] })
+            end
+            if operation == 'inspect' and arguments[3] ~= nil and arguments[4] == nil then
+                return serviceSummary('synex.accounts', 'inspect_account',
+                    'synex_accounts', { account_id = arguments[3] })
+            end
+            if operation == 'outbox' and arguments[4] == nil then
+                local maximum = arguments[3] == nil and 25 or tonumber(arguments[3])
+                if not maximum or math.type(maximum) ~= 'integer'
+                    or maximum < 1 or maximum > 50 then
+                    return nil, commandError('INVALID_ARGUMENT',
+                        'Accounts outbox limit must be an integer from 1 through 50.')
+                end
+                return serviceSummary('synex.accounts', 'inspect_outbox',
+                    'synex_accounts', { maximum = maximum })
+            end
+            if operation == 'reconcile' and arguments[3] ~= nil
+                and arguments[4] ~= nil then
+                return serviceSummary('synex.accounts', 'integrity_reconcile',
+                    'synex_accounts', {
+                        currency_code = arguments[3], idempotency_key = arguments[4],
+                    })
+            end
+            if operation == 'outbox-retry' and arguments[3] ~= nil
+                and arguments[4] ~= nil then
+                return serviceSummary('synex.accounts', 'outbox_retry',
+                    'synex_accounts', {
+                        event_id = arguments[3], idempotency_key = arguments[4],
+                        reason = 'operator-reviewed-manual-retry',
+                        actor_kind = 'system', actor_ref = coreResource,
+                    })
+            end
+            return nil, commandError('INVALID_ARGUMENT',
+                'usage: synex accounts <status|trace <transaction>|inspect <account>|outbox [limit]|outbox-retry <event-uuid> <idempotency-uuid>|reconcile <currency> <idempotency-uuid>>')
+        end
     }
     registry.entities = {
         minimum = 1, maximum = 1,

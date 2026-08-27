@@ -349,6 +349,179 @@ factories.foundation = function(deps)
 
     local mainExecutionKey = {}
     local executionContexts = setmetatable({}, { __mode = 'k' })
+    local maximumTraceSpans = math.max(32, math.min(
+        math.floor(tonumber(deps.maximumTraceSpans) or 512), 2048))
+    local traceSpans = {}
+    local traceSequence = 0
+    local traceSecretFragments = {
+        'password', 'passphrase', 'secret', 'credential', 'webhook',
+        'privatekey', 'apikey', 'accesstoken', 'refreshtoken', 'license'
+    }
+
+    local function safeTraceText(value, fallback, maximum)
+        if type(value) ~= 'string' or #value < 1 or #value > maximum
+            or value:find('[%z\1-\31\127]')
+            or not value:match('^[A-Za-z0-9][A-Za-z0-9_.:@%-]*$') then
+            return fallback
+        end
+        return value
+    end
+    local function safeTraceIdentifier(value)
+        local candidate = safeTraceText(value, nil, 128)
+        if candidate == nil then return nil end
+        local normalized = candidate:lower()
+        for _, fragment in ipairs(traceSecretFragments) do
+            if normalized:find(fragment, 1, true) then return nil end
+        end
+        return candidate
+    end
+
+    local function traceChildren()
+        local children = {}
+        for _, span in ipairs(traceSpans) do
+            if span.parentSpanId ~= nil then
+                local entries = children[span.parentSpanId] or {}
+                entries[#entries + 1] = span.spanId
+                children[span.parentSpanId] = entries
+            end
+        end
+        return children
+    end
+
+    local function projectSpan(span, children)
+        local childIds = children[span.spanId] or {}
+        local projectedChildren = {}
+        for index = 1, math.min(#childIds, 16) do
+            projectedChildren[index] = childIds[index]
+        end
+        return {
+            cursor = tostring(span.sequence),
+            traceId = span.traceId,
+            spanId = span.spanId,
+            parentSpanId = span.parentSpanId,
+            childSpanIds = projectedChildren,
+            resource = span.resource,
+            operation = span.operation,
+            compatProvider = span.compatProvider,
+            consumer = span.consumer,
+            legacyApi = span.legacyApi,
+            durationMs = span.durationMs,
+            status = span.status,
+            errorCode = span.errorCode,
+            timestamp = span.startedAt
+        }
+    end
+
+    local tracing = {}
+    function tracing:list(request)
+        request = request == nil and {} or request
+        if type(request) ~= 'table' or getmetatable(request) ~= nil then
+            return nil, errorResult('INVALID_ARGUMENT',
+                'Trace history requires a bounded plain request.')
+        end
+        for key in pairs(request) do
+            if key ~= 'cursor' and key ~= 'limit' and key ~= 'traceId' then
+                return nil, errorResult('INVALID_ARGUMENT',
+                    'Trace history request contains an unknown property.')
+            end
+        end
+        local limit = request.limit == nil and 25 or request.limit
+        if type(limit) ~= 'number' or math.type(limit) ~= 'integer'
+            or limit < 1 or limit > 50 then
+            return nil, errorResult('INVALID_ARGUMENT',
+                'Trace history limit must be an integer from 1 through 50.')
+        end
+        local cursor = nil
+        if request.cursor ~= nil then
+            if type(request.cursor) ~= 'string' or #request.cursor < 1
+                or #request.cursor > 20 or not request.cursor:match('^[1-9]%d*$') then
+                return nil, errorResult('INVALID_CURSOR', 'Trace history cursor is invalid.')
+            end
+            cursor = tonumber(request.cursor)
+            if cursor == nil or cursor > traceSequence + 1 then
+                return nil, errorResult('INVALID_CURSOR', 'Trace history cursor is invalid.')
+            end
+        end
+        local traceId = nil
+        if request.traceId ~= nil then
+            traceId = safeTraceIdentifier(request.traceId)
+            if traceId == nil then
+                return nil, errorResult('INVALID_ARGUMENT', 'Trace id is invalid.')
+            end
+        end
+
+        local selected, hasMore, matched = {}, false, 0
+        if traceId ~= nil then
+            for _, span in ipairs(traceSpans) do
+                if span.traceId == traceId then matched = matched + 1 end
+            end
+        end
+        for index = #traceSpans, 1, -1 do
+            local span = traceSpans[index]
+            if (cursor == nil or span.sequence < cursor)
+                and (traceId == nil or span.traceId == traceId) then
+                if #selected >= limit then
+                    hasMore = true
+                    break
+                end
+                selected[#selected + 1] = span
+            end
+        end
+        local children = traceChildren()
+        local items = {}
+        for index, span in ipairs(selected) do items[index] = projectSpan(span, children) end
+        return {
+            status = 'AVAILABLE',
+            items = items,
+            nextCursor = hasMore and tostring(selected[#selected].sequence) or nil,
+            hasMore = hasMore,
+            truncated = hasMore,
+            retained = #traceSpans,
+            matched = traceId and matched or nil,
+            maximumRetained = maximumTraceSpans,
+            payloadsExposed = false
+        }, nil
+    end
+
+    function tracing:detail(traceId, request)
+        traceId = safeTraceIdentifier(traceId)
+        if type(request) == 'number' then request = { limit = request } end
+        request = request == nil and {} or request
+        if traceId == nil or type(request) ~= 'table' or getmetatable(request) ~= nil then
+            return nil, errorResult('INVALID_ARGUMENT',
+                'Trace detail id or page is invalid.')
+        end
+        for key in pairs(request) do
+            if key ~= 'cursor' and key ~= 'limit' then
+                return nil, errorResult('INVALID_ARGUMENT',
+                    'Trace detail page contains an unknown property.')
+            end
+        end
+        local retainedSpans = 0
+        for _, span in ipairs(traceSpans) do
+            if span.traceId == traceId then retainedSpans = retainedSpans + 1 end
+        end
+        if retainedSpans == 0 then
+            return nil, errorResult('TRACE_NOT_FOUND',
+                'The requested trace is not retained by this Core process.')
+        end
+        local page, pageError = self:list({
+            traceId = traceId,
+            cursor = request.cursor,
+            limit = request.limit
+        })
+        if not page then return nil, pageError end
+        return {
+            status = 'AVAILABLE',
+            traceId = traceId,
+            items = page.items,
+            hasMore = page.hasMore,
+            nextCursor = page.nextCursor,
+            truncated = page.truncated,
+            retainedSpans = retainedSpans,
+            payloadsExposed = false
+        }, nil
+    end
     local function executionKey()
         local running, isMain = coroutine.running()
         if running == nil or isMain == true then return mainExecutionKey end
@@ -361,12 +534,53 @@ factories.foundation = function(deps)
         if not isCallable(handler) then error('execution context handler must be callable', 2) end
         local key = executionKey()
         local previous = executionContexts[key]
-        executionContexts[key] = type(context) == 'table' and deepCopy(context) or {}
+        local active = type(context) == 'table' and deepCopy(context) or {}
+        local traceId = safeTraceIdentifier(active.traceId)
+            or safeTraceIdentifier(previous and previous.traceId)
+            or nextId('trace')
+        local explicitParent = safeTraceIdentifier(active.parentSpanId)
+        local parentSpanId = explicitParent
+            or (previous and previous.traceId == traceId
+                and safeTraceIdentifier(previous.spanId) or nil)
+        local spanId = nextId('span')
+        active.traceId = traceId
+        active.spanId = spanId
+        active.parentSpanId = nil
+        executionContexts[key] = active
+        local startedAtMs = monotonicMs()
+        local startedAt = utcIso()
         local arguments = table.pack(...)
         local results = table.pack(xpcall(function()
             return handler(table.unpack(arguments, 1, arguments.n))
         end, debug.traceback))
+        local finishedAtMs = monotonicMs()
         executionContexts[key] = previous
+        local errorCode = nil
+        if not results[1] then
+            errorCode = failureCode(results[2], 'RUNTIME_EXCEPTION')
+        elseif type(results[3]) == 'table' and rawget(results[3], 'code') ~= nil then
+            errorCode = failureCode(results[3], 'OPERATION_FAILED')
+        end
+        traceSequence = traceSequence + 1
+        traceSpans[#traceSpans + 1] = {
+            sequence = traceSequence,
+            traceId = traceId,
+            spanId = spanId,
+            parentSpanId = parentSpanId,
+            resource = safeTraceText(active.provider or active.caller or active.resource,
+                'synex_core', 64),
+            operation = safeTraceText(active.contract or active.service or active.hook
+                or active.operation, 'runtime', 128),
+            compatProvider = safeTraceText(active.compatProvider, nil, 16),
+            consumer = safeTraceText(active.consumer, nil, 64),
+            legacyApi = safeTraceText(active.legacyApi, nil, 64),
+            durationMs = math.max(0, finishedAtMs - startedAtMs),
+            status = errorCode and 'ERROR' or 'SUCCESS',
+            errorCode = errorCode,
+            startedAt = startedAt,
+            finishedAt = utcIso()
+        }
+        if #traceSpans > maximumTraceSpans then table.remove(traceSpans, 1) end
         if not results[1] then error(results[2], 0) end
         return table.unpack(results, 2, results.n)
     end
@@ -541,6 +755,7 @@ factories.foundation = function(deps)
         redact = redact,
         currentContext = currentContext,
         withContext = withContext,
+        tracing = tracing,
         logger = deps.logger or logger,
         metrics = deps.metrics or metrics,
         loadJson = loadJson

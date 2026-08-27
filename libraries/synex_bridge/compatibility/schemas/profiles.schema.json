@@ -1,0 +1,424 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:synex:compatibility:profiles:schema:1",
+  "title": "Synex bridge compatibility profiles",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schema", "kind", "profiles"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "const": "./schemas/profiles.schema.json"
+    },
+    "schema": {
+      "type": "integer",
+      "const": 1
+    },
+    "kind": {
+      "type": "string",
+      "const": "synex-compatibility-profiles"
+    },
+    "profiles": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/profile"
+      }
+    }
+  },
+  "$defs": {
+    "provider": {
+      "type": "string",
+      "enum": ["qb", "qbx", "esx"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["CERTIFIED", "COMPATIBLE", "PARTIAL", "UNSUPPORTED", "UNKNOWN"]
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["strict", "compat", "silent"]
+    },
+    "failurePolicy": {
+      "type": "string",
+      "enum": ["warn", "disable", "fail_start"]
+    },
+    "version": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 64,
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": ["status"],
+            "properties": {
+              "status": {
+                "const": "CERTIFIED"
+              }
+            }
+          },
+          "then": {
+            "required": ["certificationArtifact"],
+            "properties": {
+              "script": {
+                "type": "object",
+                "properties": {
+                  "testedVersion": {
+                    "$ref": "#/$defs/version"
+                  }
+                }
+              },
+              "certificationArtifact": {
+                "type": "string",
+                "minLength": 35,
+                "maxLength": 192,
+                "pattern": "^compatibility/certifications/[a-z][a-z0-9_.-]*\\.json$"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "targetFrameworkApiRange": { "type": "null" }
+            },
+            "required": ["targetFrameworkApiRange"]
+          },
+          "then": {
+            "required": ["upstream"],
+            "properties": {
+              "upstream": {}
+            }
+          }
+        }
+      ],
+      "required": [
+        "id",
+        "version",
+        "script",
+        "provider",
+        "mode",
+        "status",
+        "failurePolicy",
+        "providerVersion",
+        "targetFrameworkApiRange",
+        "requiredSurfaces",
+        "requiredAdapters",
+        "evidence"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[a-z][a-z0-9_.:-]{0,95}$"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        },
+        "script": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "testedVersion"],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$"
+            },
+            "testedVersion": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/version"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "provider": {
+          "$ref": "#/$defs/provider"
+        },
+        "mode": {
+          "$ref": "#/$defs/mode"
+        },
+        "status": {
+          "$ref": "#/$defs/status"
+        },
+        "failurePolicy": {
+          "$ref": "#/$defs/failurePolicy"
+        },
+        "providerVersion": {
+          "$ref": "#/$defs/version"
+        },
+        "targetFrameworkApiRange": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 64,
+              "pattern": "^[0-9A-Za-z*<>=~^| .+-]+$"
+            },
+            { "type": "null" }
+          ]
+        },
+        "vendor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "upstream": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["repository", "revision"],
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 12,
+              "maxLength": 512,
+              "pattern": "^https://[^\\s]+$"
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            }
+          }
+        },
+        "requiredDomains": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["identity", "accounts", "groups", "metadata", "inventory", "vehicles", "interaction", "notifications", "ui", "banking", "provider"]
+          }
+        },
+        "requiredExports": {
+          "type": "array",
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["resource", "name", "side"],
+            "properties": {
+              "resource": { "type": "string", "minLength": 2, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+              "name": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$" },
+              "side": { "type": "string", "enum": ["client", "server", "shared"] }
+            }
+          }
+        },
+        "requiredEvents": {
+          "type": "array",
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "direction"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$" },
+              "direction": { "type": "string", "enum": ["client_to_server", "server_to_client", "local_client", "local_server"] }
+            }
+          }
+        },
+        "directSql": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["table", "mode"],
+            "properties": {
+              "table": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9_]+$" },
+              "mode": { "type": "string", "enum": ["read", "write", "read_write"] }
+            }
+          }
+        },
+        "knownLimitations": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f]+$" }
+        },
+        "testedFlows": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "status", "environmentRequirements"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$" },
+              "status": { "type": "string", "enum": ["PASS", "FAIL", "NOT_TESTED"] },
+              "environmentRequirements": {
+                "type": "array", "maxItems": 32, "uniqueItems": true,
+                "items": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\u0000-\\u001f\\u007f]+$" }
+              }
+            }
+          }
+        },
+        "certificationArtifact": {
+          "type": "string",
+          "minLength": 35,
+          "maxLength": 192,
+          "pattern": "^compatibility/certifications/[a-z][a-z0-9_.-]*\\.json$"
+        },
+        "requiredSurfaces": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "acceptedStatuses"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[a-z][a-z0-9_.:-]{0,127}$"
+              },
+              "acceptedStatuses": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 5,
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "#/$defs/status"
+                }
+              }
+            }
+          }
+        },
+        "requiredAdapters": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "versionRange"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 96,
+                "pattern": "^[a-z][a-z0-9_.:-]{0,95}$"
+              },
+              "versionRange": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[A-Za-z0-9*<>=~^| .+-]+$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "requiredCatalogs": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "versionRange", "domain", "revision"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 96,
+                "pattern": "^[a-z][a-z0-9_.:-]{0,95}$"
+              },
+              "versionRange": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^[A-Za-z0-9*<>=~^| .+-]+$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "domain": {
+                "type": "string",
+                "enum": [
+                  "identity",
+                  "accounts",
+                  "groups",
+                  "metadata",
+                  "inventory",
+                  "vehicles",
+                  "interaction",
+                  "notifications",
+                  "ui",
+                  "banking",
+                  "provider"
+                ]
+              },
+              "revision": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              }
+            }
+          }
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tests", "sourceUrls"],
+          "properties": {
+            "tests": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 32,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_./-]{0,255}$"
+              }
+            },
+            "sourceUrls": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 12,
+                "maxLength": 512,
+                "pattern": "^https://[^\\s]+$"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

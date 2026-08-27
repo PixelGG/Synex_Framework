@@ -35,6 +35,7 @@ factories.messaging = function(deps)
     local maximumRegistrationsPerRegistry = 4096
     local maximumServicesPerOwner = 128
     local maximumServices = 2048
+    local maximumExecutionCounter = 2147483647
     local services = {}
     local pendingOutbound = {}
     local activeInbound = {}
@@ -43,6 +44,22 @@ factories.messaging = function(deps)
     local deprecatedUsage = {}
     local deprecatedUsageSize = 0
     local deprecatedWarnedAt = {}
+
+    local function recordValidationFinding(category, code, resource, scope, operation, summary)
+        local diagnostics = type(security) == 'table' and rawget(security, 'diagnostics') or nil
+        local record = type(diagnostics) == 'table' and rawget(diagnostics, 'record') or nil
+        if not foundation.isCallable(record) then return end
+        local finding = {
+            category = category,
+            severity = 'WARNING',
+            code = code,
+            operation = operation,
+            summary = summary
+        }
+        if type(resource) == 'string' then finding.resource = resource end
+        if type(scope) == 'string' then finding.scope = scope end
+        foundation.safeCall(record, diagnostics, finding)
+    end
 
     local function nextSequence()
         registrationSequence = registrationSequence + 1
@@ -191,6 +208,106 @@ factories.messaging = function(deps)
         return normalizeBoundedProviderError(candidate, traceId, contract.errors or {})
     end
 
+    local function newExecutionStats()
+        return {
+            calls = 0,
+            successes = 0,
+            failures = 0,
+            timeouts = 0,
+            denials = 0,
+            totalDurationMs = 0,
+            lastDurationMs = 0,
+            maximumDurationMs = 0,
+            lastError = nil,
+            lastErrorAt = nil,
+            lastCalledAt = nil,
+            durations = {},
+            callTimes = {}
+        }
+    end
+
+    local function recordExecution(stats, duration, outcome, errorCode)
+        duration = math.max(0, type(duration) == 'number' and duration or 0)
+        stats.calls = stats.calls + 1
+        stats.totalDurationMs = stats.totalDurationMs + duration
+        stats.lastDurationMs = duration
+        stats.maximumDurationMs = math.max(stats.maximumDurationMs, duration)
+        stats.lastCalledAt = foundation.utcIso()
+        if outcome == 'success' then
+            stats.successes = stats.successes + 1
+        else
+            stats.failures = stats.failures + 1
+            if outcome == 'timeout' then stats.timeouts = stats.timeouts + 1 end
+            stats.lastError = type(errorCode) == 'string' and errorCode:sub(1, 64)
+                or 'EXECUTION_FAILED'
+            stats.lastErrorAt = stats.lastCalledAt
+        end
+        local durations = stats.durations
+        durations[#durations + 1] = duration
+        if #durations > 64 then table.remove(durations, 1) end
+        local now = foundation.monotonicMs()
+        stats.callTimes[#stats.callTimes + 1] = now
+        while #stats.callTimes > 0 and (stats.callTimes[1] < now - 60000
+            or #stats.callTimes > 256) do table.remove(stats.callTimes, 1) end
+    end
+
+    local function executionSummary(stats)
+        local durations = foundation.copy(stats.durations)
+        table.sort(durations)
+        local percentile95 = 0
+        local percentile50 = 0
+        local percentile99 = 0
+        if #durations > 0 then
+            percentile50 = durations[math.max(1, math.ceil(#durations * 0.50))]
+            percentile95 = durations[math.max(1, math.ceil(#durations * 0.95))]
+            percentile99 = durations[math.max(1, math.ceil(#durations * 0.99))]
+        end
+        local now = foundation.monotonicMs()
+        while #stats.callTimes > 0 and stats.callTimes[1] < now - 60000 do
+            table.remove(stats.callTimes, 1)
+        end
+        local observationSeconds = #stats.callTimes > 0
+            and math.max(1, math.min(60, (now - stats.callTimes[1]) / 1000)) or 60
+        return {
+            calls = stats.calls,
+            successes = stats.successes,
+            failures = stats.failures,
+            timeouts = stats.timeouts,
+            denials = stats.denials or 0,
+            averageDurationMs = stats.calls > 0
+                and math.floor((stats.totalDurationMs / stats.calls) * 100 + 0.5) / 100 or 0,
+            callsPerSecond = math.floor((#stats.callTimes / observationSeconds) * 100 + 0.5) / 100,
+            percentile50DurationMs = percentile50,
+            percentile95DurationMs = percentile95,
+            percentile99DurationMs = percentile99,
+            lastDurationMs = stats.lastDurationMs,
+            maximumDurationMs = stats.maximumDurationMs,
+            lastError = stats.lastError,
+            lastErrorAt = stats.lastErrorAt,
+            lastCalledAt = stats.lastCalledAt,
+            sampleSize = #durations
+        }
+    end
+
+    local function recordRpcExecution(entry, duration, outcome, errorCode)
+        recordExecution(entry.stats, duration, outcome, errorCode)
+        metrics:increment('synex_contract_calls_total', {
+            contract = entry.contract.name,
+            ok = outcome == 'success'
+        })
+        metrics:gauge('synex_contract_last_duration_ms', {
+            contract = entry.contract.name
+        }, duration)
+        metrics:observe('synex_contract_duration_ms', {
+            contract = entry.contract.name
+        }, duration)
+        if outcome == 'timeout' then
+            metrics:increment('synex_contract_timeouts_total', {
+                contract = entry.contract.name
+            })
+        end
+    end
+
     local function invokeHandler(entry, request, context)
         if not owners:isCurrent(entry.owner, entry.epoch) then
             return nil, foundation.error('PROVIDER_UNAVAILABLE', 'The contract provider restarted.', {
@@ -201,6 +318,7 @@ factories.messaging = function(deps)
         handlerContext.provider = entry.owner
         local started = foundation.monotonicMs()
         if context.deadlineAt and started >= context.deadlineAt then
+            recordRpcExecution(entry, 0, 'timeout', 'DEADLINE_EXCEEDED')
             return nil, foundation.error('DEADLINE_EXCEEDED', 'The contract deadline expired before execution.', {
                 traceId = context.traceId, retryable = true
             })
@@ -208,17 +326,22 @@ factories.messaging = function(deps)
         local invocation, invocationStartError = beginInvocation(
             context.caller, context.callerEpoch, entry.owner, entry.epoch
         )
-        if not invocation then return nil, invocationStartError end
+        if not invocation then
+            recordRpcExecution(entry, foundation.monotonicMs() - started, 'failure',
+                invocationStartError and invocationStartError.code)
+            return nil, invocationStartError
+        end
         local ok, value, handlerError = foundation.safeCall(function(candidate, readonlyContext)
             return foundation.withContext(handlerContext, entry.handler, candidate, readonlyContext)
         end, foundation.copy(request), foundation.readonly(handlerContext))
         finishInvocation(invocation)
         local duration = foundation.monotonicMs() - started
-        metrics:increment('synex_contract_calls_total', { contract = entry.contract.name, ok = ok and handlerError == nil })
-        metrics:gauge('synex_contract_last_duration_ms', { contract = entry.contract.name }, duration)
-        metrics:observe('synex_contract_duration_ms', { contract = entry.contract.name }, duration)
-        if invocation.cancelled then return nil, invocationError(invocation, context.traceId) end
+        if invocation.cancelled then
+            recordRpcExecution(entry, duration, 'failure', 'REQUEST_ABORTED')
+            return nil, invocationError(invocation, context.traceId)
+        end
         if not ok then
+            recordRpcExecution(entry, duration, 'failure', 'CONTRACT_HANDLER_EXCEPTION')
             logger:error('contract handler raised an error', {
                 contract = entry.contract.name, provider = entry.owner,
                 traceId = context.traceId, code = 'CONTRACT_HANDLER_EXCEPTION'
@@ -228,20 +351,27 @@ factories.messaging = function(deps)
         if handlerError ~= nil then
             local normalizedError = normalizeProviderError(entry.contract, handlerError, context.traceId)
             if not normalizedError then
+                recordRpcExecution(entry, duration, 'failure', 'INVALID_PROVIDER_ERROR')
+                recordValidationFinding('contract_validation', 'INVALID_PROVIDER_ERROR',
+                    entry.owner, entry.contract.name, 'rpc.provider_error.validate',
+                    'RPC provider error contract validation rejected.')
                 logger:error('contract handler returned an invalid error', {
                     contract = entry.contract.name, provider = entry.owner,
                     traceId = context.traceId, code = 'INVALID_PROVIDER_ERROR'
                 })
                 return nil, foundation.error('INTERNAL_ERROR', 'The contract provider returned an invalid error.', { traceId = context.traceId })
             end
+            recordRpcExecution(entry, duration, 'failure', normalizedError.code)
             return nil, normalizedError
         end
         if not owners:isCurrent(entry.owner, entry.epoch) then
+            recordRpcExecution(entry, duration, 'failure', 'PROVIDER_RESTARTED')
             return nil, foundation.error('PROVIDER_RESTARTED', 'The provider restarted while processing the request.', {
                 traceId = context.traceId, retryable = true
             })
         end
         if context.deadlineAt and foundation.monotonicMs() >= context.deadlineAt then
+            recordRpcExecution(entry, duration, 'timeout', 'DEADLINE_EXCEEDED')
             return nil, foundation.error('DEADLINE_EXCEEDED', 'The contract deadline expired during execution.', {
                 traceId = context.traceId, retryable = true
             })
@@ -249,6 +379,10 @@ factories.messaging = function(deps)
         local outputValid, outputFailure = validTransportValue(value)
         if not outputValid then
             if outputFailure == 'bytes' then
+                recordRpcExecution(entry, duration, 'failure', 'RESPONSE_TOO_LARGE')
+                recordValidationFinding('payload_validation', 'RESPONSE_TOO_LARGE',
+                    entry.owner, entry.contract.name, 'rpc.response.validate',
+                    'RPC response payload validation rejected.')
                 logger:error('contract response exceeded transport bounds', {
                     contract = entry.contract.name, provider = entry.owner,
                     traceId = context.traceId, code = 'RESPONSE_TOO_LARGE'
@@ -256,8 +390,12 @@ factories.messaging = function(deps)
                 return nil, foundation.error('RESPONSE_TOO_LARGE',
                     'The contract response exceeds the configured byte limit.', {
                         traceId = context.traceId
-                    })
+                })
             end
+            recordRpcExecution(entry, duration, 'failure', 'INVALID_PROVIDER_RESPONSE')
+            recordValidationFinding('payload_validation', 'INVALID_PROVIDER_RESPONSE',
+                entry.owner, entry.contract.name, 'rpc.response.validate',
+                'RPC response payload validation rejected.')
             logger:error('contract response failed transport validation', {
                 contract = entry.contract.name, provider = entry.owner,
                 traceId = context.traceId, code = 'INVALID_PROVIDER_RESPONSE'
@@ -269,6 +407,10 @@ factories.messaging = function(deps)
         end
         local encodedOk, encodedOutput = pcall(platform.jsonEncode, value)
         if not encodedOk or type(encodedOutput) ~= 'string' then
+            recordRpcExecution(entry, duration, 'failure', 'INVALID_PROVIDER_RESPONSE')
+            recordValidationFinding('payload_validation', 'INVALID_PROVIDER_RESPONSE',
+                entry.owner, entry.contract.name, 'rpc.response.encode',
+                'RPC response payload encoding rejected.')
             logger:error('contract response could not be encoded', {
                 contract = entry.contract.name, provider = entry.owner,
                 traceId = context.traceId, code = 'INVALID_PROVIDER_RESPONSE'
@@ -279,6 +421,10 @@ factories.messaging = function(deps)
                 })
         end
         if #encodedOutput > maximumTransportBytes then
+            recordRpcExecution(entry, duration, 'failure', 'RESPONSE_TOO_LARGE')
+            recordValidationFinding('payload_validation', 'RESPONSE_TOO_LARGE',
+                entry.owner, entry.contract.name, 'rpc.response.validate',
+                'RPC response payload validation rejected.')
             logger:error('contract response exceeded transport bounds', {
                 contract = entry.contract.name, provider = entry.owner,
                 traceId = context.traceId, code = 'RESPONSE_TOO_LARGE'
@@ -290,6 +436,11 @@ factories.messaging = function(deps)
         end
         local valid, outputError = contracts.registry:validateOutput(entry.contract, value)
         if not valid then
+            recordRpcExecution(entry, duration, 'failure', outputError.code)
+            recordValidationFinding('contract_validation',
+                foundation.failureCode(outputError, 'INVALID_PROVIDER_RESPONSE'),
+                entry.owner, entry.contract.name, 'rpc.response.contract',
+                'RPC response contract validation rejected.')
             logger:error('contract response failed validation', {
                 contract = entry.contract.name, provider = entry.owner, traceId = context.traceId,
                 finding = outputError.details
@@ -297,6 +448,7 @@ factories.messaging = function(deps)
             outputError.traceId = context.traceId
             return nil, outputError
         end
+        recordRpcExecution(entry, duration, 'success')
         return foundation.copy(value), nil
     end
 
@@ -318,7 +470,14 @@ factories.messaging = function(deps)
         local key = registered.name .. '@' .. registered.version
         if rpcHandlers[key] then return nil, foundation.error('HANDLER_EXISTS', 'A handler already provides this contract version.') end
         local token = foundation.nextId('rpc_handler')
-        local entry = { owner = owner, epoch = epoch, token = token, contract = registered, handler = handler }
+        local entry = {
+            owner = owner,
+            epoch = epoch,
+            token = token,
+            contract = registered,
+            handler = handler,
+            stats = newExecutionStats()
+        }
         rpcHandlers[key] = entry
         local _, trackError = track(owner, epoch, 'rpc_handler', token, function()
             if rpcHandlers[key] == entry then rpcHandlers[key] = nil end
@@ -339,11 +498,17 @@ factories.messaging = function(deps)
         if not requestValid then
             local traceId = options.traceId or foundation.nextId('trace')
             if requestFailure == 'bytes' then
+                recordValidationFinding('payload_validation', 'PAYLOAD_TOO_LARGE',
+                    caller, name, 'rpc.request.validate',
+                    'RPC request payload validation rejected.')
                 return nil, foundation.error('PAYLOAD_TOO_LARGE',
                     'Contract request exceeds the configured byte limit.', {
                         traceId = traceId
                     })
             end
+            recordValidationFinding('payload_validation', 'INVALID_PAYLOAD',
+                caller, name, 'rpc.request.validate',
+                'RPC request payload validation rejected.')
             return nil, foundation.error('INVALID_PAYLOAD',
                 'Contract request must be bounded plain JSON data.', {
                     traceId = traceId
@@ -351,12 +516,18 @@ factories.messaging = function(deps)
         end
         local encodedOk, encodedRequest = pcall(platform.jsonEncode, request)
         if not encodedOk or type(encodedRequest) ~= 'string' then
+            recordValidationFinding('payload_validation', 'INVALID_PAYLOAD',
+                caller, name, 'rpc.request.encode',
+                'RPC request payload encoding rejected.')
             return nil, foundation.error('INVALID_PAYLOAD',
                 'Contract request could not be encoded.', {
                     traceId = options.traceId or foundation.nextId('trace')
                 })
         end
         if #encodedRequest > maximumTransportBytes then
+            recordValidationFinding('payload_validation', 'PAYLOAD_TOO_LARGE',
+                caller, name, 'rpc.request.validate',
+                'RPC request payload validation rejected.')
             return nil, foundation.error('PAYLOAD_TOO_LARGE',
                 'Contract request exceeds the configured byte limit.', {
                     traceId = options.traceId or foundation.nextId('trace')
@@ -376,7 +547,14 @@ factories.messaging = function(deps)
             if not allowed then return nil, capabilityError end
         end
         local valid, validationError = contracts.registry:validateInput(contract, request)
-        if not valid then validationError.traceId = traceId return nil, validationError end
+        if not valid then
+            recordValidationFinding('contract_validation',
+                foundation.failureCode(validationError, 'VALIDATION_FAILED'),
+                caller, contract.name, 'rpc.request.contract',
+                'RPC request contract validation rejected.')
+            validationError.traceId = traceId
+            return nil, validationError
+        end
         local context = {
             traceId = traceId,
             caller = caller,
@@ -390,6 +568,46 @@ factories.messaging = function(deps)
             idempotencyKey = options.idempotencyKey
         }
         return invokeHandler(entry, request, context)
+    end
+
+    function gateway:snapshot()
+        local result = {}
+        for key, entry in pairs(rpcHandlers) do
+            if owners:isCurrent(entry.owner, entry.epoch) then
+                local summary = executionSummary(entry.stats)
+                result[#result + 1] = {
+                    key = key,
+                    name = entry.contract.name,
+                    version = entry.contract.version,
+                    owner = entry.owner,
+                    network = entry.contract.network == true,
+                    stability = entry.contract.stability,
+                    capability = entry.contract.capability,
+                    calls = summary.calls,
+                    successes = summary.successes,
+                    failures = summary.failures,
+                    timeouts = summary.timeouts,
+                    averageDurationMs = summary.averageDurationMs,
+                    callsPerSecond = summary.callsPerSecond,
+                    percentile50DurationMs = summary.percentile50DurationMs,
+                    percentile95DurationMs = summary.percentile95DurationMs,
+                    percentile99DurationMs = summary.percentile99DurationMs,
+                    lastDurationMs = summary.lastDurationMs,
+                    maximumDurationMs = summary.maximumDurationMs,
+                    lastError = summary.lastError,
+                    lastErrorAt = summary.lastErrorAt,
+                    lastCalledAt = summary.lastCalledAt,
+                    sampleSize = summary.sampleSize,
+                    rateLimit = entry.contract.network == true and {
+                        scope = 'shared-network-rpc',
+                        burst = config.burst or 24,
+                        refillPerSecond = config.rate or 12
+                    } or { scope = 'none' }
+                }
+            end
+        end
+        table.sort(result, function(left, right) return left.key < right.key end)
+        return result
     end
 
     local eventBus = {}
@@ -581,17 +799,29 @@ factories.messaging = function(deps)
         local payloadValid, payloadFailure = validTransportValue(payload)
         if not payloadValid then
             if payloadFailure == 'bytes' then
+                recordValidationFinding('payload_validation', 'EVENT_PAYLOAD_TOO_LARGE',
+                    owner, topic, 'event.payload.validate',
+                    'Domain event payload validation rejected.')
                 return nil, foundation.error('EVENT_PAYLOAD_TOO_LARGE',
                     'Domain event payload exceeds the configured byte limit.')
             end
+            recordValidationFinding('payload_validation', 'INVALID_EVENT',
+                owner, topic, 'event.payload.validate',
+                'Domain event payload validation rejected.')
             return nil, foundation.error('INVALID_EVENT',
                 'Domain event payload must be bounded plain JSON data.')
         end
         local encodedOk, encodedPayload = pcall(platform.jsonEncode, payload)
         if not encodedOk or type(encodedPayload) ~= 'string' then
+            recordValidationFinding('payload_validation', 'INVALID_EVENT',
+                owner, topic, 'event.payload.encode',
+                'Domain event payload encoding rejected.')
             return nil, foundation.error('INVALID_EVENT', 'Domain event payload could not be encoded.')
         end
         if #encodedPayload > maximumTransportBytes then
+            recordValidationFinding('payload_validation', 'EVENT_PAYLOAD_TOO_LARGE',
+                owner, topic, 'event.payload.validate',
+                'Domain event payload validation rejected.')
             return nil, foundation.error('EVENT_PAYLOAD_TOO_LARGE', 'Domain event payload exceeds the configured byte limit.')
         end
         local ordered = {}
@@ -668,7 +898,13 @@ factories.messaging = function(deps)
 
     function eventBus:publishOutbox(owner, epoch, topic, payload, metadata)
         local validated, validationError = validateOutboxMetadata(metadata)
-        if not validated then return nil, validationError end
+        if not validated then
+            recordValidationFinding('payload_validation',
+                foundation.failureCode(validationError, 'INVALID_OUTBOX_EVENT'),
+                owner, topic, 'event.outbox_metadata.validate',
+                'Domain event outbox metadata validation rejected.')
+            return nil, validationError
+        end
         validated.durable = true
         validated.outbox = true
         validated.__outboxAuthorization = outboxAuthorization
@@ -695,6 +931,37 @@ factories.messaging = function(deps)
     end
 
     local hookRegistry = {}
+    local function recordHookExecution(name, entry, duration, outcome, errorCode, denied)
+        recordExecution(entry.stats, duration, outcome, errorCode)
+        metrics:increment('synex_hook_calls_total', {
+            hook = name,
+            owner = entry.owner,
+            ok = outcome == 'success'
+        })
+        metrics:gauge('synex_hook_last_duration_ms', {
+            hook = name,
+            owner = entry.owner
+        }, duration)
+        metrics:observe('synex_hook_duration_ms', {
+            hook = name,
+            owner = entry.owner
+        }, duration)
+        if outcome == 'timeout' then
+            metrics:increment('synex_hook_timeouts_total', {
+                hook = name,
+                owner = entry.owner
+            })
+        end
+        if denied == true then
+            entry.stats.denials = math.min(maximumExecutionCounter,
+                (entry.stats.denials or 0) + 1)
+            metrics:increment('synex_hook_denials_total', {
+                hook = name,
+                owner = entry.owner
+            })
+        end
+    end
+
     local function ownsHookPolicyAuthority(owner, name)
         if owner == deps.coreResource then return true end
         if type(owner) ~= 'string' or not owner:match('^synex_[a-z0-9_]+$') then return false end
@@ -752,7 +1019,8 @@ factories.messaging = function(deps)
         local entry = {
             owner = owner, epoch = epoch, token = token, handler = handler,
             priority = priority, sequence = nextSequence(),
-            required = options.required == true, timeoutMs = timeoutMs
+            required = options.required == true, timeoutMs = timeoutMs,
+            stats = newExecutionStats()
         }
         hooks[name] = hooks[name] or {}
         hooks[name][token] = entry
@@ -771,17 +1039,29 @@ factories.messaging = function(deps)
         local valueValid, valueFailure = validTransportValue(value)
         if not valueValid then
             if valueFailure == 'bytes' then
+                recordValidationFinding('payload_validation', 'HOOK_PAYLOAD_TOO_LARGE',
+                    owner, name, 'hook.request.validate',
+                    'Hook request payload validation rejected.')
                 return nil, foundation.error('HOOK_PAYLOAD_TOO_LARGE',
                     'Hook values exceed the configured byte limit.')
             end
+            recordValidationFinding('payload_validation', 'INVALID_HOOK',
+                owner, name, 'hook.request.validate',
+                'Hook request payload validation rejected.')
             return nil, foundation.error('INVALID_HOOK',
                 'Hook values must be bounded plain JSON data.')
         end
         local encodedValueOk, encodedValue = pcall(platform.jsonEncode, value)
         if not encodedValueOk or type(encodedValue) ~= 'string' then
+            recordValidationFinding('payload_validation', 'INVALID_HOOK',
+                owner, name, 'hook.request.encode',
+                'Hook request payload encoding rejected.')
             return nil, foundation.error('INVALID_HOOK', 'Hook values must be JSON encodable.')
         end
         if #encodedValue > maximumTransportBytes then
+            recordValidationFinding('payload_validation', 'HOOK_PAYLOAD_TOO_LARGE',
+                owner, name, 'hook.request.validate',
+                'Hook request payload validation rejected.')
             return nil, foundation.error('HOOK_PAYLOAD_TOO_LARGE',
                 'Hook values exceed the configured byte limit.')
         end
@@ -790,15 +1070,24 @@ factories.messaging = function(deps)
         if type(suppliedContext) ~= 'table' or getmetatable(suppliedContext) ~= nil
             or not contextValid then
             if contextFailure == 'bytes' then
+                recordValidationFinding('payload_validation', 'HOOK_CONTEXT_TOO_LARGE',
+                    owner, name, 'hook.context.validate',
+                    'Hook context payload validation rejected.')
                 return nil, foundation.error('HOOK_CONTEXT_TOO_LARGE',
                     'Hook context exceeds the configured byte limit.')
             end
+            recordValidationFinding('payload_validation', 'INVALID_HOOK_CONTEXT',
+                owner, name, 'hook.context.validate',
+                'Hook context payload validation rejected.')
             return nil, foundation.error('INVALID_HOOK_CONTEXT',
                 'Hook context must be bounded plain JSON data.')
         end
         local allowedContext = { traceId = true, timeoutMs = true, metadata = true }
         for field in pairs(suppliedContext) do
             if type(field) ~= 'string' or not allowedContext[field] then
+                recordValidationFinding('payload_validation', 'INVALID_HOOK_CONTEXT',
+                    owner, name, 'hook.context.validate',
+                    'Hook context payload validation rejected.')
                 return nil, foundation.error('INVALID_HOOK_CONTEXT',
                     'Hook context contains an unsupported field.')
             end
@@ -813,15 +1102,24 @@ factories.messaging = function(deps)
                 or math.type(suppliedTimeout) ~= 'integer' or suppliedTimeout < 100
                 or suppliedTimeout > maximumTimeoutMs)
             or suppliedMetadata ~= nil and type(suppliedMetadata) ~= 'table' then
+            recordValidationFinding('payload_validation', 'INVALID_HOOK_CONTEXT',
+                owner, name, 'hook.context.validate',
+                'Hook context payload validation rejected.')
             return nil, foundation.error('INVALID_HOOK_CONTEXT',
                 'Hook context fields are invalid.')
         end
         local encodedContextOk, encodedContext = pcall(platform.jsonEncode, suppliedContext)
         if not encodedContextOk or type(encodedContext) ~= 'string' then
+            recordValidationFinding('payload_validation', 'INVALID_HOOK_CONTEXT',
+                owner, name, 'hook.context.encode',
+                'Hook context payload encoding rejected.')
             return nil, foundation.error('INVALID_HOOK_CONTEXT',
                 'Hook context could not be encoded.')
         end
         if #encodedContext > maximumTransportBytes then
+            recordValidationFinding('payload_validation', 'HOOK_CONTEXT_TOO_LARGE',
+                owner, name, 'hook.context.validate',
+                'Hook context payload validation rejected.')
             return nil, foundation.error('HOOK_CONTEXT_TOO_LARGE',
                 'Hook context exceeds the configured byte limit.')
         end
@@ -864,6 +1162,7 @@ factories.messaging = function(deps)
                 logger:error('hook provider unavailable', {
                     hook = name, owner = entry.owner, code = failureCode
                 })
+                recordHookExecution(name, entry, 0, 'failure', failureCode)
                 if entry.required then
                     return nil, foundation.error('REQUIRED_HOOK_FAILED',
                         'A required hook provider is unavailable.', { retryable = true })
@@ -885,26 +1184,42 @@ factories.messaging = function(deps)
                 end
                 local elapsed = foundation.monotonicMs() - started
                 if foundation.monotonicMs() >= deadlineAt then
+                    recordHookExecution(name, entry, elapsed, 'timeout',
+                        'DEADLINE_EXCEEDED')
                     return nil, foundation.error('DEADLINE_EXCEEDED',
                         'The hook deadline expired during execution.', {
                             traceId = hookContext.traceId, retryable = true
                         })
                 elseif not ok or handlerError ~= nil or elapsed > entry.timeoutMs then
+                    local failureCode = foundation.failureCode(
+                        not ok and result or handlerError,
+                        not ok and 'HOOK_EXCEPTION'
+                            or handlerError ~= nil and 'HOOK_PROVIDER_FAILED'
+                            or 'HOOK_TIMEOUT')
+                    recordHookExecution(name, entry, elapsed,
+                        elapsed > entry.timeoutMs and 'timeout' or 'failure', failureCode)
                     logger:error('hook failed', {
                         hook = name, owner = entry.owner, elapsedMs = elapsed,
-                        code = foundation.failureCode(not ok and result or handlerError,
-                            not ok and 'HOOK_EXCEPTION'
-                                or handlerError ~= nil and 'HOOK_PROVIDER_FAILED'
-                                or 'HOOK_TIMEOUT')
+                        code = failureCode
                     })
                     if entry.required then return nil, foundation.error('REQUIRED_HOOK_FAILED', 'A required hook failed.', { retryable = true }) end
                 elseif type(result) ~= 'table' or getmetatable(result) ~= nil
                     or not validTransportValue(result) then
+                    recordHookExecution(name, entry, elapsed, 'failure',
+                        'INVALID_HOOK_RESULT')
+                    recordValidationFinding('payload_validation', 'INVALID_HOOK_RESULT',
+                        entry.owner, name, 'hook.response.validate',
+                        'Hook response payload validation rejected.')
                     if entry.required then return nil, foundation.error('INVALID_HOOK_RESULT', 'A required hook returned an invalid result.') end
                 else
                     local encodedResultOk, encodedResult = pcall(platform.jsonEncode, result)
                     if not encodedResultOk or type(encodedResult) ~= 'string'
                         or #encodedResult > maximumTransportBytes then
+                        recordHookExecution(name, entry, elapsed, 'failure',
+                            'INVALID_HOOK_RESULT')
+                        recordValidationFinding('payload_validation', 'INVALID_HOOK_RESULT',
+                            entry.owner, name, 'hook.response.encode',
+                            'Hook response payload encoding rejected.')
                         if entry.required then
                             return nil, foundation.error('INVALID_HOOK_RESULT',
                                 'A required hook returned a result outside transport bounds.')
@@ -924,6 +1239,11 @@ factories.messaging = function(deps)
                         end
                     end
                     if not closed then
+                        recordHookExecution(name, entry, elapsed, 'failure',
+                            'INVALID_HOOK_RESULT')
+                        recordValidationFinding('payload_validation', 'INVALID_HOOK_RESULT',
+                            entry.owner, name, 'hook.response.validate',
+                            'Hook response payload validation rejected.')
                         if entry.required then
                             return nil, foundation.error('INVALID_HOOK_RESULT',
                                 'A required hook returned an invalid result.')
@@ -936,14 +1256,27 @@ factories.messaging = function(deps)
                                 or not code:match('^[A-Z][A-Z0-9_]+$')
                                 or type(message) ~= 'string' or #message < 1 or #message > 512
                                 or message:find('[%z\1-\31\127]') then
+                                recordHookExecution(name, entry, elapsed, 'failure',
+                                    'INVALID_HOOK_RESULT')
+                                recordValidationFinding('payload_validation',
+                                    'INVALID_HOOK_RESULT', entry.owner, name,
+                                    'hook.response.validate',
+                                    'Hook response payload validation rejected.')
                                 return nil, foundation.error('HOOK_DENIED',
                                     'The operation was denied by policy.')
                             end
+                            recordHookExecution(name, entry, elapsed, 'success', nil, true)
                             return nil, foundation.error(code, message)
                         end
+                        recordHookExecution(name, entry, elapsed, 'success')
                     elseif action == 'patch' then
                         local patched = rawget(result, 'value')
                         if type(patched) ~= 'table' or getmetatable(patched) ~= nil then
+                            recordHookExecution(name, entry, elapsed, 'failure',
+                                'INVALID_HOOK_PATCH')
+                            recordValidationFinding('payload_validation', 'INVALID_HOOK_PATCH',
+                                entry.owner, name, 'hook.patch.validate',
+                                'Hook patch payload validation rejected.')
                             if entry.required then
                                 return nil, foundation.error('INVALID_HOOK_PATCH',
                                     'Hook patch must contain a plain object value.')
@@ -951,18 +1284,27 @@ factories.messaging = function(deps)
                             goto continue_hook
                         end
                         candidate = foundation.copy(patched)
+                        recordHookExecution(name, entry, elapsed, 'success')
+                    else
+                        recordHookExecution(name, entry, elapsed, 'success')
                     end
                 end
             end
             ::continue_hook::
         end
         if not validTransportValue(candidate) then
+            recordValidationFinding('payload_validation', 'INVALID_HOOK_PATCH',
+                owner, name, 'hook.patch.validate',
+                'Final hook patch payload validation rejected.')
             return nil, foundation.error('INVALID_HOOK_PATCH',
                 'The final hook value is outside transport bounds.')
         end
         local encodedCandidateOk, encodedCandidate = pcall(platform.jsonEncode, candidate)
         if not encodedCandidateOk or type(encodedCandidate) ~= 'string'
             or #encodedCandidate > maximumTransportBytes then
+            recordValidationFinding('payload_validation', 'INVALID_HOOK_PATCH',
+                owner, name, 'hook.patch.encode',
+                'Final hook patch payload encoding rejected.')
             return nil, foundation.error('INVALID_HOOK_PATCH',
                 'The final hook value is outside transport bounds.')
         end
@@ -972,13 +1314,69 @@ factories.messaging = function(deps)
         local result = {}
         for name, entries in pairs(hooks) do
             local count, required = 0, 0
+            local calls, successes, failures, timeouts, denials = 0, 0, 0, 0, 0
+            local handlerDetails = {}
             for _, entry in pairs(entries) do
                 if owners:isCurrent(entry.owner, entry.epoch) then
                     count = count + 1
                     if entry.required then required = required + 1 end
+                    local summary = executionSummary(entry.stats)
+                    calls = math.min(maximumExecutionCounter, calls + summary.calls)
+                    successes = math.min(maximumExecutionCounter,
+                        successes + summary.successes)
+                    failures = math.min(maximumExecutionCounter,
+                        failures + summary.failures)
+                    timeouts = math.min(maximumExecutionCounter,
+                        timeouts + summary.timeouts)
+                    denials = math.min(maximumExecutionCounter,
+                        denials + summary.denials)
+                    handlerDetails[#handlerDetails + 1] = {
+                        owner = entry.owner,
+                        priority = entry.priority,
+                        required = entry.required,
+                        timeoutMs = entry.timeoutMs,
+                        calls = summary.calls,
+                        successes = summary.successes,
+                        failures = summary.failures,
+                        timeouts = summary.timeouts,
+                        denials = summary.denials,
+                        averageDurationMs = summary.averageDurationMs,
+                        callsPerSecond = summary.callsPerSecond,
+                        percentile50DurationMs = summary.percentile50DurationMs,
+                        percentile95DurationMs = summary.percentile95DurationMs,
+                        percentile99DurationMs = summary.percentile99DurationMs,
+                        lastDurationMs = summary.lastDurationMs,
+                        maximumDurationMs = summary.maximumDurationMs,
+                        lastError = summary.lastError,
+                        lastErrorAt = summary.lastErrorAt,
+                        lastCalledAt = summary.lastCalledAt,
+                        sampleSize = summary.sampleSize,
+                        slow = summary.calls >= 3 and summary.percentile95DurationMs
+                            > math.min(entry.timeoutMs * 0.75, 500)
+                    }
                 end
             end
-            result[#result + 1] = { name = name, handlers = count, required = required }
+            table.sort(handlerDetails, function(left, right)
+                if left.priority == right.priority then return left.owner < right.owner end
+                return left.priority > right.priority
+            end)
+            result[#result + 1] = {
+                name = name,
+                handlers = count,
+                handlerDetails = handlerDetails,
+                required = required,
+                calls = calls,
+                successes = successes,
+                failures = failures,
+                timeouts = timeouts,
+                denials = denials,
+                slow = (function()
+                    for _, handler in ipairs(handlerDetails) do
+                        if handler.slow then return true end
+                    end
+                    return false
+                end)()
+            }
         end
         table.sort(result, function(a, b) return a.name < b.name end)
         return result
@@ -1053,9 +1451,9 @@ factories.messaging = function(deps)
         local methodCount = 0
         for method, handler in pairs(definition.methods) do
             methodCount = methodCount + 1
-            if methodCount > 64 then
+            if methodCount > 128 then
                 return nil, foundation.error('INVALID_SERVICE',
-                    'A service may expose at most 64 methods.')
+                    'A service may expose at most 128 methods.')
             end
             if type(method) ~= 'string' or #method < 1 or #method > 64
                 or not method:match('^[a-z][a-zA-Z0-9_]*$')
@@ -1076,9 +1474,9 @@ factories.messaging = function(deps)
         local capabilityCount = 0
         for method in pairs(type(definition.capabilities) == 'table' and definition.capabilities or {}) do
             capabilityCount = capabilityCount + 1
-            if capabilityCount > 64 then
+            if capabilityCount > 128 then
                 return nil, foundation.error('INVALID_SERVICE_CAPABILITY',
-                    'A service may declare at most 64 method capabilities.')
+                    'A service may declare at most 128 method capabilities.')
             end
             if definition.methods[method] == nil then
                 return nil, foundation.error('INVALID_SERVICE_CAPABILITY', 'Capability metadata references an unknown service method.')
@@ -1187,17 +1585,29 @@ factories.messaging = function(deps)
         local requestValid, requestFailure = validTransportValue(request)
         if type(request) ~= 'table' or not requestValid then
             if requestFailure == 'bytes' then
+                recordValidationFinding('payload_validation', 'PAYLOAD_TOO_LARGE',
+                    caller, name, 'service.request.validate',
+                    'Service request payload validation rejected.')
                 return nil, foundation.error('PAYLOAD_TOO_LARGE',
                     'Service request exceeds the configured byte limit.')
             end
+            recordValidationFinding('payload_validation', 'INVALID_ARGUMENT',
+                caller, name, 'service.request.validate',
+                'Service request payload validation rejected.')
             return nil, foundation.error('INVALID_ARGUMENT',
                 'Service requests must be bounded plain JSON objects.')
         end
         local encodedOk, encodedRequest = pcall(platform.jsonEncode, request)
         if not encodedOk or type(encodedRequest) ~= 'string' then
+            recordValidationFinding('payload_validation', 'INVALID_ARGUMENT',
+                caller, name, 'service.request.encode',
+                'Service request payload encoding rejected.')
             return nil, foundation.error('INVALID_ARGUMENT', 'Service request could not be encoded.')
         end
         if #encodedRequest > (config.maximumPayloadBytes or protocol.limits.payloadBytes or 32768) then
+            recordValidationFinding('payload_validation', 'PAYLOAD_TOO_LARGE',
+                caller, name, 'service.request.validate',
+                'Service request payload validation rejected.')
             return nil, foundation.error('PAYLOAD_TOO_LARGE', 'Service request exceeds the configured byte limit.')
         end
         local provider = chooseProvider(name, range)
@@ -1221,9 +1631,15 @@ factories.messaging = function(deps)
         if type(suppliedContext) ~= 'table' or getmetatable(suppliedContext) ~= nil
             or not contextValid then
             if contextFailure == 'bytes' then
+                recordValidationFinding('payload_validation', 'PAYLOAD_TOO_LARGE',
+                    caller, name, 'service.context.validate',
+                    'Service context payload validation rejected.')
                 return nil, foundation.error('PAYLOAD_TOO_LARGE',
                     'Service context exceeds the configured byte limit.')
             end
+            recordValidationFinding('payload_validation', 'INVALID_SERVICE_CONTEXT',
+                caller, name, 'service.context.validate',
+                'Service context payload validation rejected.')
             return nil, foundation.error('INVALID_SERVICE_CONTEXT',
                 'Service context must be bounded plain JSON data.')
         end
@@ -1232,6 +1648,9 @@ factories.messaging = function(deps)
         }
         for field in pairs(suppliedContext) do
             if type(field) ~= 'string' or not allowedContext[field] then
+                recordValidationFinding('payload_validation', 'INVALID_SERVICE_CONTEXT',
+                    caller, name, 'service.context.validate',
+                    'Service context payload validation rejected.')
                 return nil, foundation.error('INVALID_SERVICE_CONTEXT',
                     'Service context contains an unsupported field.')
             end
@@ -1251,15 +1670,24 @@ factories.messaging = function(deps)
                 or #suppliedIdempotencyKey > 128
                 or not suppliedIdempotencyKey:match('^[A-Za-z0-9_.:%-]+$'))
             or suppliedMetadata ~= nil and type(suppliedMetadata) ~= 'table' then
+            recordValidationFinding('payload_validation', 'INVALID_SERVICE_CONTEXT',
+                caller, name, 'service.context.validate',
+                'Service context payload validation rejected.')
             return nil, foundation.error('INVALID_SERVICE_CONTEXT',
                 'Service context fields are invalid.')
         end
         local encodedContextOk, encodedContext = pcall(platform.jsonEncode, suppliedContext)
         if not encodedContextOk or type(encodedContext) ~= 'string' then
+            recordValidationFinding('payload_validation', 'INVALID_SERVICE_CONTEXT',
+                caller, name, 'service.context.encode',
+                'Service context payload encoding rejected.')
             return nil, foundation.error('INVALID_SERVICE_CONTEXT',
                 'Service context could not be encoded.')
         end
         if #encodedContext > maximumTransportBytes then
+            recordValidationFinding('payload_validation', 'PAYLOAD_TOO_LARGE',
+                caller, name, 'service.context.validate',
+                'Service context payload validation rejected.')
             return nil, foundation.error('PAYLOAD_TOO_LARGE',
                 'Service context exceeds the configured byte limit.')
         end
@@ -1307,6 +1735,12 @@ factories.messaging = function(deps)
                 and normalizeBoundedProviderError(handlerError, serviceContext.traceId, nil) or nil
             local failureCode = not ok and 'SERVICE_PROVIDER_EXCEPTION'
                 or normalizedError and normalizedError.code or 'INVALID_SERVICE_PROVIDER_ERROR'
+            if ok and handlerError ~= nil and not normalizedError then
+                recordValidationFinding('payload_validation',
+                    'INVALID_SERVICE_PROVIDER_ERROR', provider.owner, name,
+                    'service.provider_error.validate',
+                    'Service provider error payload validation rejected.')
+            end
             logger:error('service provider failed', {
                 service = name, method = method, provider = provider.owner,
                 traceId = serviceContext.traceId, code = failureCode
@@ -1323,6 +1757,10 @@ factories.messaging = function(deps)
                 provider.openedAt = foundation.monotonicMs()
             end
             syncProviderHealth(provider)
+            recordValidationFinding('payload_validation',
+                'INVALID_SERVICE_PROVIDER_RESPONSE', provider.owner, name,
+                'service.response.validate',
+                'Service response payload validation rejected.')
             logger:error('service provider returned an invalid response', {
                 service = name, method = method, provider = provider.owner,
                 traceId = serviceContext.traceId, code = 'INVALID_SERVICE_PROVIDER_RESPONSE'
@@ -1341,6 +1779,9 @@ factories.messaging = function(deps)
                 provider.openedAt = foundation.monotonicMs()
             end
             syncProviderHealth(provider)
+            recordValidationFinding('payload_validation', 'SERVICE_RESPONSE_TOO_LARGE',
+                provider.owner, name, 'service.response.encode',
+                'Service response payload encoding rejected.')
             logger:error('service provider response exceeded transport bounds', {
                 service = name, method = method, provider = provider.owner,
                 traceId = serviceContext.traceId, code = 'SERVICE_RESPONSE_TOO_LARGE'
@@ -1408,6 +1849,9 @@ factories.messaging = function(deps)
         end
         local encodedOk, encoded = pcall(platform.jsonEncode, response)
         if not encodedOk or type(encoded) ~= 'string' or #encoded > maximumTransportBytes then
+            recordValidationFinding('payload_validation', 'RESPONSE_TOO_LARGE',
+                nil, 'rpc.response', 'rpc.response.encode',
+                'RPC transport response payload encoding rejected.')
             response = {
                 wire = protocol.wire, requestId = requestId, traceId = traceId, ok = false,
                 error = {
@@ -1447,6 +1891,10 @@ factories.messaging = function(deps)
             if not valid then sendResponse(playerSource, requestId, traceId, nil, envelopeError) return end
             local payloadValid, payloadFailure = validTransportValue(envelope.payload)
             if not payloadValid then
+                recordValidationFinding('payload_validation',
+                    payloadFailure == 'bytes' and 'PAYLOAD_TOO_LARGE' or 'INVALID_PAYLOAD',
+                    nil, envelope.procedure, 'rpc.ingress.validate',
+                    'RPC ingress payload validation rejected.')
                 sendResponse(playerSource, requestId, traceId, nil, payloadFailure == 'bytes'
                     and foundation.error('PAYLOAD_TOO_LARGE',
                         'RPC payload exceeds the configured byte limit.')
@@ -1456,10 +1904,16 @@ factories.messaging = function(deps)
             end
             local encodedOk, encodedPayload = pcall(platform.jsonEncode, envelope.payload)
             if not encodedOk or type(encodedPayload) ~= 'string' then
+                recordValidationFinding('payload_validation', 'INVALID_PAYLOAD',
+                    nil, envelope.procedure, 'rpc.ingress.encode',
+                    'RPC ingress payload encoding rejected.')
                 sendResponse(playerSource, requestId, traceId, nil, foundation.error('INVALID_PAYLOAD', 'RPC payload could not be encoded.'))
                 return
             end
             if #encodedPayload > maximumTransportBytes then
+                recordValidationFinding('payload_validation', 'PAYLOAD_TOO_LARGE',
+                    nil, envelope.procedure, 'rpc.ingress.validate',
+                    'RPC ingress payload validation rejected.')
                 sendResponse(playerSource, requestId, traceId, nil, foundation.error('PAYLOAD_TOO_LARGE', 'RPC payload exceeds the configured byte limit.'))
                 return
             end

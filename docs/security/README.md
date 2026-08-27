@@ -1,6 +1,6 @@
 # Capability policy and resource security
 
-Private vulnerability reporting, supported versions, and disclosure guidance are defined in the repository [Security policy](../../SECURITY.md). The current Production-Beta security target is `synex_core` only; non-Core resources and libraries are experimental rework snapshots and unsupported for that deployment profile.
+Private vulnerability reporting, supported versions, and disclosure guidance are defined in the repository [Security policy](../../SECURITY.md). The Production-Beta security target is one frozen `synex_core` tree only. `synex_groups`, `synex_accounts`, and `synex_entities` are separately bounded Experimental Alpha domains; every non-Core resource and library remains unsupported for that deployment profile until separately released.
 
 Synex applies two checks before a resource can use a protected core facade:
 
@@ -22,17 +22,27 @@ Event and hook authority is separate from general capability grants. A current o
 - Denials produce bounded metrics and redacted structured logs and are rate-bounded into the durable Core audit sink; an audit-write failure never changes the denial into an allow.
 - Contract and service providers must also declare what they provide; capability grants cannot bypass provider ownership.
 
-The committed policy denies destructive/high-impact capabilities such as `synex.characters.delete`, `synex.entities.delete_persistent`, `synex.accounts.mint`, and `synex.accounts.burn` by default. Because deny wins, enabling one requires deliberately removing every applicable deny and then granting it only to a reviewed resource with a concrete operational need.
+The committed policy denies destructive/high-impact capabilities such as `synex.characters.delete` and `synex.entities.delete_persistent` by default. Accounts mint/burn are not granted generally: only the three reviewed compatibility provider executors receive them, and their consumer-bound money paths still require a separate consumer capability plus an exact active funding policy. Because explicit deny rules win, an operator should grant any other high-impact capability only to a reviewed resource with a concrete operational need.
 
 ## Domain authorization
 
 Capabilities answer whether a resource may attempt an operation. They do not prove that a user owns a character, account, group, or entity. Handlers must validate the current session, source generation, domain ownership, expected record version, and operation-specific rules after every yield that can make those facts stale.
+
+The Groups Alpha makes this split explicit. Core first verifies the immediate caller's exact contract capability. Mutations then run a read-only persistence preflight that resolves the owning aggregate and actor authority before Core verifies the approved character references, any hook executes, and the authoritative transaction repeats its checks. Reads resolve visibility at the persistence boundary instead of pre-verifying caller-selected target identities; sensitive attribute and assignment detail denials use the same not-found shape as absence. A resource grant cannot manufacture character authority, and a character capability cannot authorize an undeclared or ungranted resource.
 
 Core RBAC is persisted in the Core-owned role, permission, assignment, and subject-version tables introduced by migration `008_core_rbac.sql`. Migration `016_rbac_policy_revision.sql` adds the singleton, monotonically increasing role-policy revision used to invalidate role definitions across runtime instances. The caller-bound `api.Permissions` facade exposes `defineRole`, `assign`, and `revoke` behind `synex.permissions.manage`, and `check` behind `synex.permissions.read`. Mutations require a bounded reason and write their before/after state, actor, reason, and trace to the Core audit log in the same database transaction as the RBAC change. Callers must declare and receive those capabilities; the committed policy grants neither capability by default.
 
 Role permissions are bounded allow/deny entries and use the same segment-aware wildcard matching as the capability model. The optional explicit deny set supplied to `check` is evaluated first, and any matching role deny wins over role allows. Before an authorization decision or role-existence check for assignment, a persistent runtime reads the current global policy revision. A changed revision reloads one transactionally consistent role snapshot; a revision or snapshot error denies the operation instead of using stale grants. Role definition and snapshot transactions lock the singleton revision before reading roles, so concurrent definitions have one deterministic order. Assignments may carry a validated expiry. Subject lookups use a bounded TTL cache over versioned durable assignments; local mutations invalidate affected entries, while the cache TTL bounds observations of assignment changes made by another runtime instance.
 
 The console `synex permissions` command is a redacted read surface only. Synex does not ship an RBAC mutation NUI or an automatic mapping from ACE, group membership, or account access roles into Core RBAC subjects. Any such mapping belongs to a reviewed server-side integration.
+
+## DataPort and domain-deletion boundaries
+
+The caller-bound DataPort claims the exact owner/operation/idempotency receipt before running a transaction handler. That claim prevents concurrent execution of the same key, but different keys may execute concurrently. Core acquires global and owner receipt-capacity locks only after the handler returns and its bounded response validates. Handlers must therefore protect conflicting domain rows with deterministic locks and/or compare-and-swap versions; they must not call irreversible external systems from a database transaction that can roll back or be deadlock-retried.
+
+Domain-deletion capacity is database-authoritative: all retained states consume the 10,000-plan global limit and the 1,000-plan requester limit until physical purge. Pending and executing plans are never auto-purged. Terminal results remain replayable for 30 days; bounded compare-and-swap compaction uses `plan -> global -> sorted requester owner` lock order. After a due terminal plan is physically removed, its idempotency key can create a new plan and must not be treated as a permanent tombstone.
+
+A provider schema upgrade is rejected while pending actions require the old version. Core also locks and rechecks the provider catalog when persisting the plan after preflight, preventing a mixed-version action snapshot. Provider `execute` callbacks must remain idempotent because a retryable or unconfirmed outcome is reconciled rather than converted into success.
 
 ## Ban and allowlist administration
 
@@ -50,11 +60,13 @@ Each attempt also consumes a token from a bucket keyed by a process-salted SHA-2
 
 Within the Core RPC transport, only contracts explicitly registered through `api.RPC.registerNetwork` are client-callable. That transport validates its closed plain wire envelope, procedure/version formats, finite integer deadline, idempotency key, cycle-safe depth/key/string bounds before payload encoding, encoded request-payload size, complete serialized response-envelope size, pending count, the aggregate source bucket and resolved contract-specific rate bucket, current session/source generation, request schema, capability, and response schema. Its monotonic handler deadline is capped by both the RPC timeout and the current local session-authority deadline. Deadlines remain cooperative, so a handler must reacquire the current session/source generation and changing domain authority after every yield before a protected mutation. Provider errors are copied into a closed bounded error object only when their code is declared by that contract; metatable-backed, malformed, or undeclared errors become `INTERNAL_ERROR` without exposing provider data. Optional compatibility and control resources own separate, narrowly scoped events; their server-side source/session/ACE/capability validation is part of those resources and does not turn them into arbitrary Core RPC entry points.
 
+In the current 171-definition source catalog, `synex.groups.self.snapshot` is the only `client-to-server` contract. Its closed request accepts only an optional cursor and limit of at most 8, Core requires an `ACTIVE` session and matching source generation, and Groups injects the session's character ID instead of accepting one from the client. The result is limited to that character's own bounded membership, grade, role, and duty projection. The other 170 definitions are server-only, including all 59 Accounts definitions and all 33 versioned Entity definitions across 32 names.
+
 The cancellation event is a separate guarded transport boundary: it requires an active session, a syntactically valid request ID within the 8–96 character bound, the current source generation, and a per-source rate token. It only marks a matching in-flight request as cancelled; handlers must still treat cancellation as cooperative and preserve transaction/idempotency guarantees.
 
 Domain handlers remain responsible for proximity, ownership, server-authoritative values, entity type/model/bucket, and any state that can change while awaiting a database or provider.
 
-NUI callbacks are client input. `synex_control` exposes only a bounded read request, keeps the closed DOM transparent and non-interactive, and does not implement an administrative mutation callback.
+NUI callbacks are client input. `synex_control` accepts only correlated, schema-closed read routes; it rechecks the connected source, base/specialist ACEs, weighted rate limit and provider/view metadata on the server. Responses are targeted to the requester, centrally redact secrets and mask identifiers by default. The closed DOM remains transparent and non-interactive, no refresh timer runs while closed, and Lua grants focus only after the browser-ready handshake. Control implements no administrative mutation callback. See [Control security](../control/security.md).
 
 ## State and sensitive data
 
@@ -68,6 +80,9 @@ Audit and financial archive mode creates additional durable copies; it is not de
 
 - All client/NUI data is typed, bounded, authorized, and rate-limited server-side.
 - Database values use positional parameters; dynamic identifiers come from code-owned allowlists.
+- New reviewed domain resources use Core's caller-bound DataPort, and every referenced table remains inside the caller's declared ownership set.
+- DataPort handlers use explicit row-lock/CAS conflict control and have no irreversible external effects.
+- Domain-deletion providers use versioned, idempotent callbacks and preserve every pending plan until reconciliation.
 - The resource declares only required capabilities and owns only its tables.
 - No dynamic remote code, obfuscation, credential access, unknown HTTP, or cross-resource modification exists.
 - Stop/restart removes registrations, timers, focus, entities, caches, and pending work.

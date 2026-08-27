@@ -6,7 +6,141 @@
   "synex": "^1.0.0",
   "critical": false,
   "capabilities": {
-    "request": []
+    "request": [
+      "synex.capabilities.delegate",
+      "synex.database.read",
+      "synex.database.write",
+      "synex.database.transaction",
+      "synex.control.provider.register",
+      "synex.tracing.write"
+    ]
+  },
+  "controlProvider": {
+    "schemaVersion": 1,
+    "namespace": "compatibility",
+    "label": "Compatibility",
+    "category": "platform",
+    "version": "1.0.0",
+    "operations": ["summary", "health", "list", "findings"],
+    "views": [
+      {
+        "id": "overview",
+        "label": "Compatibility overview",
+        "operation": "summary",
+        "presentation": "key-value",
+        "accessClass": "general",
+        "order": 10,
+        "description": "Current bridge compatibility and live legacy-usage evidence."
+      },
+      {
+        "id": "health",
+        "label": "Compatibility health",
+        "operation": "health",
+        "presentation": "key-value",
+        "accessClass": "general",
+        "order": 15,
+        "description": "Current compatibility lifecycle and adapter evidence availability."
+      },
+      {
+        "id": "compatibility_matrix",
+        "label": "Compatibility matrix",
+        "operation": "list",
+        "presentation": "table",
+        "accessClass": "general",
+        "order": 20,
+        "description": "Bounded capabilities and explicit unsupported legacy surfaces."
+      },
+      {
+        "id": "legacy_usage",
+        "label": "Legacy usage",
+        "operation": "list",
+        "presentation": "table",
+        "accessClass": "general",
+        "order": 30,
+        "description": "Live bounded usage reported by active compatibility adapters."
+      },
+      {
+        "id": "catalog_usage",
+        "label": "Catalog usage",
+        "operation": "list",
+        "presentation": "table",
+        "accessClass": "general",
+        "order": 35,
+        "description": "Live bounded catalog resolution and invocation evidence."
+      },
+      {
+        "id": "consumers",
+        "label": "Compatibility consumers",
+        "operation": "list",
+        "presentation": "table",
+        "accessClass": "general",
+        "order": 40,
+        "description": "Configured compatibility consumers without runtime payload data."
+      },
+      {
+        "id": "profiles",
+        "label": "Compatibility profiles",
+        "operation": "list",
+        "presentation": "table",
+        "accessClass": "general",
+        "order": 45,
+        "description": "Configured profiles and their bounded compatibility policy metadata."
+      },
+      {
+        "id": "adapters",
+        "label": "Compatibility adapters",
+        "operation": "list",
+        "presentation": "table",
+        "accessClass": "general",
+        "order": 50,
+        "description": "Live adapter availability and bounded health counters."
+      },
+      {
+        "id": "mappings",
+        "label": "Compatibility mappings",
+        "operation": "list",
+        "presentation": "table",
+        "accessClass": "general",
+        "order": 55,
+        "description": "Configured mapping metadata with identity values redacted."
+      },
+      {
+        "id": "unsupported_deprecated",
+        "label": "Unsupported and deprecated",
+        "operation": "list",
+        "presentation": "table",
+        "accessClass": "general",
+        "order": 60,
+        "description": "Catalog surfaces explicitly marked unsupported or deprecated."
+      },
+      {
+        "id": "errors",
+        "label": "Compatibility errors",
+        "operation": "list",
+        "presentation": "table",
+        "accessClass": "general",
+        "order": 70,
+        "description": "Bounded non-success outcome counters from live adapter telemetry."
+      },
+      {
+        "id": "latency",
+        "label": "Compatibility latency",
+        "operation": "list",
+        "presentation": "table",
+        "accessClass": "general",
+        "order": 80,
+        "description": "Bounded latency counters from live compatibility operations."
+      },
+      {
+        "id": "migration_readiness",
+        "label": "Migration readiness",
+        "operation": "findings",
+        "presentation": "findings",
+        "accessClass": "general",
+        "order": 90,
+        "description": "Evidence-only migration findings for each compatibility adapter."
+      }
+    ]
   },
   "services": {
     "provide": [],
@@ -35,10 +169,19 @@
     "optional": [],
     "development": []
   },
-  "migrations": [],
+  "migrations": [
+    {
+      "id": "001_compatibility_identity_metadata",
+      "path": "migrations/001_compatibility_identity_metadata.sql",
+      "transactional": false
+    }
+  ],
   "dataOwnership": {
-    "tables": [],
-    "characterDelete": "none"
+    "tables": [
+      "synex_compatibility_identities",
+      "synex_compatibility_metadata"
+    ],
+    "characterDelete": "delete"
   },
   "stateSnapshot": {
     "supported": false,

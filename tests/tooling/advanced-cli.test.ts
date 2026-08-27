@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import test from "node:test";
 import { tmpdir } from "node:os";
 
@@ -254,30 +254,184 @@ test("vendored oxmysql must satisfy the entities upper version bound", async () 
 });
 
 test("diagnostic redaction removes keyed and embedded secrets", () => {
+  const cyclic: Record<string, unknown> = { accountId: "account-private-0001" };
+  cyclic.self = cyclic;
   const result = redactDiagnosticValue({
     token: "super-secret-token",
     nested: {
       endpoint: "mysql://operator:password@localhost/synex",
       accessToken: "another-secret-value",
       callback: "https://example.invalid/reload?api_key=query-secret",
+      playerSource: 42,
+      nonFinite: Number.POSITIVE_INFINITY,
+      cyclic,
     },
   });
   const serialized = JSON.stringify(result.value);
   assert.doesNotMatch(serialized, /super-secret|another-secret|query-secret|operator|password/u);
   assert.ok(result.redactedFields > 0);
   assert.ok(result.redactedValues > 0);
+  assert.ok(result.maskedIdentifiers >= 2);
+  assert.ok(result.replacements >= 2);
+  assert.match(serialized, /acco\.\.\.0001/u);
+  assert.match(serialized, /\[CYCLE\]/u);
+  assert.match(serialized, /\[NON_FINITE\]/u);
+});
+
+test("diagnostic redaction matches Control secret keys and contains hostile object shapes", () => {
+  const hostile: Record<PropertyKey, unknown> = {
+    license2: "license-identifier-private",
+    webhookUrl: "webhook-secret",
+    connectionUri: "connection-secret",
+    dbUrl: "database-secret",
+    serverKey: "server-secret",
+    sessionCookie: "cookie-secret",
+    databasePasswordHash: "derived-database-secret",
+    webhookConfiguration: "derived-webhook-secret",
+    normal: "visible",
+    unicode: "ä".repeat(300),
+    malformedUnicode: "\uD800safe",
+  };
+  Object.defineProperty(hostile, "throwing", {
+    enumerable: true,
+    get: () => { throw new Error("must not execute"); },
+  });
+  hostile[Symbol("unsupported-key")] = "symbol-secret";
+
+  const result = redactDiagnosticValue(hostile);
+  const serialized = JSON.stringify(result.value);
+  assert.doesNotMatch(serialized,
+    /license-identifier-private|webhook-secret|connection-secret|database-secret|server-secret|cookie-secret|symbol-secret|derived-database-secret|derived-webhook-secret/u);
+  assert.match(serialized, /lice\.\.\.vate/u);
+  assert.match(serialized, /\[REDACTED\]/u);
+  assert.match(serialized, /\[ACCESSOR\]/u);
+  assert.doesNotMatch(serialized, /\\ud800/iu);
+  const unicode = (result.value as Record<string, unknown>).unicode;
+  if (typeof unicode !== "string") assert.fail("unicode string was not preserved");
+  assert.ok(Buffer.byteLength(unicode, "utf8") <= 512);
+  assert.ok(result.truncated);
+  assert.ok(result.redactedFields >= 5);
+  assert.ok(result.maskedIdentifiers >= 1);
+  assert.ok(result.replacements >= 2);
 });
 
 test("doctor bundle includes hashed repository diagnostics without environment or bearer secrets", async () => {
-  const bundle = await createDiagnosticBundle(process.cwd(), process.cwd(), {
-    status: "WARN",
-    checks: [{ name: "fixture", status: "WARN", detail: "Bearer diagnostic-secret-value" }],
-  });
+  const bundle = await createDiagnosticBundle(
+    process.cwd(),
+    process.cwd(),
+    {
+      status: "WARN",
+      checks: [{ name: "fixture", status: "WARN", detail: "Bearer diagnostic-secret-value" }],
+    },
+    { sessionId: "session-private-0001", token: "runtime-secret" },
+  );
   const serialized = JSON.stringify(bundle);
   assert.equal((bundle.redaction as { environmentIncluded: boolean }).environmentIncluded, false);
   assert.match(String(bundle.sha256), /^[0-9a-f]{64}$/u);
   assert.doesNotMatch(serialized, /diagnostic-secret-value/u);
+  assert.doesNotMatch(serialized, /session-private-0001|runtime-secret/u);
   assert.match(serialized, /\[REDACTED\]/u);
+  assert.match(serialized, /sess\.\.\.0001/u);
+});
+
+test("diagnostic bundle trusts only repository-generated provider navigation metadata", async () => {
+  const bundle = await createDiagnosticBundle(
+    process.cwd(),
+    process.cwd(),
+    { status: "PASS", checks: [] },
+    {
+      providers: [{
+        views: [{
+          id: "runtime_direct_private_0001",
+          search: { kinds: [{ id: "runtime_kind_private_0002" }] },
+        }],
+      }],
+      nested: {
+        arbitrary: {
+          providers: [{ views: [{ id: "runtime_nested_private_0003" }] }],
+        },
+      },
+    },
+  );
+  const diagnostics = bundle.diagnostics as {
+    providers: Array<{
+      views: Array<{ id: string; search: { kinds: Array<{ id: string }> } }>;
+    }>;
+    nested: { arbitrary: { providers: Array<{ views: Array<{ id: string }> }> } };
+  };
+  assert.equal(diagnostics.providers[0]?.views[0]?.id, "runt...0001");
+  assert.equal(diagnostics.providers[0]?.views[0]?.search.kinds[0]?.id, "runt...0002");
+  assert.equal(
+    diagnostics.nested.arbitrary.providers[0]?.views[0]?.id,
+    "runt...0003",
+  );
+
+  const catalog = bundle.providerCatalog as {
+    source: string;
+    providers: Array<{
+      namespace: string;
+      views: Array<{ id: string; search?: { kinds: Array<{ id: string }> } }>;
+    }>;
+  };
+  assert.equal(catalog.source, "repository-manifests");
+  const groups = catalog.providers.find((provider) => provider.namespace === "groups");
+  const search = groups?.views.find((view) => view.id === "search");
+  assert.equal(search?.id, "search");
+  assert.deepEqual(search?.search?.kinds.map((kind) => kind.id), ["group", "membership"]);
+  assert.doesNotMatch(JSON.stringify(diagnostics), /runtime_(?:direct|kind|nested)_private/u);
+});
+
+test("doctor CLI accepts bounded operator-supplied runtime evidence only with a bundle", async (context) => {
+  const temporary = await mkdtemp(join(process.cwd(), ".temp-control-evidence-"));
+  context.after(async () => rm(temporary, { recursive: true, force: true }));
+  const evidencePath = join(temporary, "runtime-evidence.json");
+  const bundlePath = join(temporary, "bundle.json");
+  await writeFile(evidencePath, JSON.stringify({
+    status: "HEALTHY",
+    sessionId: "session-private-0001",
+    databasePassword: "must-not-leak",
+  }), "utf8");
+  const output: string[] = [];
+  const errors: string[] = [];
+  const io = {
+    log: (message: string) => output.push(message),
+    error: (message: string) => errors.push(message),
+  };
+
+  assert.equal(await runCli([
+    "doctor",
+    ".",
+    "--bundle",
+    "--runtime-evidence",
+    relative(process.cwd(), evidencePath),
+    "--output",
+    relative(process.cwd(), bundlePath),
+    "--root",
+    process.cwd(),
+    "--json",
+  ], io), 0);
+  const bundleText = await readFile(bundlePath, "utf8");
+  const parsedBundle = JSON.parse(bundleText) as {
+    diagnostics: { status: string; sessionId: string; databasePassword: string };
+  };
+  assert.match(bundleText, /HEALTHY/u);
+  assert.equal(parsedBundle.diagnostics.status, "HEALTHY");
+  assert.notEqual(parsedBundle.diagnostics.sessionId, "session-private-0001");
+  assert.equal(parsedBundle.diagnostics.databasePassword, "[REDACTED]");
+  assert.match(bundleText, /\[REDACTED\]/u);
+  assert.doesNotMatch(bundleText, /session-private-0001|must-not-leak/u);
+  assert.deepEqual(errors, []);
+
+  output.length = 0;
+  assert.equal(await runCli([
+    "doctor",
+    ".",
+    "--runtime-evidence",
+    relative(process.cwd(), evidencePath),
+    "--root",
+    process.cwd(),
+  ], io), 2);
+  assert.match(errors.at(-1) ?? "", /requires --bundle/u);
 });
 
 test("database doctor derives expected columns and indexes from repository migrations", async () => {

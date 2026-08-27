@@ -18,6 +18,13 @@ const databasePath = path.join(
   'server',
   'database.lua',
 );
+const orderedIndexPath = path.join(
+  process.cwd(),
+  'resources',
+  'synex_entities',
+  'server',
+  'ordered_index.lua',
+);
 const registryPath = path.join(
   process.cwd(),
   'resources',
@@ -44,6 +51,7 @@ async function runLua<T>(assertions: string): Promise<T> {
   const engine = await new LuaFactory().createEngine();
   try {
     await engine.doString(await readFile(validationPath, 'utf8'));
+    await engine.doString(await readFile(orderedIndexPath, 'utf8'));
     await engine.doString(await readFile(registryPath, 'utf8'));
     return await engine.doString(assertions) as T;
   } finally {
@@ -117,7 +125,7 @@ test('registry indexes reject net ID reuse and stale or foreign generations', as
     local stale, staleError = registry.resolve(record.entityId, 1, 'synex_garages')
     assert(stale == nil and staleError.code == 'STALE_ENTITY')
     local foreign, foreignError = registry.resolve(record.entityId, 2, 'synex_jobs')
-    assert(foreign == nil and foreignError.code == 'FORBIDDEN')
+    assert(foreign == nil and foreignError.code == 'FOREIGN_RESOURCE_OWNER')
 
     local duplicate, duplicateError = registry.insert({
       entityId = 'entity_00000002',
@@ -180,7 +188,7 @@ test('database port is injectable and preserves positional parameters', async ()
 test('unexpected failures reach a structured sink without exposing the caught value', async () => {
   const engine = await new LuaFactory().createEngine();
   try {
-    for (const file of [validationPath, registryPath, foundationPath]) {
+    for (const file of [validationPath, orderedIndexPath, registryPath, foundationPath]) {
       await engine.doString(await readFile(file, 'utf8'));
     }
     const result = await engine.doString(String.raw`
@@ -225,7 +233,7 @@ test('entity Core consumers recognize protected Cfx-callable tables and userdata
   const engine = await new LuaFactory().createEngine();
   await engine.global.set('cfxCallable', {});
   try {
-    for (const file of [validationPath, registryPath, foundationPath]) {
+    for (const file of [validationPath, orderedIndexPath, registryPath, foundationPath]) {
       await engine.doString(await readFile(file, 'utf8'));
     }
     const result = await engine.doString(String.raw`
@@ -272,7 +280,9 @@ test('entity Core consumers recognize protected Cfx-callable tables and userdata
 test('repository fails closed on nil, scalar, sparse, and non-table DB results', async () => {
   const engine = await new LuaFactory().createEngine();
   try {
-    for (const file of [validationPath, registryPath, foundationPath, repositoryPath]) {
+    for (const file of [
+      validationPath, orderedIndexPath, registryPath, foundationPath, repositoryPath,
+    ]) {
       await engine.doString(await readFile(file, 'utf8'));
     }
     const result = await engine.doString(String.raw`
@@ -340,7 +350,7 @@ test('repository fails closed on nil, scalar, sparse, and non-table DB results',
 test('spawn reservations and owner lifecycle changes remain race-safe', async () => {
   const engine = await new LuaFactory().createEngine();
   try {
-    for (const file of [validationPath, registryPath, foundationPath]) {
+    for (const file of [validationPath, orderedIndexPath, registryPath, foundationPath]) {
       await engine.doString(await readFile(file, 'utf8'));
     }
     const result = await engine.doString(String.raw`

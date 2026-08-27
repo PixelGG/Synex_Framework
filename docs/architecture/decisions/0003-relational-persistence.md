@@ -2,7 +2,7 @@
 
 Status: Accepted
 
-Scope: the relational and forward-only direction is accepted for Core. Non-Core schemas and migrations remain rework snapshots and are not accepted deployment or upgrade paths.
+Scope: the relational and forward-only direction is accepted for Core. `synex_groups` exercises that direction as an Experimental Alpha Organizations Engine, `synex_accounts` as an Experimental Alpha Financial Engine, and `synex_entities` as a Development / Experimental Alpha Entity Authority Engine. Other non-Core schemas remain rework snapshots or scaffolds. No downstream schema or migration set is an accepted deployment or upgrade path until its exact revision receives a separate release decision.
 
 ## Decision
 

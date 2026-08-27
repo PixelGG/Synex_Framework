@@ -341,7 +341,9 @@ test('RPC responses enforce the encoded byte cap and keep error fallbacks bounde
 });
 
 test('public facades enforce RPC options and preserve idempotency metadata tuples', async () => {
-  const engine = await coreEngine(['foundation', 'registries', 'bootstrap_api']);
+  const engine = await coreEngine([
+    'foundation', 'registries', 'bootstrap_api_validation', 'bootstrap_api_tracing', 'bootstrap_api',
+  ]);
   try {
     const result = await engine.doString(`
       local now = 1000

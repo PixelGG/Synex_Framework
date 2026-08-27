@@ -1,0 +1,92 @@
+{
+  "$schema": "./schemas/review-lock.schema.json",
+  "schema": 1,
+  "kind": "synex-compatibility-review-lock",
+  "algorithm": "sha256",
+  "mappingCatalog": {
+    "id": "central.compatibility-mappings",
+    "catalogPath": "libraries/synex_bridge/compatibility/mappings.json",
+    "catalogSha256": "a71475b9fba95ac66e5ac8b80012ff77162c53d8f79666321c1e3b5ed5e53b6f"
+  },
+  "consumerCatalog": {
+    "id": "central.compatibility-consumers",
+    "catalogPath": "libraries/synex_bridge/compatibility/consumers.json",
+    "catalogSha256": "9e78694702e513c8721bcb3f2f456756fc3e54c05b60c43e9cb1244f4d72e7a2"
+  },
+  "moneyPolicyCatalog": {
+    "id": "central.money-policies",
+    "catalogPath": "libraries/synex_bridge/compatibility/money-policies.json",
+    "catalogSha256": "d3d4255ed48e5bc0553f65524e11279992621b8b2ddde0891259e14a8b9c05d2"
+  },
+  "entries": [
+    {
+      "id": "esx.surface-catalog",
+      "provider": "esx",
+      "providerVersion": "0.1.0",
+      "targetFrameworkApiRange": null,
+      "catalogPath": "libraries/synex_bridge/compatibility/surfaces/esx.json",
+      "catalogSha256": "ca0d18c218525908d3a69a9b704f2b8d7aa2b824dca4bd8776d960c6d90864cd",
+      "upstream": {
+        "repository": "https://github.com/esx-framework/esx_core",
+        "branch": "main",
+        "revision": "2f7bada4abe1e22a7e1911cf951087b8569cec6d",
+        "pinSha256": "0205c12c46544fa3680b73b950229ee66732d7fde47a104615b77a327fcd6404"
+      },
+      "evidenceUrls": [
+        "https://docs.esx-framework.org/en/esx_core/es_extended/server/functions",
+        "https://docs.esx-framework.org/en/esx_core/es_extended/server/xplayer",
+        "https://docs.esx-framework.org/en/esx_core/es_extended/client/functions",
+        "https://github.com/esx-framework/esx_core/blob/2f7bada4abe1e22a7e1911cf951087b8569cec6d/%5Bcore%5D/es_extended/server/functions.lua",
+        "https://github.com/esx-framework/esx_core/blob/2f7bada4abe1e22a7e1911cf951087b8569cec6d/%5Bcore%5D/es_extended/imports.lua",
+        "https://github.com/esx-framework/esx_core/blob/2f7bada4abe1e22a7e1911cf951087b8569cec6d/%5Bcore%5D/es_extended/server/main.lua",
+        "https://github.com/esx-framework/esx_core/blob/2f7bada4abe1e22a7e1911cf951087b8569cec6d/%5Bcore%5D/es_extended/server/classes/player.lua"
+      ]
+    },
+    {
+      "id": "qb.surface-catalog",
+      "provider": "qb",
+      "providerVersion": "0.1.0",
+      "targetFrameworkApiRange": null,
+      "catalogPath": "libraries/synex_bridge/compatibility/surfaces/qb.json",
+      "catalogSha256": "161aefb98682252e02e396ba606645513d1c6332b0a28e20db4dfa199db77ea4",
+      "upstream": {
+        "repository": "https://github.com/qbcore-framework/qb-core",
+        "branch": "main",
+        "revision": "9b3cddcce93e5e12cbcf6b47b866b687d32ac7bf",
+        "pinSha256": "7ad2197f80cc6a313d4748c083db7496434a6faf6e696be01fa6f2949c4a1ebe"
+      },
+      "evidenceUrls": [
+        "https://github.com/qbcore-framework/qb-docs/blob/main/qb-core/core-object.md",
+        "https://github.com/qbcore-framework/qb-docs/blob/main/qb-core/server-function-reference.md",
+        "https://github.com/qbcore-framework/qb-core/blob/9b3cddcce93e5e12cbcf6b47b866b687d32ac7bf/server/functions.lua",
+        "https://github.com/qbcore-framework/qb-core/blob/9b3cddcce93e5e12cbcf6b47b866b687d32ac7bf/server/player.lua",
+        "https://github.com/qbcore-framework/qb-core/blob/9b3cddcce93e5e12cbcf6b47b866b687d32ac7bf/client/functions.lua",
+        "https://github.com/qbcore-framework/qb-core/blob/9b3cddcce93e5e12cbcf6b47b866b687d32ac7bf/client/events.lua"
+      ]
+    },
+    {
+      "id": "qbx.surface-catalog",
+      "provider": "qbx",
+      "providerVersion": "0.1.0",
+      "targetFrameworkApiRange": null,
+      "catalogPath": "libraries/synex_bridge/compatibility/surfaces/qbx.json",
+      "catalogSha256": "798b6d5d6474039b391453c5e23929b2d4d42c3d311204a5a19ad8dca187e829",
+      "upstream": {
+        "repository": "https://github.com/Qbox-project/qbx_core",
+        "branch": "main",
+        "revision": "c1c3ca16721cd14eb814cfb95e8f8631690d247d",
+        "pinSha256": "6e3b52d5400ba8039b82868a7c057ea8e62b6ead2de94e6c838bea6a4d83d9e2"
+      },
+      "evidenceUrls": [
+        "https://docs.qbox.re/resources/qbx_core/exports/server",
+        "https://docs.qbox.re/resources/qbx_core/exports/client",
+        "https://docs.qbox.re/faq",
+        "https://github.com/Qbox-project/qbx_core/blob/c1c3ca16721cd14eb814cfb95e8f8631690d247d/server/player.lua",
+        "https://github.com/Qbox-project/qbx_core/blob/c1c3ca16721cd14eb814cfb95e8f8631690d247d/server/functions.lua",
+        "https://github.com/Qbox-project/qbx_core/blob/c1c3ca16721cd14eb814cfb95e8f8631690d247d/shared/functions.lua",
+        "https://github.com/Qbox-project/qbx_core/blob/c1c3ca16721cd14eb814cfb95e8f8631690d247d/client/functions.lua",
+        "https://github.com/Qbox-project/qbx_core/blob/c1c3ca16721cd14eb814cfb95e8f8631690d247d/client/events.lua"
+      ]
+    }
+  ]
+}

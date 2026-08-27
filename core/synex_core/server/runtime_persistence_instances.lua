@@ -625,4 +625,58 @@ factories.runtimePersistenceInstances = function(context)
     function instances:snapshot()
         return foundation.copy(instanceSnapshot)
     end
+
+    function instances:detail()
+        local ownerLower = instanceId .. ':'
+        local ownerUpper = instanceId .. ';'
+        local rows, detailError = database:query([[SELECT `instance`.`instance_id`,
+                `instance`.`name`, `instance`.`status`,
+                CAST(`instance`.`version` AS CHAR) AS `version`,
+                DATE_FORMAT(`instance`.`started_at`, '%Y-%m-%dT%H:%i:%s.%fZ')
+                    AS `started_at`,
+                DATE_FORMAT(`instance`.`heartbeat_at`, '%Y-%m-%dT%H:%i:%s.%fZ')
+                    AS `heartbeat_at`,
+                CAST((SELECT COUNT(*) FROM `synex_sessions` AS `session`
+                    WHERE `session`.`server_instance_id` = `instance`.`instance_id`
+                        AND `session`.`closed_at` IS NULL) AS CHAR) AS `active_sessions`,
+                CAST((SELECT COUNT(*) FROM `synex_cluster_leases` AS `lease`
+                    WHERE `lease`.`owner_id` >= ? AND `lease`.`owner_id` < ?
+                        AND `lease`.`terminal_compaction_at` IS NULL) AS CHAR)
+                    AS `active_leases`
+            FROM `synex_instances` AS `instance`
+            WHERE `instance`.`instance_id` = ? LIMIT 1]],
+            { ownerLower, ownerUpper, instanceId })
+        if detailError then return nil, detailError end
+        local row = type(rows) == 'table' and rows[1] or nil
+        if not row then
+            return nil, foundation.error('INSTANCE_NOT_REGISTERED',
+                'The current instance has no persisted registration.', { retryable = true })
+        end
+        local version = tonumber(row.version)
+        local sessions = tonumber(row.active_sessions)
+        local leases = tonumber(row.active_leases)
+        if row.instance_id ~= instanceId or type(row.name) ~= 'string'
+            or #row.name < 1 or #row.name > 96 or row.name:find('[%z\1-\31\127]')
+            or type(row.status) ~= 'string' or #row.status < 1 or #row.status > 16
+            or not row.status:match('^[a-z_]+$')
+            or not version or math.type(version) ~= 'integer' or version < 1
+            or version > 4294967295 or not sessions or math.type(sessions) ~= 'integer'
+            or sessions < 0 or sessions > 4294967295 or not leases
+            or math.type(leases) ~= 'integer' or leases < 0 or leases > 4294967295
+            or type(row.started_at) ~= 'string' or #row.started_at > 32
+            or type(row.heartbeat_at) ~= 'string' or #row.heartbeat_at > 32 then
+            return nil, foundation.error('DATABASE_RESULT_INVALID',
+                'The current instance detail row is invalid.', { retryable = true })
+        end
+        return {
+            id = row.instance_id,
+            name = row.name,
+            status = row.status,
+            version = version,
+            startedAt = row.started_at,
+            lastHeartbeatAt = row.heartbeat_at,
+            activeSessions = sessions,
+            activeLeases = leases
+        }, nil
+    end
 end

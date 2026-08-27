@@ -33,6 +33,16 @@ async function coreEngine(modules: string[]): Promise<LuaEngine> {
     if (module === 'bootstrap_lifecycle') {
       await load(engine, 'core/synex_core/server/runtime_database_health.lua');
     }
+    if (module === 'bootstrap_diagnostics') {
+      for (const dependency of [
+        'bootstrap_diagnostics_shared',
+        'bootstrap_diagnostics_runtime',
+        'bootstrap_diagnostics_control_shared',
+        'bootstrap_diagnostics_control_queries',
+        'bootstrap_diagnostics_control_inspect',
+        'bootstrap_diagnostics_control_security',
+      ]) await load(engine, `core/synex_core/server/${dependency}.lua`);
+    }
     await load(engine, `core/synex_core/server/${module}.lua`);
   }
   return engine;
@@ -76,10 +86,61 @@ test('persistent RBAC caches subjects, enforces deny precedence, and invalidates
       assert(security.rbac:hydrate())
       assert(security.rbac:check('user:fixture', 'fixture.read'))
       assert(not security.rbac:check('user:fixture', 'fixture.delete'))
+      local granted = assert(security.rbac:explain('user:fixture', 'fixture.read'))
+      assert(granted.allowed and granted.subject == 'user:fixture'
+        and granted.permission == 'fixture.read')
+      assert(granted.matched.role == 'operator' and granted.matched.effect == 'allow'
+        and granted.matched.pattern == 'fixture.*' and granted.matched.source == 'role')
+      local denied = assert(security.rbac:explain('user:fixture', 'fixture.delete'))
+      assert(not denied.allowed and denied.matched.role == 'operator'
+        and denied.matched.effect == 'deny' and denied.matched.pattern == 'fixture.delete')
+      local explicit = assert(security.rbac:explain(
+        'user:fixture', 'fixture.read', {'fixture.*'}))
+      assert(not explicit.allowed and explicit.matched.role == nil
+        and explicit.matched.effect == 'deny' and explicit.matched.pattern == 'fixture.*'
+        and explicit.matched.source == 'explicit')
+      local unmatched = assert(security.rbac:explain('user:fixture', 'other.read'))
+      assert(not unmatched.allowed and unmatched.matched == nil)
+      local composed = assert(security.rbac:evaluateRules('fixture.read', {
+        { permission = 'fixture.*', effect = 'allow' },
+        { permission = 'fixture.delete', effect = 'deny' },
+        { permission = 'fixture.read', effect = 'deny' }
+      }))
+      assert(not composed.allowed and composed.denied
+        and composed.matchedAllows == 1 and composed.matchedDenies == 1
+        and composed.matches[1].index == 1 and composed.matches[2].index == 3)
+      local invalidEvaluation, invalidEvaluationError = security.rbac:evaluateRules(
+        'fixture.*', {{ permission = 'fixture.*', effect = 'allow' }})
+      assert(invalidEvaluation == nil and invalidEvaluationError.code == 'INVALID_PERMISSION')
+      local smuggledEvaluation, smuggledEvaluationError = security.rbac:evaluateRules(
+        'fixture.read', {{ permission = 'fixture.*', effect = 'allow', scope = 'group' }})
+      assert(smuggledEvaluation == nil
+        and smuggledEvaluationError.code == 'INVALID_PERMISSION_SET')
+      local function assertJsonSafe(value, depth)
+        depth = depth or 0
+        assert(depth <= 4)
+        if type(value) ~= 'table' then
+          assert(type(value) == 'string' or type(value) == 'boolean' or type(value) == 'number')
+          return
+        end
+        assert(getmetatable(value) == nil)
+        for key, child in pairs(value) do
+          assert(type(key) == 'string' or type(key) == 'number')
+          assertJsonSafe(child, depth + 1)
+        end
+      end
+      assertJsonSafe(granted)
+      local oversizedDenies = {}
+      for index = 1, 513 do oversizedDenies[index] = 'fixture.read' end
+      local oversized, oversizedError = security.rbac:explain(
+        'user:fixture', 'fixture.read', oversizedDenies)
+      assert(oversized == nil and oversizedError.code == 'INVALID_PERMISSION_SET')
       assert(subjectLoads == 1)
       assert(security.rbac:revoke('user:fixture', 'operator', {
         actor = 'synex_fixture', actorType = 'resource', reason = 'fixture revoke', traceId = 'trace-fixture'
       }))
+      local revoked = assert(security.rbac:explain('user:fixture', 'fixture.read'))
+      assert(not revoked.allowed and revoked.matched == nil)
       assert(not security.rbac:check('user:fixture', 'fixture.read'))
       assert(subjectLoads == 2)
       local invalid, invalidError = security.rbac:defineRole('Invalid Role', {'fixture.read'}, {
@@ -91,6 +152,75 @@ test('persistent RBAC caches subjects, enforces deny precedence, and invalidates
       return table.concat({subjectLoads, snapshot.roles, snapshot.cachedSubjects}, ':')
     `);
     assert.equal(result, '2:1:1');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('permission explanation is exposed through the read-capability facade', async () => {
+  const engine = await coreEngine(['foundation', 'bootstrap_api_validation', 'bootstrap_api_tracing', 'bootstrap_api']);
+  try {
+    const result = await engine.doString(`
+      local checkedCapability, checkedOperation, explanations = nil, nil, 0
+      local platform = {
+        nowGame = function() return 1000 end, random = function() return 1 end,
+        print = function() end, jsonEncode = function() return '{}' end,
+        invokingResource = function() return nil end
+      }
+      local foundation = SynexCoreFactories.foundation({ platform = platform })
+      foundation.configureIds('permissions-explain-facade')
+      local owners = {
+        isCurrent = function(_, resource, epoch) return resource == 'synex_fixture' and epoch == 4 end,
+        beginOperation = function() return 'permission-explain-operation', nil end,
+        finishOperation = function() return true, nil end
+      }
+      local security = {
+        capabilities = { check = function(_, resource, capability, context)
+          assert(resource == 'synex_fixture')
+          checkedCapability, checkedOperation = capability, context.operation
+          return true, nil
+        end },
+        rbac = { explain = function(_, subject, permission, explicitDenies)
+          explanations = explanations + 1
+          assert(subject == 'user:fixture' and permission == 'fixture.read'
+            and explicitDenies[1] == 'fixture.blocked')
+          return {
+            allowed = true, subject = subject, permission = permission,
+            matched = { role = 'operator', effect = 'allow', pattern = 'fixture.*', source = 'role' }
+          }, nil
+        end, evaluateRules = function(_, permission, rules)
+          assert(permission == 'fixture.read' and rules[1].permission == 'fixture.*')
+          return {
+            allowed = true, denied = false,
+            matches = {{ index = 1, permission = 'fixture.*', effect = 'allow' }}
+          }, nil
+        end }
+      }
+      local api = SynexCoreFactories.bootstrapApi({
+        platform = platform, foundation = foundation, registries = { owners = owners },
+        security = security, identity = {}, contractSystem = {}, messaging = {},
+        coreResource = 'synex_core', runtime = {}, stateService = {}, lifecycle = {},
+        reliability = {}, sagaRuntime = {}, facadeCache = {}, defaultConfig = { retention = {} },
+        runtimeGate = { requireAvailable = function() return true, nil end },
+        ensureOwner = function(resource)
+          assert(resource == 'synex_fixture')
+          return 4, nil
+        end
+      })
+      local facade = assert(api.getAPIForCaller('synex_fixture', '^1.0.0'))
+      local explanation, explanationError = facade.Permissions.explain(
+        'user:fixture', 'fixture.read', {'fixture.blocked'})
+      assert(explanationError == nil and explanation.allowed and explanations == 1)
+      assert(checkedCapability == 'synex.permissions.read'
+        and checkedOperation == 'Permissions.explain')
+      local evaluated, evaluatedError = facade.Permissions.evaluateRules(
+        'fixture.read', {{ permission = 'fixture.*', effect = 'allow' }})
+      assert(evaluatedError == nil and evaluated.allowed and #evaluated.matches == 1)
+      assert(checkedCapability == 'synex.permissions.read'
+        and checkedOperation == 'Permissions.evaluateRules')
+      return table.concat({checkedCapability, checkedOperation, explanation.matched.role}, ':')
+    `);
+    assert.equal(result, 'synex.permissions.read:Permissions.evaluateRules:operator');
   } finally {
     engine.global.close();
   }
@@ -2517,7 +2647,8 @@ test('yielding scheduler handlers are isolated across owners', async () => {
 
 test('failed runtime gate blocks owner discovery and cached facade mutations', async () => {
   const engine = await coreEngine([
-    'foundation', 'registries', 'lifecycle', 'runtime_gate', 'bootstrap_discovery', 'bootstrap_api',
+    'foundation', 'registries', 'lifecycle', 'runtime_gate', 'bootstrap_discovery',
+    'bootstrap_api_validation', 'bootstrap_api_tracing', 'bootstrap_api',
   ]);
   try {
     const result = await engine.doString(`
@@ -3367,7 +3498,7 @@ test('runtime database health ignores late probe completion after the watchdog e
   }
 });
 
-test('database workers wait for a yielding Cfx health probe and resume only after reconciliation', async () => {
+test('database workers use cached healthy availability during a yielding probe and suspend through recovery', async () => {
   const engine = await coreEngine([
     'foundation',
     'registries',
@@ -3511,7 +3642,13 @@ test('database workers wait for a yielding Cfx health probe and resume only afte
       local started, marker = coroutine.resume(threads[1])
       assert(started and marker == 'database-health-probe')
       assert(coroutine.resume(threads[2]))
-      assert(coroutine.status(threads[2]) == 'dead' and outboxCalls == 0)
+      assert(coroutine.status(threads[2]) == 'dead' and outboxCalls == 1)
+      local coalescedOutbox = nil
+      for _, worker in ipairs(lifecycle.scheduler:snapshot()) do
+        if worker.name == 'core.outbox.dispatch' then coalescedOutbox = worker end
+      end
+      assert(coalescedOutbox and coalescedOutbox.health == 'HEALTHY'
+        and coalescedOutbox.lastError == nil)
       local failed = foundation.error('DATABASE_ERROR', 'private fixture endpoint')
       assert(coroutine.resume(threads[1], nil, failed))
       assert(coroutine.status(threads[1]) == 'dead')
@@ -3526,7 +3663,13 @@ test('database workers wait for a yielding Cfx health probe and resume only afte
         assert(workerResumed, workerError)
         assert(coroutine.status(threads[index]) == 'dead')
       end
-      assert(outboxCalls == 0)
+      assert(outboxCalls == 1)
+      local suspendedOutbox = nil
+      for _, worker in ipairs(lifecycle.scheduler:snapshot()) do
+        if worker.name == 'core.outbox.dispatch' then suspendedOutbox = worker end
+      end
+      assert(suspendedOutbox and suspendedOutbox.health == 'DEGRADED'
+        and suspendedOutbox.lastError == 'SCHEDULE_SUSPENDED')
       assert(coroutine.resume(threads[firstRecoveryThread], true, nil))
       assert(not lifecycle.core:canAdmitPlayers() and statusWrites[2] == 'degraded')
 
@@ -3539,7 +3682,7 @@ test('database workers wait for a yielding Cfx health probe and resume only afte
         assert(workerResumed, workerError)
         assert(coroutine.status(threads[index]) == 'dead')
       end
-      assert(outboxCalls == 0)
+      assert(outboxCalls == 1)
       assert(coroutine.resume(threads[secondRecoveryThread], true, nil))
       assert(lifecycle.core:get() == 'READY' and lifecycle.core:canAdmitPlayers())
       assert(statusWrites[3] == 'ready')
@@ -3553,7 +3696,7 @@ test('database workers wait for a yielding Cfx health probe and resume only afte
         assert(workerResumed, workerError)
         assert(coroutine.status(threads[index]) == 'dead')
       end
-      assert(outboxCalls == 1 and validationCalls == 5)
+      assert(outboxCalls == 2 and validationCalls == 5)
 
       return table.concat({
         lifecycle.core:get(),
@@ -3563,7 +3706,7 @@ test('database workers wait for a yielding Cfx health probe and resume only afte
         table.concat(statusWrites, ',')
       }, ':')
     `);
-    assert.equal(result, 'READY:open:1:5:ready,degraded,ready');
+    assert.equal(result, 'READY:open:2:5:ready,degraded,ready');
   } finally {
     engine.global.close();
   }
@@ -4233,7 +4376,9 @@ test('instance status synchronization clears a failed write after desired status
 });
 
 test('capability delegation is bridge-granted, target-declared, and limited to active resources', async () => {
-  const engine = await coreEngine(['foundation', 'security', 'bootstrap_api']);
+  const engine = await coreEngine([
+    'foundation', 'security', 'bootstrap_api_validation', 'bootstrap_api_tracing', 'bootstrap_api',
+  ]);
   try {
     const result = await engine.doString(`
       local states = { synex_bridge = 'started', synex_consumer = 'started', synex_attacker = 'started' }
@@ -4302,7 +4447,7 @@ test('capability delegation is bridge-granted, target-declared, and limited to a
   }
 });
 
-test('control diagnostic search crosses its declared and granted capability gateway', async () => {
+test('control provider facade crosses its declared read and register capability gateways', async () => {
   const [descriptorSource, policySource] = await Promise.all([
     readFile(path.join(root, 'resources/synex_control/synex.resource.json'), 'utf8'),
     readFile(path.join(root, 'core/synex_core/config/capabilities.json'), 'utf8'),
@@ -4316,7 +4461,9 @@ test('control diagnostic search crosses its declared and granted capability gate
   };
   const luaList = (values: string[]): string =>
     `{${values.map((value) => JSON.stringify(value)).join(',')}}`;
-  const engine = await coreEngine(['foundation', 'security', 'bootstrap_api']);
+  const engine = await coreEngine([
+    'foundation', 'security', 'bootstrap_api_validation', 'bootstrap_api_tracing', 'bootstrap_api',
+  ]);
   try {
     const result = await engine.doString(`
       local platform = {
@@ -4327,12 +4474,12 @@ test('control diagnostic search crosses its declared and granted capability gate
         invokingResource = function() return nil end
       }
       local foundation = SynexCoreFactories.foundation({ platform = platform })
-      foundation.configureIds('control-search-test')
+      foundation.configureIds('control-provider-test')
       local owners = {
         isCurrent = function(_, resource, epoch)
           return resource == 'synex_control' and epoch == 1
         end,
-        beginOperation = function() return 'operation-control-search', nil end,
+        beginOperation = function() return 'operation-control-provider', nil end,
         finishOperation = function() return true end
       }
       local security = SynexCoreFactories.security({
@@ -4355,7 +4502,26 @@ test('control diagnostic search crosses its declared and granted capability gate
       security.capabilities:registerManifest('synex_control', {
         capabilities = { request = ${luaList(descriptor.capabilities.request)} }
       })
-      local searches = 0
+      local registrations, lists, invocations = 0, 0, 0
+      local controlProviders = {}
+      function controlProviders:register(caller, epoch, definition)
+        assert(caller == 'synex_control' and epoch == 1)
+        assert(definition.namespace == 'control')
+        registrations = registrations + 1
+        return { namespace = definition.namespace, resource = caller }, nil
+      end
+      function controlProviders:list()
+        lists = lists + 1
+        return { schemaVersion = 1, providers = {}, truncated = false }, nil
+      end
+      function controlProviders:invoke(caller, epoch, namespace, operation, request, options, traceId)
+        assert(caller == 'synex_control' and epoch == 1)
+        assert(namespace == 'core' and operation == 'search')
+        assert(request.query.kind == 'trace' and request.query.value == 'trace-control-search')
+        assert(options.timeoutMs == 500 and type(traceId) == 'string')
+        invocations = invocations + 1
+        return { namespace = namespace, operation = operation, data = request.query }, nil
+      end
       local api = SynexCoreFactories.bootstrapApi({
         platform = platform,
         foundation = foundation,
@@ -4369,32 +4535,30 @@ test('control diagnostic search crosses its declared and granted capability gate
         runtime = {},
         stateService = {},
         lifecycle = {},
-        reliability = {
-          audit = {
-            search = function(_, request)
-              searches = searches + 1
-              return { kind = request.kind, value = request.value }, nil
-            end
-          }
-        },
+        reliability = {},
         sagaRuntime = {},
         facadeCache = {},
-        defaultConfig = { retention = {} },
+        defaultConfig = { retention = {} }, controlProviders = controlProviders,
         ensureOwner = function(resource)
           if resource == 'synex_control' then return 1, nil end
           return nil, foundation.error('RESOURCE_NOT_STARTED', 'stopped')
         end
       })
       local control = assert(api.getAPIForCaller('synex_control', '^1.0.0'))
-      local value, searchError = control.Diagnostics.search({
-        kind = 'trace', value = 'trace-control-search'
+      local registered, registrationError = control.ControlProviders.register({
+        namespace = 'control'
       })
-      assert(searchError == nil, searchError and searchError.code or 'search failed')
-      assert(value ~= nil)
-      assert(searches == 1)
-      return value.kind .. ':' .. value.value
+      assert(registered and registrationError == nil)
+      local listed, listError = control.ControlProviders.list()
+      assert(listed and listError == nil)
+      local value, invokeError = control.ControlProviders.invoke('core', 'search', {
+        query = { kind = 'trace', value = 'trace-control-search' }
+      }, { timeoutMs = 500 })
+      assert(value and invokeError == nil)
+      assert(registrations == 1 and lists == 1 and invocations == 1)
+      return table.concat({registrations, lists, invocations, value.data.kind}, ':')
     `);
-    assert.equal(result, 'trace:trace-control-search');
+    assert.equal(result, '1:1:1:trace');
   } finally {
     engine.global.close();
   }
@@ -4607,17 +4771,17 @@ test('diagnostic audit search is bounded, exact, and redacts unsafe references',
         capturedSql, capturedParameters = sql, parameters
         return {
           {
-            event_id = 'event-1', occurred_at = '2026-08-22 12:00:00',
+            cursor_id = '3', event_id = 'event-1', occurred_at = '2026-08-22 12:00:00',
             actor_type = 'resource', actor_id = 'synex_fixture', action = 'fixture.read',
             target_type = 'character', target_id = 'character-fixture', trace_id = 'trace-1'
           },
           {
-            event_id = 'event-2', occurred_at = '2026-08-22 11:59:00',
+            cursor_id = '2', event_id = 'event-2', occurred_at = '2026-08-22 11:59:00',
             actor_type = 'user', actor_id = 'license:private', action = 'fixture.change',
             target_type = 'identifier', target_id = 'license:private', trace_id = 'trace-2'
           },
           {
-            event_id = 'event-3', occurred_at = '2026-08-22 11:58:00',
+            cursor_id = '1', event_id = 'event-3', occurred_at = '2026-08-22 11:58:00',
             actor_type = 'system', actor_id = 'synex_core', action = 'fixture.old',
             target_type = 'resource', target_id = 'synex_fixture', trace_id = 'trace-3'
           }
@@ -4631,12 +4795,22 @@ test('diagnostic audit search is bounded, exact, and redacts unsafe references',
         kind = 'resource', value = 'synex_fixture', limit = 2
       }))
       assert(search.kind == 'resource' and search.limit == 2 and search.truncated == true)
+      assert(search.hasMore == true and search.nextCursor == '2')
       assert(#search.entries == 2 and search.entries[1].actor.reference == 'synex_fixture')
       assert(search.entries[2].actor.reference == '[redacted]')
       assert(search.entries[2].target.reference == '[redacted]' and search.entries[2].masked == true)
       assert(capturedSql:find("actor_type", 1, true) and capturedSql:find("target_type", 1, true))
       assert(capturedParameters[1] == 'synex_fixture' and capturedParameters[2] == 'synex_fixture')
       assert(capturedParameters[3] == 3)
+      local nextPage = assert(reliability.audit:search({
+        kind = 'resource', value = 'synex_fixture', cursor = search.nextCursor, limit = 2
+      }))
+      assert(capturedSql:find('id', 1, true) and capturedParameters[3] == '2'
+        and capturedParameters[4] == 3)
+      local badCursor, badCursorError = reliability.audit:search({
+        kind = 'resource', value = 'synex_fixture', cursor = '0', limit = 2
+      })
+      assert(badCursor == nil and badCursorError.code == 'INVALID_AUDIT_SEARCH')
       local invalid, invalidError = reliability.audit:search({
         kind = 'resource', value = 'synex_fixture', limit = 65
       })
@@ -4761,8 +4935,10 @@ test('operator command registry is console-only, typed, bounded, and service-bac
   try {
     const result = await engine.doString(`
       local registered, emitted, printed, serviceCalls, auditCalls = {}, {}, {}, 0, 0
-      local restartPreparations = 0
-      local resourceStates = { synex_accounts = 'started', synex_entities = 'started' }
+      local restartPreparations, doctorCalls = 0, 0
+      local resourceStates = {
+        synex_accounts = 'started', synex_entities = 'started', synex_groups = 'started'
+      }
       local platform = {
         nowGame = function() return 1000 end, random = function() return 1 end,
         print = function(line)
@@ -4789,13 +4965,16 @@ test('operator command registry is console-only, typed, bounded, and service-bac
       local commands = SynexCoreFactories.commands({
         platform = platform, foundation = foundation, coreResource = 'synex_core',
         runtime = {
-          doctor = function() return {
+          doctor = function()
+            doctorCalls = doctorCalls + 1
+            return {
             status = 'PASS', checks = {
               { name = 'database', status = 'PASS' },
               { name = 'database-utc', status = 'PASS' },
               { name = 'database-transaction-isolation', status = 'PASS' }
             }
-          }, nil end,
+            }, nil
+          end,
           prepareRestart = function()
             restartPreparations = restartPreparations + 1
             return { state = 'prepared', restartCommand = 'restart synex_core' }, nil
@@ -4833,8 +5012,9 @@ test('operator command registry is console-only, typed, bounded, and service-bac
         end } },
         messaging = { services = { call = function(_, caller, epoch, name, range, method, request)
           serviceCalls = serviceCalls + 1
-          assert(caller == 'synex_core' and epoch == 7 and range == '^1.0.0' and next(request) == nil)
-          return { service = name, method = method }, nil
+          assert(caller == 'synex_core' and epoch == 7 and range == '^1.0.0'
+            and type(request) == 'table')
+          return { service = name, method = method, request = request }, nil
         end } },
         security = {
           rbac = { snapshot = function() return { persistent = true, hydrated = true } end },
@@ -4854,17 +5034,56 @@ test('operator command registry is console-only, typed, bounded, and service-bac
       local trace = assert(commands:dispatch(0, {'trace', 'resource', 'synex_fixture', '8'}))
       assert(trace.kind == 'resource' and trace.limit == 8 and auditCalls == 1)
       local ledger = assert(commands:dispatch(0, {'ledger'}))
-      local entities = assert(commands:dispatch(0, {'entities'}))
-      assert(ledger.available and ledger.summary.service == 'synex.accounts')
+       local entities = assert(commands:dispatch(0, {'entities'}))
+       local coreDoctor = assert(commands:dispatch(0, {'doctor'}))
+       local groupsDoctor = assert(commands:dispatch(0, {'doctor', 'groups'}))
+       local accountsDoctor = assert(commands:dispatch(0, {'doctor', 'accounts'}))
+       local accountsStatus = assert(commands:dispatch(0, {'accounts', 'status'}))
+       local accountsTrace = assert(commands:dispatch(0, {
+         'accounts', 'trace', '00000000-0000-4000-8000-000000000001'
+       }))
+       local accountsInspect = assert(commands:dispatch(0, {
+         'accounts', 'inspect', '00000000-0000-4000-8000-000000000002'
+       }))
+       local accountsReconcile = assert(commands:dispatch(0, {
+         'accounts', 'reconcile', 'usd', '00000000-0000-4000-8000-000000000003'
+       }))
+       local accountsOutboxRetry = assert(commands:dispatch(0, {
+         'accounts', 'outbox-retry', '00000000-0000-4000-8000-000000000004',
+         '00000000-0000-4000-8000-000000000005'
+       }))
+       assert(ledger.available and ledger.summary.service == 'synex.accounts')
       assert(entities.available and entities.summary.service == 'synex.entities')
+      assert(coreDoctor.status == 'PASS' and doctorCalls == 1)
+       assert(groupsDoctor.available and groupsDoctor.summary.service == 'synex.groups'
+         and groupsDoctor.summary.method == 'doctor')
+       assert(accountsDoctor.available and accountsDoctor.summary.method == 'doctor')
+       assert(accountsStatus.available and accountsStatus.summary.method == 'get_control_summary')
+       assert(accountsTrace.summary.method == 'inspect_transaction'
+         and accountsTrace.summary.request.transaction_id == '00000000-0000-4000-8000-000000000001')
+       assert(accountsInspect.summary.method == 'inspect_account'
+         and accountsInspect.summary.request.account_id == '00000000-0000-4000-8000-000000000002')
+       assert(accountsReconcile.summary.method == 'integrity_reconcile'
+         and accountsReconcile.summary.request.currency_code == 'usd')
+       assert(accountsOutboxRetry.summary.method == 'outbox_retry'
+         and accountsOutboxRetry.summary.request.event_id == '00000000-0000-4000-8000-000000000004'
+         and accountsOutboxRetry.summary.request.actor_kind == 'system'
+         and accountsOutboxRetry.summary.request.actor_ref == 'synex_core')
       assert(ledger.status == 'HEALTHY' and entities.status == 'HEALTHY')
       resourceStates.synex_accounts = 'missing'
       local notInstalled = assert(commands:dispatch(0, {'ledger'}))
-      assert(notInstalled.available == false and notInstalled.status == 'NOT_INSTALLED' and serviceCalls == 2)
+       assert(notInstalled.available == false and notInstalled.status == 'NOT_INSTALLED' and serviceCalls == 9)
       resourceStates.synex_accounts = false
       local unknownState = assert(commands:dispatch(0, {'ledger'}))
       assert(unknownState.available == false and unknownState.status == 'DEGRADED')
-      assert(unknownState.error.code == 'RESOURCE_STATE_UNAVAILABLE' and serviceCalls == 2)
+       assert(unknownState.error.code == 'RESOURCE_STATE_UNAVAILABLE' and serviceCalls == 9)
+      resourceStates.synex_groups = 'missing'
+      local groupsMissing = assert(commands:dispatch(0, {'doctor', 'groups'}))
+      assert(groupsMissing.available == false and groupsMissing.status == 'NOT_INSTALLED'
+         and serviceCalls == 9)
+       local invalidAccounts, invalidAccountsError = commands:dispatch(0, {'accounts', 'unknown'})
+       assert(invalidAccounts == nil and invalidAccountsError.code == 'INVALID_ARGUMENT'
+         and doctorCalls == 1 and serviceCalls == 9)
       local overview = assert(commands:dispatch(0, {'overview'}))
       assert(overview.status == 'PASS' and #overview.lines == 8 and #printed == 8)
       assert(printed[1]:find('lifecycle READY', 1, true))
@@ -4875,10 +5094,12 @@ test('operator command registry is console-only, typed, bounded, and service-bac
       assert(emitted[#emitted].ok == true)
       return table.concat({
         deniedError.code, invalidError.code, trace.limit, serviceCalls,
-        notInstalled.status, unknownState.status, #printed, restartPreparations
+        notInstalled.status, groupsMissing.status, unknownState.status,
+        doctorCalls, #printed, restartPreparations
       }, ':')
     `);
-    assert.equal(result, 'CONSOLE_ONLY:INVALID_ARGUMENT:8:2:NOT_INSTALLED:DEGRADED:8:1');
+    assert.equal(result,
+      'CONSOLE_ONLY:INVALID_ARGUMENT:8:9:NOT_INSTALLED:NOT_INSTALLED:DEGRADED:2:8:1');
   } finally {
     engine.global.close();
   }

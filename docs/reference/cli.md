@@ -10,6 +10,25 @@ node --experimental-strip-types tools/cli/src/bin.ts <command>
 
 After `npm run build`, the compiled entry point is `.build/tools/cli/src/bin.js`. Add `--root <repository>` when invoking it outside the repository root. Machine-readable commands accept `--json` where shown by `--help`.
 
+## FXServer Accounts operator commands
+
+The runtime `synex` command is separate from the Node developer CLI above. The current Core implementation exposes these exact Accounts forms:
+
+```text
+synex doctor accounts
+synex ledger
+synex accounts status
+synex accounts trace <transaction>
+synex accounts inspect <account>
+synex accounts outbox [limit]
+synex accounts outbox-retry <event-uuid> <idempotency-uuid>
+synex accounts reconcile <currency> <idempotency-uuid>
+```
+
+They execute only from source `0` (server console), are registered as restricted Cfx commands, validate at most four bounded arguments, and emit structured output. `outbox` defaults to 25 rows and accepts `1..50`; transaction and account inspectors require their public UUIDs.
+
+Doctor, ledger/status, trace, inspect, and outbox are bounded reads through capability-declared Accounts service methods. `synex accounts reconcile` is intentionally mutating: it requires a currency and UUID idempotency key, invokes `synex.accounts.integrity.run`, and transactionally stores the reconciliation run, findings, Accounts audit, and outbox evidence. `synex accounts outbox-retry` is the second explicit mutation: it invokes the separately privileged `synex.accounts.outbox.retry` operation for one dead event, is idempotent per caller/key, and records durable retry evidence plus Core audit. Neither command edits balances, rewrites ledger history, freezes accounts, or creates/destroys supply. There is no NUI mutation button or automatic repair.
+
 ## Build and contracts
 
 ```text
@@ -36,13 +55,15 @@ The graph includes required/optional dependencies and service relationships, unr
 ## Diagnose and certify
 
 ```text
-synex doctor [path] [--bundle] [--output <file>] [--json]
+synex doctor [path] [--bundle] [--runtime-evidence <file>] [--output <file>] [--json]
 synex security scan [path] [--json]
 synex security fuzz [path] [--json]
 synex certify <repository|resource|path> [--output <file>] [--json]
 ```
 
-`doctor --bundle` writes a bounded redacted support artifact containing repository versions, static health/dependency/migration checks, safe configuration projections, and warnings. The static scanner and executable contract fuzzer produce review evidence; neither proves a resource secure. Certification reports `PASS`, `WARN`, or `FAIL` with concrete checks and hashes and makes no marketing score or production guarantee.
+`doctor --bundle` writes a bounded redacted support artifact containing repository versions, static health/dependency/migration checks, safe configuration projections, and warnings. The complete artifact body is sanitized before it is hashed or written. The TypeScript sanitizer implements the same protection contract as Control's Lua sanitizer through secret-key and recognizable secret-value redaction, identifier masking, depth 10, a global 2,048-entry budget, 512-byte strings, 96-byte keys, and explicit cycle/non-finite replacements. It normalizes unpaired surrogates to well-formed Unicode before applying the UTF-8 byte bounds. Symbol-keyed fields are omitted and counted as replacements; accessors become a safe marker without executing a getter. It remains a separate implementation.
+
+`doctor --bundle --runtime-evidence <file>` imports a repository-contained operator JSON file into the diagnostics field. The option is rejected without `--bundle`, and the imported value is sanitized with the complete artifact body. The CLI does not open Control or collect a live provider snapshot by itself; without the option, diagnostics explicitly report `UNAVAILABLE` with reason `RUNTIME_CONTROL_EVIDENCE_NOT_SUPPLIED`. Imported data remains operator-supplied evidence, not independent runtime certification. Doctor and certification also inspect `controlProvider` declarations for duplicate namespaces, operation/view mismatches, missing `synex.control.provider.register`, and an invalid dependency from a provider domain to `synex_control`. Those checks do not invoke a provider or validate runtime timeout, restart, redaction, output-bound or NUI behavior. The static scanner and executable contract fuzzer produce review evidence; neither proves a resource secure. Certification reports `PASS`, `WARN`, or `FAIL` with concrete checks and hashes and makes no marketing score or production guarantee.
 
 ## Core production-beta evidence
 
@@ -56,7 +77,7 @@ This gate accepts only a clean Git revision and a disposable database named `syn
 
 Use `node --experimental-strip-types tools/core-beta-evidence.ts --help` for the optional repository-root and output-path arguments.
 
-The artifact covers the single-instance MariaDB profile of `synex_core` only. Multi-instance/`kick_old`, MySQL Server, and all downstream resources—including `synex_entities`, `synex_accounts`, and `synex_groups`—are explicit out-of-scope items and do not block this profile. Downstream resources remain rework snapshots.
+The artifact covers the single-instance MariaDB profile of `synex_core` only. Multi-instance/`kick_old`, MySQL Server, and all downstream resources—including the Experimental Alpha Groups and server-only Accounts engines—are explicit out-of-scope items and do not block this profile. Every downstream resource needs its own release decision; the Core evidence runner is not Accounts acceptance.
 
 The artifact's manual fields are always `NOT_RUN` because this command does not launch FXServer or a FiveM client and does not execute the listed manual lifecycle gates. `NOT_RUN` describes the automated artifact's execution boundary; it must not be rewritten to mirror separate operator evidence. The final post-documentation `npm ci`, check, test, security, and certification run passed; server and client evidence remain separate. The automated artifact never asserts release readiness. Certification warnings are accepted only from the tool's explicit allowlist, while unknown or semantically different warning classes fail the gate.
 
@@ -71,12 +92,34 @@ This command builds an ignored, deployment-shaped Core acceptance bundle without
 ## Compatibility and upgrades
 
 ```text
+synex compat status [--json]
+synex compat matrix [--json]
 synex compat scan [path] [--json]
+synex compat explain [path] [--json]
+synex compat profile <profile-id> [--json]
+synex compat adapters [--json]
+synex compat observe [path] [--runtime-evidence <file>] [--json]
+synex compat doctor [--runtime-evidence <file>] [--json]
+synex compat execute <profile-id> [--output artifacts/compatibility/<profile-id>.execution.json] [--json]
+synex compat certify <profile-id> --runtime-evidence <file> --execution-evidence <file> --output <declared-artifact> [--json]
+synex compat drift [--online] [--timeout <ms>] [--json]
 synex upgrade-check [path] [--against <repository>] [--json]
 synex migrate <qb|qbx|esx> --dry-run --source <file> --mapping <file>
 ```
 
-Compatibility scanning identifies native, bridge, minor-change, and rewrite candidates without modifying resources. Upgrade checking compares manifests, Core/API ranges, contracts, migrations, capabilities, and deprecation evidence. The migration command is dry-run unless the explicit review/materialization/import flags described in [Legacy data migration](../compatibility/migration.md) are supplied.
+`compat status` summarizes the checked-in provider surfaces, profiles, consumers, money policies, and mappings. `matrix` renders their deterministic status table. The current catalog has no profiles, enabled consumers, group mappings, or money policies; all surfaces are `PARTIAL` or `UNSUPPORTED`. Three bounded `hunger` metadata definitions and six cash/bank account aliases are present, but none authorizes a money write.
+
+`scan` identifies framework signatures, catalog surface candidates, domain dependencies, and direct legacy-table SQL in bounded, non-symlink Lua, JavaScript, TypeScript, and `fxmanifest.lua` files without modifying them. Ordinary comments are removed before matching. `explain` resolves scan results against the catalog, `profile` reports one exact script/profile definition, and `adapters` shows required adapter evidence. Static findings are migration aids, not proof that a resource is compatible.
+
+`compat observe` combines a static scan with optional runtime evidence while keeping both sources separate, and it can never return `CERTIFIED`. Without evidence it returns `UNKNOWN` unless the static scan or catalog doctor already proves the target `UNSUPPORTED`. `compat doctor` reports invalid, missing, or ambiguous account/group/grade mappings, provider- and entity-scoped legacy-ID collisions, active money-policy ambiguity or broken consumer/account bindings, profile-selected money surfaces with no active policy, conflicting providers, missing adapters, profile drift, and invalid certification claims. With complete runtime evidence it also checks expected/duplicate providers, resource identity, state/health, required capability grants, stale consumer bindings and telemetry, optional callback cleanup counters, historical-facade conflicts, exact provider/profile versions, telemetry truncation, terminal-counter bounds, and sampled unsupported/deprecated rates. Checks that need unavailable runtime or callback evidence are emitted as `UNKNOWN`/deferred rather than silently passing.
+
+The runtime-evidence file is bounded to 1 MiB, must be a non-symlink regular JSON file inside the repository, and must satisfy the closed [`runtime-evidence.schema.json`](../../libraries/synex_bridge/compatibility/schemas/runtime-evidence.schema.json). The developer CLI does not query process-local provider usage or Core metric histograms; the file remains operator-supplied evidence. Rate checks require a complete, untruncated row with at least 20 calls and warn at 5% unsupported or 25% deprecated calls. Callback cleanup can be evaluated only when a provider supplies pending/registration counts and both declared capacities.
+
+`compat execute` runs only tracked `tests/compatibility/*.test.ts` or `*.test.mjs` files named by the exact profile. The CLI fixes the Node executable and arguments, applies a 120-second limit per file, bounds captured output, and never evaluates a command from profile data. TypeScript flows require the matching `.build` output from `npm run build`. Missing environments, skipped tests, and partial suites remain `SKIP`/`UNKNOWN`; the evidence artifact uses the fixed ignored `artifacts/compatibility/<profile-id>.execution.json` path.
+
+`compat certify` remains a separate fail-closed verifier. It emits `CERTIFIED` only when one authored/effective `CERTIFIED` profile, one closed execution artifact, and one runtime-evidence candidate match the exact provider version, profile version, separately reviewed target-framework API range, script version, required adapters, complete error-free runtime evidence, and exact tracked test set with current SHA-256 and `PASS`, while the tracked local review lock also passes. `--output` must match the profile's declared `certificationArtifact`. The resulting closed artifact binds those facts plus the profile, surface, consumer-authorization, money-policy, review-lock, and schema files in a SHA-256 fingerprint that the runtime recomputes; a merely non-empty file is never sufficient. Neither command starts or inspects FXServer. Offline `compat drift` validates the local catalogs and commit/source pins without network access and therefore reports upstream `UNKNOWN`. `--online` explicitly compares bounded official main-branch sources with those pins; network failures remain `UNKNOWN`, mismatches fail, and a match does not certify a surface or invent `targetFrameworkApiRange`.
+
+Upgrade checking compares manifests, Core/API ranges, contracts, migrations, capabilities, and deprecation evidence. The migration command is dry-run unless the explicit review/materialization/import flags described in [Legacy data migration](../compatibility/migration.md) are supplied. See the [compatibility boundary](../compatibility/README.md) and generated [matrix](../compatibility/matrix.md) before enabling any bridge resource.
 
 ## Benchmark
 
@@ -84,7 +127,7 @@ Compatibility scanning identifies native, bridge, minor-change, and rewrite cand
 synex benchmark [--iterations <count>] [--baseline <file>] [--output <file>] [--json]
 ```
 
-This is a deterministic local headless microbenchmark for regression comparison. Its report is not an FXServer, OneSync, SQL, competitor, or production-performance claim.
+This is a deterministic local headless microbenchmark for regression comparison. The Groups measurements execute the actual Lua organization-read, membership-read, effective-capability, online-member index, on-duty index, and stored-policy paths. Accounts covers balance, available-balance, access-check, transfer, multi-leg posting, hold creation/capture, and reconciliation. Entities covers registry, binding, logical-owner, spatial, spawn-validation, state, and bucket paths. Bridge covers bounded compatibility projection/callback DTO copies, indexed account-mapping resolution, consumer/profile/surface/adapter resolution, and telemetry aggregation. All run inside an embedded Wasmoon VM with deterministic in-memory fixtures or adapters. They exclude MariaDB I/O and locking, FXServer/Cfx networking, OneSync scheduling, workers, external framework runtimes, and production concurrency. The report is therefore not a server-capacity, competitor, compatibility-certification, or production-performance claim.
 
 ## Managed reload
 

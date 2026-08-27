@@ -7,6 +7,8 @@ factories.persistence = function(deps)
     local metrics = foundation.metrics
     local config = deps.config or {}
     local runtimeInstanceId = deps.instanceId
+    local manifestSnapshot = type(deps.manifestSnapshot) == 'function'
+        and deps.manifestSnapshot or function() return {} end
 
     local function rotateRight(value, amount)
         return ((value >> amount) | (value << (32 - amount))) & 0xffffffff
@@ -101,6 +103,16 @@ factories.persistence = function(deps)
     local databaseActivityKinds = {}
     local databaseControlDepth = setmetatable({}, { __mode = 'k' })
     local databaseMainControlKey = {}
+    local maximumDatabaseDeadlockCount = 9007199254740991
+    local databaseDeadlockCounts = {}
+    local maximumSlowQueryEntries = 128
+    local slowQueryEntries = {}
+    local slowQueryCount = 0
+    local slowQuerySequence = 0
+    local observationSecretFragments = {
+        'password', 'passphrase', 'secret', 'credential', 'webhook',
+        'privatekey', 'apikey', 'accesstoken', 'refreshtoken', 'license'
+    }
 
     local function databaseControlKey()
         local running = coroutine.running()
@@ -268,6 +280,14 @@ factories.persistence = function(deps)
             or detail:find('40001', 1, true) ~= nil
             or detail:find('deadlock', 1, true) ~= nil
     end
+    local function recordDatabaseDeadlock(kind)
+        local current = databaseDeadlockCounts[kind] or 0
+        if current < maximumDatabaseDeadlockCount then
+            current = current + 1
+            databaseDeadlockCounts[kind] = current
+        end
+        metrics:gauge('synex_db_deadlocks_total', { kind = kind }, current)
+    end
     local function attribution()
         local context = foundation.currentContext and foundation.currentContext() or nil
         return {
@@ -275,6 +295,137 @@ factories.persistence = function(deps)
             operation = context and (context.contract or context.service or context.hook) or 'kernel',
             traceId = context and context.traceId or nil
         }
+    end
+    local function safeObservationText(value, fallback, maximum)
+        if type(value) ~= 'string' or #value < 1 or #value > maximum
+            or value:find('[%z\1-\31\127]')
+            or not value:match('^[A-Za-z0-9][A-Za-z0-9_.:@%-]*$') then
+            return fallback
+        end
+        return value
+    end
+    local function safeObservationTrace(value)
+        local candidate = safeObservationText(value, nil, 128)
+        if candidate == nil then return nil end
+        local normalized = candidate:lower()
+        for _, fragment in ipairs(observationSecretFragments) do
+            if normalized:find(fragment, 1, true) then return nil end
+        end
+        return candidate
+    end
+    local function recordSlowQuery(kind, statementHash, durationMs, operationOk)
+        local attributed = attribution()
+        local resource = safeObservationText(attributed.resource, 'synex_core', 64)
+        local operation = safeObservationText(attributed.operation, 'kernel', 128)
+        local traceId = safeObservationTrace(attributed.traceId)
+        local key = table.concat({ resource, operation, kind, statementHash }, '|')
+        local entry = slowQueryEntries[key]
+        if entry == nil then
+            if slowQueryCount >= maximumSlowQueryEntries then
+                local oldestKey, oldestSequence = nil, math.huge
+                for candidateKey, candidate in pairs(slowQueryEntries) do
+                    if candidate.lastSequence < oldestSequence then
+                        oldestKey, oldestSequence = candidateKey, candidate.lastSequence
+                    end
+                end
+                if oldestKey ~= nil then
+                    slowQueryEntries[oldestKey] = nil
+                    slowQueryCount = math.max(0, slowQueryCount - 1)
+                end
+            end
+            entry = {
+                resource = resource,
+                operation = operation,
+                kind = kind,
+                statementHash = statementHash,
+                occurrences = 0,
+                maximumDurationMs = 0,
+                firstObservedAt = foundation.utcIso()
+            }
+            slowQueryEntries[key] = entry
+            slowQueryCount = slowQueryCount + 1
+        end
+        slowQuerySequence = slowQuerySequence + 1
+        entry.occurrences = math.min(2147483647, entry.occurrences + 1)
+        entry.durationMs = math.max(0, durationMs)
+        entry.maximumDurationMs = math.max(entry.maximumDurationMs, entry.durationMs)
+        entry.traceId = traceId
+        entry.status = operationOk and 'SUCCESS' or 'ERROR'
+        entry.observedAt = foundation.utcIso()
+        entry.lastSequence = slowQuerySequence
+    end
+
+    function database:slowQueries(request)
+        request = request == nil and {} or request
+        if type(request) ~= 'table' or getmetatable(request) ~= nil then
+            return nil, foundation.error('INVALID_ARGUMENT',
+                'Slow-query history requires a bounded plain request.')
+        end
+        for key in pairs(request) do
+            if key ~= 'cursor' and key ~= 'limit' then
+                return nil, foundation.error('INVALID_ARGUMENT',
+                    'Slow-query history request contains an unknown property.')
+            end
+        end
+        local limit = request.limit == nil and 25 or request.limit
+        if type(limit) ~= 'number' or math.type(limit) ~= 'integer'
+            or limit < 1 or limit > 50 then
+            return nil, foundation.error('INVALID_ARGUMENT',
+                'Slow-query history limit must be an integer from 1 through 50.')
+        end
+        local cursor = nil
+        if request.cursor ~= nil then
+            if type(request.cursor) ~= 'string' or #request.cursor < 1
+                or #request.cursor > 20 or not request.cursor:match('^[1-9]%d*$') then
+                return nil, foundation.error('INVALID_CURSOR',
+                    'Slow-query history cursor is invalid.')
+            end
+            cursor = tonumber(request.cursor)
+            if cursor == nil or cursor > slowQuerySequence + 1 then
+                return nil, foundation.error('INVALID_CURSOR',
+                    'Slow-query history cursor is invalid.')
+            end
+        end
+        local candidates = {}
+        for _, entry in pairs(slowQueryEntries) do
+            if cursor == nil or entry.lastSequence < cursor then
+                candidates[#candidates + 1] = entry
+            end
+        end
+        table.sort(candidates, function(left, right)
+            return left.lastSequence > right.lastSequence
+        end)
+        local hasMore = #candidates > limit
+        local items = {}
+        for index = 1, math.min(#candidates, limit) do
+            local entry = candidates[index]
+            items[index] = {
+                cursor = tostring(entry.lastSequence),
+                resource = entry.resource,
+                operation = entry.operation,
+                kind = entry.kind,
+                statementHash = entry.statementHash,
+                durationMs = entry.durationMs,
+                maximumDurationMs = entry.maximumDurationMs,
+                traceId = entry.traceId,
+                occurrences = entry.occurrences,
+                status = entry.status,
+                firstObservedAt = entry.firstObservedAt,
+                observedAt = entry.observedAt
+            }
+        end
+        return {
+            status = 'AVAILABLE',
+            items = items,
+            nextCursor = hasMore and tostring(items[#items].cursor) or nil,
+            hasMore = hasMore,
+            truncated = hasMore,
+            retained = slowQueryCount,
+            maximumRetained = maximumSlowQueryEntries,
+            thresholdMs = config.queryWarnMs or 250,
+            rawSqlExposed = false,
+            parametersExposed = false
+        }, nil
     end
     local function measured(kind, sql, parameters)
         local activityToken, activityError = beginDatabaseActivity(kind)
@@ -295,19 +446,23 @@ factories.persistence = function(deps)
         metrics:gauge('synex_db_last_duration_ms', { kind = kind, resource = attributed.resource, operation = attributed.operation }, duration)
         metrics:observe('synex_db_duration_ms', { kind = kind, resource = attributed.resource, operation = attributed.operation }, duration)
         if duration >= (config.queryWarnMs or 250) then
+            local statementHash = sha256(sql)
+            recordSlowQuery(kind, statementHash, duration, operationOk)
             logger:warn('slow database operation', {
-                kind = kind, durationMs = duration, statementHash = sha256(sql),
+                kind = kind, durationMs = duration, statementHash = statementHash,
                 resource = attributed.resource, operation = attributed.operation, traceId = attributed.traceId
             })
         end
         if not ok or adapterError ~= nil then
             local failure = ok and adapterError or value
+            local deadlock = isRetryableDeadlock(failure)
+            if deadlock then recordDatabaseDeadlock(kind) end
             logDatabaseFailure('database operation failed', {
                 kind = kind, statementHash = sha256(sql),
                 resource = attributed.resource, operation = attributed.operation, traceId = attributed.traceId
             }, failure, ok and 'adapter_error' or 'adapter_exception')
             return nil, foundation.error('DATABASE_ERROR', 'The database operation failed.', {
-                retryable = isRetryableDeadlock(failure)
+                retryable = deadlock
             })
         end
         if not validShape then
@@ -355,9 +510,14 @@ factories.persistence = function(deps)
             finishDatabaseActivity(activityToken)
             local duration = foundation.monotonicMs() - started
             local failure = ok and adapterError or result
+            if duration >= (config.queryWarnMs or 250) then
+                recordSlowQuery('batch', sha256('batch:' .. tostring(#statements)),
+                    duration, ok and result == true)
+            end
             metrics:increment('synex_db_transactions_total', { ok = ok and result == true, attempt = attempt })
             if ok and result == true then return true, nil end
             local deadlock = isRetryableDeadlock(failure)
+            if deadlock then recordDatabaseDeadlock('batch') end
             if deadlock and attempt < maximumAttempts then
                 metrics:increment('synex_db_deadlock_retries_total', { kind = 'batch' })
                 platform.wait(math.min(100, attempt * 10))
@@ -386,10 +546,15 @@ factories.persistence = function(deps)
             finishDatabaseActivity(activityToken)
             local duration = foundation.monotonicMs() - started
             local failure = ok and adapterError or result
+            if duration >= (config.queryWarnMs or 250) then
+                recordSlowQuery('interactive', sha256('interactive'),
+                    duration, ok and result == true)
+            end
             metrics:increment('synex_db_interactive_transactions_total', { ok = ok and result == true, attempt = attempt })
             if duration >= 25000 then logger:warn('interactive transaction approached the oxmysql hard timeout', { durationMs = duration }) end
             if ok and result == true then return true, nil end
             local deadlock = isRetryableDeadlock(failure)
+            if deadlock then recordDatabaseDeadlock('interactive') end
             if deadlock and attempt < maximumAttempts then
                 metrics:increment('synex_db_deadlock_retries_total', { kind = 'interactive' })
                 platform.wait(math.min(100, attempt * 10))
@@ -413,6 +578,20 @@ factories.persistence = function(deps)
     if #leaseOwner > 96 then error('migration lease owner exceeds the persisted bound') end
     local leaseSeconds = math.max(10, math.min(config.migrationLeaseSeconds or 30, 300))
     local fence = nil
+    local migrationChecksumCorrections = {
+        ['synex_core:021_worker_queue_scalability'] = {
+            previous = '6d314f977f47fa39125c9597172e75fa05d80bfbd310aaf6be4c5584f6823b59',
+            current = '5add0fed6935b83e7fd0905c188c1e534a6636d5d935fea1a28a145f7b533b7c'
+        }
+    }
+
+    local function migrationChecksumAccepted(resourceName, migrationId, checksum, actual, applied)
+        if actual == checksum then return true end
+        local correction = migrationChecksumCorrections[resourceName .. ':' .. migrationId]
+        return correction ~= nil and applied ~= nil
+            and applied.checksum_sha256 == correction.previous
+            and checksum == correction.current and actual == correction.previous
+    end
 
     local bootstrapStatements = {
         [[CREATE TABLE IF NOT EXISTS `synex_schema_migrations` (
@@ -647,6 +826,309 @@ factories.persistence = function(deps)
         }, nil
     end
 
+    function migrationManager:details(request)
+        request = request or {}
+        if type(request) ~= 'table' or getmetatable(request) ~= nil then
+            return nil, foundation.error('INVALID_ARGUMENT',
+                'Migration detail options must be a plain object.')
+        end
+        for key in pairs(request) do
+            if key ~= 'cursor' and key ~= 'limit' then
+                return nil, foundation.error('INVALID_ARGUMENT',
+                    'Migration detail options contain an unsupported field.')
+            end
+        end
+        local limit = request.limit or 25
+        local cursor = request.cursor
+        local cursorResource, cursorMigration
+        if type(cursor) == 'string' then
+            cursorResource, cursorMigration = cursor:match(
+                '^([a-z][a-z0-9_]*)|(%d%d%d_[a-z0-9_]+)$')
+        end
+        if type(limit) ~= 'number' or math.type(limit) ~= 'integer'
+            or limit < 1 or limit > 50
+            or cursor ~= nil and (cursorResource == nil or cursorMigration == nil
+                or #cursorResource > 64 or #cursorMigration > 96) then
+            return nil, foundation.error('INVALID_ARGUMENT',
+                'Migration detail cursor or limit is invalid.')
+        end
+        local detailSql = [[SELECT `observed`.`resource_name`,
+                `observed`.`migration_id`,
+                `marker`.`checksum_sha256` AS `marker_checksum`,
+                `attempt`.`checksum_sha256` AS `attempt_checksum`,
+                `fence`.`checksum_sha256` AS `fence_checksum`,
+                `attempt`.`state` AS `attempt_state`,
+                `fence`.`state` AS `fence_state`,
+                CAST(`attempt`.`attempts` AS CHAR) AS `attempts`,
+                COALESCE(`fence`.`last_error_code`, `attempt`.`last_error_code`)
+                    AS `last_error_code`,
+                DATE_FORMAT(`marker`.`applied_at`, '%Y-%m-%dT%H:%i:%s.%fZ')
+                    AS `applied_at`,
+                CAST(`marker`.`duration_ms` AS CHAR) AS `duration_ms`
+            FROM (
+                SELECT `resource_name`, `migration_id`
+                    FROM `synex_schema_migration_attempts`
+                UNION
+                SELECT `resource_name`, `migration_id`
+                    FROM `synex_schema_migrations`
+                UNION
+                SELECT `resource_name`, `migration_id`
+                    FROM `synex_schema_migration_fences`
+            ) AS `observed`
+            LEFT JOIN `synex_schema_migrations` AS `marker`
+                ON `marker`.`resource_name` = `observed`.`resource_name`
+                AND `marker`.`migration_id` = `observed`.`migration_id`
+            LEFT JOIN `synex_schema_migration_attempts` AS `attempt`
+                ON `attempt`.`resource_name` = `observed`.`resource_name`
+                AND `attempt`.`migration_id` = `observed`.`migration_id`
+            LEFT JOIN `synex_schema_migration_fences` AS `fence`
+                ON `fence`.`resource_name` = `observed`.`resource_name`
+                AND `fence`.`migration_id` = `observed`.`migration_id`]]
+        local parameters
+        if cursorResource then
+            detailSql = detailSql .. [[
+                WHERE `observed`.`resource_name` > ?
+                    OR (`observed`.`resource_name` = ?
+                        AND `observed`.`migration_id` > ?)]]
+            parameters = { cursorResource, cursorResource, cursorMigration, limit + 1 }
+        else
+            parameters = { limit + 1 }
+        end
+        detailSql = detailSql .. [[
+            ORDER BY `observed`.`resource_name`, `observed`.`migration_id`
+            LIMIT ?]]
+        local rows, rowsError = database:query(detailSql, parameters)
+        if rowsError then return nil, rowsError end
+        if type(rows) ~= 'table' or #rows > limit + 1 then
+            return nil, foundation.error('MIGRATION_SNAPSHOT_INVALID',
+                'The migration detail query returned an invalid page.', { retryable = true })
+        end
+        local manifestOk, manifests = foundation.safeCall(manifestSnapshot)
+        if not manifestOk or type(manifests) ~= 'table' then
+            return nil, foundation.error('MIGRATION_MANIFEST_SNAPSHOT_INVALID',
+                'The migration manifest snapshot is unavailable.', { retryable = true })
+        end
+        local definitions, manifestResources, definitionCount = {}, 0, 0
+        for resource, manifest in pairs(manifests) do
+            manifestResources = manifestResources + 1
+            if manifestResources > 2048 or type(resource) ~= 'string'
+                or #resource < 1 or #resource > 64
+                or not resource:match('^[a-z][a-z0-9_]*$')
+                or type(manifest) ~= 'table' or manifest.name ~= resource
+                or type(manifest.migrations) ~= 'table' then
+                return nil, foundation.error('MIGRATION_MANIFEST_SNAPSHOT_INVALID',
+                    'The migration manifest snapshot contains an invalid resource.')
+            end
+            for _, migration in ipairs(manifest.migrations) do
+                definitionCount = definitionCount + 1
+                if definitionCount > 4096 or type(migration) ~= 'table'
+                    or type(migration.id) ~= 'string' or #migration.id > 96
+                    or not migration.id:match('^%d%d%d_[a-z0-9_]+$')
+                    or type(migration.path) ~= 'string' or #migration.path > 240
+                    or not migration.path:match('^migrations/[A-Za-z0-9%._/-]+%.sql$')
+                    or migration.path:find('..', 1, true) then
+                    return nil, foundation.error('MIGRATION_MANIFEST_SNAPSHOT_INVALID',
+                        'The migration manifest snapshot contains an invalid definition.')
+                end
+                local key = resource .. '|' .. migration.id
+                if definitions[key] ~= nil then
+                    return nil, foundation.error('MIGRATION_MANIFEST_SNAPSHOT_INVALID',
+                        'The migration manifest snapshot contains a duplicate definition.')
+                end
+                definitions[key] = {
+                    resource = resource,
+                    migration = migration.id,
+                    path = migration.path
+                }
+            end
+        end
+
+        local attemptStates = { applying = true, applied = true, failed = true }
+        local fenceStates = {
+            applying = true, applied = true, failed = true, indeterminate = true
+        }
+        local candidates = {}
+        for index = 1, #rows do
+            local row = rows[index]
+            local resource = type(row) == 'table' and row.resource_name or nil
+            local migration = type(row) == 'table' and row.migration_id or nil
+            local markerChecksum = type(row) == 'table' and row.marker_checksum or nil
+            local attemptChecksum = type(row) == 'table' and row.attempt_checksum or nil
+            local fenceChecksum = type(row) == 'table' and row.fence_checksum or nil
+            local attemptState = type(row) == 'table' and row.attempt_state or nil
+            local fenceState = type(row) == 'table' and row.fence_state or nil
+            local attempts = type(row) == 'table' and tonumber(row.attempts) or nil
+            local durationMs = type(row) == 'table' and tonumber(row.duration_ms) or nil
+            if type(resource) ~= 'string' or not resource:match('^[a-z][a-z0-9_]*$')
+                or #resource > 64 or type(migration) ~= 'string'
+                or not migration:match('^%d%d%d_[a-z0-9_]+$') or #migration > 96
+                or markerChecksum ~= nil and (type(markerChecksum) ~= 'string'
+                    or #markerChecksum ~= 64 or not markerChecksum:match('^[0-9a-f]+$'))
+                or attemptChecksum ~= nil and (type(attemptChecksum) ~= 'string'
+                    or #attemptChecksum ~= 64 or not attemptChecksum:match('^[0-9a-f]+$'))
+                or fenceChecksum ~= nil and (type(fenceChecksum) ~= 'string'
+                    or #fenceChecksum ~= 64 or not fenceChecksum:match('^[0-9a-f]+$'))
+                or markerChecksum == nil and attemptChecksum == nil and fenceChecksum == nil
+                or attemptState ~= nil and not attemptStates[attemptState]
+                or fenceState ~= nil and not fenceStates[fenceState]
+                or attempts ~= nil and (math.type(attempts) ~= 'integer' or attempts < 1
+                    or attempts > 65535)
+                or durationMs ~= nil and (math.type(durationMs) ~= 'integer'
+                    or durationMs < 0 or durationMs > 4294967295)
+                or row.applied_at ~= nil and (type(row.applied_at) ~= 'string'
+                    or #row.applied_at < 20 or #row.applied_at > 32
+                    or row.applied_at:find('[%z\1-\31\127]'))
+                or row.last_error_code ~= nil and (type(row.last_error_code) ~= 'string'
+                    or #row.last_error_code < 1 or #row.last_error_code > 64
+                    or not row.last_error_code:match('^[A-Z][A-Z0-9_]*$')) then
+                return nil, foundation.error('MIGRATION_SNAPSHOT_INVALID',
+                    'The migration detail query contains an invalid row.', { retryable = true })
+            end
+            local key = resource .. '|' .. migration
+            candidates[key] = {
+                resource = resource,
+                migration = migration,
+                markerChecksum = markerChecksum,
+                attemptChecksum = attemptChecksum,
+                fenceChecksum = fenceChecksum,
+                attemptState = attemptState,
+                fenceState = fenceState,
+                attempts = attempts or 0,
+                appliedAt = row.applied_at,
+                durationMs = durationMs,
+                lastErrorCode = row.last_error_code
+            }
+        end
+
+        local definitionKeys = {}
+        for key in pairs(definitions) do
+            local definition = definitions[key]
+            if cursorResource == nil or definition.resource > cursorResource
+                or definition.resource == cursorResource
+                    and definition.migration > cursorMigration then
+                definitionKeys[#definitionKeys + 1] = key
+            end
+        end
+        table.sort(definitionKeys, function(left, right)
+            local leftDefinition, rightDefinition = definitions[left], definitions[right]
+            if leftDefinition.resource == rightDefinition.resource then
+                return leftDefinition.migration < rightDefinition.migration
+            end
+            return leftDefinition.resource < rightDefinition.resource
+        end)
+        for index = 1, math.min(#definitionKeys, limit + 1) do
+            local key = definitionKeys[index]
+            candidates[key] = candidates[key] or {
+                resource = definitions[key].resource,
+                migration = definitions[key].migration,
+                attempts = 0
+            }
+        end
+        local keys = {}
+        for key in pairs(candidates) do keys[#keys + 1] = key end
+        table.sort(keys, function(left, right)
+            local leftCandidate, rightCandidate = candidates[left], candidates[right]
+            if leftCandidate.resource == rightCandidate.resource then
+                return leftCandidate.migration < rightCandidate.migration
+            end
+            return leftCandidate.resource < rightCandidate.resource
+        end)
+
+        local items = {}
+        local pageFindings = {
+            CHECKSUM_MISMATCH = 0,
+            MISSING_MIGRATION = 0,
+            SCHEMA_DRIFT = 0
+        }
+        for index = 1, math.min(#keys, limit) do
+            local key = keys[index]
+            local candidate = candidates[key]
+            local definition = definitions[key]
+            local expectedChecksum, finding
+            if definition then
+                local contents = platform.loadResourceFile(
+                    definition.resource, definition.path)
+                if type(contents) == 'string' then
+                    expectedChecksum = sha256(contents:gsub('\r\n', '\n'))
+                else
+                    finding = 'MISSING_MIGRATION'
+                end
+            else
+                finding = 'SCHEMA_DRIFT'
+            end
+            local marker = candidate.markerChecksum and {
+                checksum_sha256 = candidate.markerChecksum
+            } or nil
+            if expectedChecksum and not finding then
+                for _, checksum in ipairs({
+                    candidate.markerChecksum,
+                    candidate.attemptChecksum,
+                    candidate.fenceChecksum
+                }) do
+                    if checksum and not migrationChecksumAccepted(candidate.resource,
+                        candidate.migration, expectedChecksum, checksum, marker) then
+                        finding = 'CHECKSUM_MISMATCH'
+                        break
+                    end
+                end
+            end
+            local status = candidate.fenceState or candidate.attemptState
+                or candidate.markerChecksum and 'applied' or 'missing'
+            if not finding then
+                if not candidate.markerChecksum and (candidate.fenceState == 'applied'
+                    or candidate.attemptState == 'applied')
+                    or candidate.markerChecksum and (candidate.fenceState ~= nil
+                        and candidate.fenceState ~= 'applied'
+                        or candidate.attemptState ~= nil
+                            and candidate.attemptState ~= 'applied') then
+                    finding = 'SCHEMA_DRIFT'
+                elseif definition and candidate.markerChecksum == nil then
+                    finding = 'MISSING_MIGRATION'
+                end
+            end
+            if finding then pageFindings[finding] = pageFindings[finding] + 1 end
+            items[#items + 1] = {
+                resource = candidate.resource,
+                migration = candidate.migration,
+                checksum = expectedChecksum or candidate.markerChecksum
+                    or candidate.fenceChecksum or candidate.attemptChecksum,
+                recordedChecksum = candidate.markerChecksum or candidate.fenceChecksum
+                    or candidate.attemptChecksum,
+                appliedAt = candidate.appliedAt,
+                durationMs = candidate.durationMs,
+                status = status,
+                attempts = candidate.attempts,
+                lastErrorCode = candidate.lastErrorCode,
+                finding = finding
+            }
+        end
+        local hasMore = #keys > limit
+        local last = items[#items]
+        return {
+            columns = {
+                { key = 'resource', label = 'Resource' },
+                { key = 'migration', label = 'Migration' },
+                { key = 'checksum', label = 'Checksum' },
+                { key = 'recordedChecksum', label = 'Recorded checksum' },
+                { key = 'appliedAt', label = 'Applied at' },
+                { key = 'durationMs', label = 'Duration (ms)' },
+                { key = 'status', label = 'Status' },
+                { key = 'attempts', label = 'Attempts' },
+                { key = 'lastErrorCode', label = 'Last error' },
+                { key = 'finding', label = 'Finding' }
+            },
+            items = items,
+            limit = limit,
+            hasMore = hasMore,
+            nextCursor = hasMore and last
+                and (last.resource .. '|' .. last.migration) or nil,
+            truncated = hasMore,
+            pageFindings = pageFindings,
+            findingScope = 'MANIFEST_AND_MIGRATION_MARKERS',
+            physicalSchemaInspection = false
+        }, nil
+    end
+
     local function splitStatements(contents)
         local statements = {}
         local buffer = {}
@@ -704,21 +1186,6 @@ factories.persistence = function(deps)
     local function checksumError(resourceName, migrationId, context)
         return migrationError('MIGRATION_CHECKSUM_MISMATCH',
             ('%s migration %s/%s has a different checksum.'):format(context, resourceName, migrationId))
-    end
-
-    local migrationChecksumCorrections = {
-        ['synex_core:021_worker_queue_scalability'] = {
-            previous = '6d314f977f47fa39125c9597172e75fa05d80bfbd310aaf6be4c5584f6823b59',
-            current = '5add0fed6935b83e7fd0905c188c1e534a6636d5d935fea1a28a145f7b533b7c'
-        }
-    }
-
-    local function migrationChecksumAccepted(resourceName, migrationId, checksum, actual, applied)
-        if actual == checksum then return true end
-        local correction = migrationChecksumCorrections[resourceName .. ':' .. migrationId]
-        return correction ~= nil and applied ~= nil
-            and applied.checksum_sha256 == correction.previous
-            and checksum == correction.current and actual == correction.previous
     end
 
     local function claimMigration(resourceName, migrationId, checksum, statementCount)

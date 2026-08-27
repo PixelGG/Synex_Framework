@@ -9,6 +9,7 @@ factories.bootstrapDiscovery = function(deps)
     local lifecycle = assert(deps.lifecycle, 'bootstrap discovery requires lifecycle')
     local stateService = assert(deps.stateService, 'bootstrap discovery requires state service')
     local runtimeGate = assert(deps.runtimeGate, 'bootstrap discovery requires runtime gate')
+    local controlProviders = deps.controlProviders
     local logger = foundation.logger
     local manifests = deps.manifests or {}
     local ownerSnapshotMaximumBytes = deps.ownerSnapshotMaximumBytes or 65536
@@ -20,6 +21,9 @@ factories.bootstrapDiscovery = function(deps)
     local function invalidateResource(name)
         local previous = manifests[name]
         if previous and previous.critical == true then criticalResources[name] = true end
+        if controlProviders and type(controlProviders.markUnavailable) == 'function' then
+            controlProviders:markUnavailable(name)
+        end
         manifests[name] = nil
         validatedRevisions[name] = nil
         ownerRevisions[name] = nil
@@ -56,6 +60,10 @@ factories.bootstrapDiscovery = function(deps)
         if not ok then return nil, foundation.error('RESOURCE_MANIFEST_INVALID_JSON', ('%s has invalid manifest JSON.'):format(name)) end
         local valid, manifestError = validateManifest(name, manifest)
         if not valid then return nil, manifestError end
+        if controlProviders and type(controlProviders.declare) == 'function' then
+            local _, declarationError = controlProviders:declare(name, manifest.controlProvider)
+            if declarationError then return nil, declarationError end
+        end
         security.capabilities:registerManifest(name, manifest)
         for _, requirement in ipairs(manifest.services.require or {}) do
             local service, major = requirement:match('^(.+)@(%d+)$')

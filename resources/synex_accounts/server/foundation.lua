@@ -35,8 +35,13 @@ end
 -- than UUIDs. Domain-owned public IDs remain UUIDs; subject references accept
 -- both formats so ownership can be linked without re-keying either domain.
 local function isSubjectId(value)
-    return type(value) == 'string' and #value >= 1 and #value <= 36
-        and value:match('^[a-z0-9][a-z0-9_%-]*$') ~= nil
+    return type(value) == 'string' and #value >= 3 and #value <= 48
+        and value:match('^[A-Za-z0-9][A-Za-z0-9_.:%-]*$') ~= nil
+end
+
+local function isPublicId(value)
+    return type(value) == 'string' and #value >= 8 and #value <= 48
+        and value:match('^[A-Za-z0-9][A-Za-z0-9_.:%-]*$') ~= nil
 end
 
 local function isCallable(value)
@@ -56,6 +61,97 @@ end
 local function characterLength(value)
     if type(value) ~= 'string' then return -1 end
     return utf8.len(value) or -1
+end
+
+local function jsonContainerDescriptor(value)
+    if type(value) ~= 'table' then return nil, nil end
+    local metatable = getmetatable(value)
+    if metatable == nil then return 'plain', nil end
+    if type(metatable) ~= 'table'
+        and type(debug) == 'table' and type(debug.getmetatable) == 'function' then
+        local readable, rawMetatable = pcall(debug.getmetatable, value)
+        if readable then metatable = rawMetatable end
+    end
+    if type(metatable) ~= 'table' then return nil, nil end
+    local kind = rawget(metatable, '__jsontype')
+    if kind ~= 'object' and kind ~= 'array' then return nil, nil end
+    -- Only the inert Cfx container marker is accepted. Callable or decorated
+    -- lookalikes remain invalid input.
+    for key in next, metatable do
+        if key ~= '__jsontype' then return nil, nil end
+    end
+    return kind, metatable
+end
+
+local function jsonContainerKind(value)
+    local kind = jsonContainerDescriptor(value)
+    return kind
+end
+
+local function copyPlain(value, limits)
+    limits = limits or {}
+    local maximumDepth = limits.maximumDepth or 12
+    local maximumKeys = limits.maximumKeys or 512
+    local maximumStringBytes = limits.maximumStringBytes or 16384
+    local preserveContainerKind = limits.preserveContainerKind == true
+    local active, keys = {}, 0
+
+    local function copy(candidate, depth)
+        local candidateType = type(candidate)
+        if candidateType == 'nil' or candidateType == 'boolean' then return candidate end
+        if candidateType == 'number' then
+            if candidate ~= candidate or candidate == math.huge or candidate == -math.huge then
+                error('JSON numbers must be finite', 0)
+            end
+            return candidate
+        end
+        if candidateType == 'string' then
+            if #candidate > maximumStringBytes then
+                error('JSON strings exceed the configured bound', 0)
+            end
+            return candidate
+        end
+        local containerKind, containerMetatable = jsonContainerDescriptor(candidate)
+        if candidateType ~= 'table' or not containerKind
+            or depth > maximumDepth or active[candidate] then
+            error('JSON values must be bounded acyclic containers', 0)
+        end
+        active[candidate] = true
+        local result, count, maximumIndex, keyType = {}, 0, 0, nil
+        for key, child in next, candidate do
+            keys = keys + 1
+            if keys > maximumKeys then
+                active[candidate] = nil
+                error('JSON values contain too many keys', 0)
+            end
+            local currentType = type(key)
+            if currentType == 'number' and math.type(key) == 'integer' and key >= 1 then
+                maximumIndex = math.max(maximumIndex, key)
+            elseif currentType ~= 'string' or #key == 0 or #key > 128 then
+                active[candidate] = nil
+                error('JSON object keys are invalid', 0)
+            end
+            if keyType and keyType ~= currentType then
+                active[candidate] = nil
+                error('JSON containers cannot mix array and object keys', 0)
+            end
+            keyType = currentType
+            count = count + 1
+            result[key] = copy(child, depth + 1)
+        end
+        active[candidate] = nil
+        if (keyType == 'number' and maximumIndex ~= count)
+            or (containerKind == 'object' and keyType == 'number')
+            or (containerKind == 'array' and keyType == 'string') then
+            error('JSON container shape does not match its declared kind', 0)
+        end
+        if preserveContainerKind and containerMetatable ~= nil then
+            setmetatable(result, containerMetatable)
+        end
+        return result
+    end
+
+    return copy(value, 1)
 end
 
 local function validateShape(request, allowed, required)
@@ -86,16 +182,25 @@ local function createCanonicalEncoder(jsonEncode)
             if value ~= value or value == math.huge or value == -math.huge then error('metadata number must be finite') end
             return jsonEncode(value)
         end
-        if valueType ~= 'table' or getmetatable(value) ~= nil then error('metadata contains an unsupported value') end
+        if valueType ~= 'table' or not jsonContainerKind(value) then
+            error('metadata contains an unsupported value')
+        end
 
-        local count, maximum, array = 0, 0, true
+        local containerKind = jsonContainerKind(value)
+        local count, maximum, array = 0, 0, containerKind ~= 'object'
         for key in pairs(value) do
             count = count + 1
             if count > 64 then error('metadata contains too many properties') end
             if type(key) ~= 'number' or math.type(key) ~= 'integer' or key < 1 then array = false
             else maximum = math.max(maximum, key) end
         end
-        if array and count > 0 then
+        if containerKind == 'array' and not array then
+            error('metadata array contains object properties')
+        end
+        if containerKind == 'object' and maximum > 0 then
+            error('metadata object contains array indexes')
+        end
+        if array and (count > 0 or containerKind == 'array') then
             if maximum ~= count then error('metadata arrays must be contiguous') end
             local items = {}
             for index = 1, count do items[index] = encode(value[index], depth) end
@@ -141,8 +246,11 @@ return {
     uuidV4 = uuidV4,
     isUuid = isUuid,
     isSubjectId = isSubjectId,
+    isPublicId = isPublicId,
     isCallable = isCallable,
     characterLength = characterLength,
+    jsonContainerKind = jsonContainerKind,
+    copyPlain = copyPlain,
     validateShape = validateShape,
     createCanonicalEncoder = createCanonicalEncoder,
     reportUnexpectedError = reportUnexpectedError

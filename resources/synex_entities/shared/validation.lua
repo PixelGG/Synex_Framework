@@ -2,10 +2,23 @@ SynexEntityValidation = {}
 
 local MAX_HASH = 4294967295
 local MIN_HASH = -2147483648
+local MAX_SAFE_INTEGER = 9007199254740991
 local MAX_BUCKET = 2147483647
 local MAX_COORDINATE = 20000.0
 local ENTITY_TYPES = { object = true, ped = true, vehicle = true }
-local OWNER_TYPES = { character = true, resource = true, system = true, user = true }
+local OWNER_TYPES = { character = true, group = true, resource = true, system = true, user = true }
+local PERSISTENCE_POLICIES = {
+    owner_lifetime = true,
+    persistent = true,
+    session = true,
+    temporary = true,
+}
+local RECOVERY_POLICIES = {
+    automatic = true,
+    manual = true,
+    none = true,
+    on_demand = true,
+}
 local VEHICLE_TYPES = {
     automobile = true,
     bike = true,
@@ -16,17 +29,25 @@ local VEHICLE_TYPES = {
     trailer = true,
 }
 local SPAWN_KEYS = {
+    archetype = true,
+    binding = true,
     bucket = true,
     bucketGeneration = true,
     doorFlag = true,
     entityType = true,
     heading = true,
+    idempotencyKey = true,
     model = true,
     owner = true,
     pedType = true,
     persistent = true,
     persistentKey = true,
+    persistencePolicy = true,
     position = true,
+    reasonCode = true,
+    recoveryPolicy = true,
+    tags = true,
+    timeoutMs = true,
     vehicleType = true,
 }
 
@@ -55,6 +76,22 @@ local function validateBoundedIdentifier(value, label, maximum)
     end
 
     return value
+end
+
+local function validateNamespace(value, label)
+    if type(value) ~= 'string' or #value < 3 or #value > 128
+        or value ~= value:lower()
+        or value:match('^[a-z][a-z0-9_]*%.[a-z][a-z0-9_.]*$') == nil
+        or value:match('%.%.') then
+        return fail('INVALID_ARGUMENT', (label or 'namespace') .. ' is invalid')
+    end
+    return value
+end
+
+local function validateReasonCode(value)
+    local reasonCode, reasonError = validateNamespace(value, 'reasonCode')
+    if not reasonCode then return nil, reasonError end
+    return reasonCode
 end
 
 local function validatePosition(position)
@@ -101,6 +138,82 @@ local function validateOwner(owner)
     end
 
     return { id = ownerId, type = owner.type }
+end
+
+function SynexEntityValidation.validateOwner(owner)
+    return validateOwner(owner)
+end
+
+function SynexEntityValidation.validatePosition(position)
+    return validatePosition(position)
+end
+
+function SynexEntityValidation.validateIdentifier(value, label, maximum)
+    return validateBoundedIdentifier(value, label or 'identifier', maximum or 128)
+end
+
+function SynexEntityValidation.validateNamespace(value, label)
+    return validateNamespace(value, label)
+end
+
+function SynexEntityValidation.validateReasonCode(value)
+    return validateReasonCode(value)
+end
+
+function SynexEntityValidation.validatePersistencePolicy(value)
+    if not PERSISTENCE_POLICIES[value] then
+        return fail('INVALID_ARGUMENT', 'persistencePolicy is not supported')
+    end
+    return value
+end
+
+function SynexEntityValidation.validateRecoveryPolicy(value)
+    if not RECOVERY_POLICIES[value] then
+        return fail('INVALID_ARGUMENT', 'recoveryPolicy is not supported')
+    end
+    return value
+end
+
+function SynexEntityValidation.validateBinding(binding, required)
+    if binding == nil and not required then return nil end
+    if type(binding) ~= 'table' then
+        return fail('INVALID_ARGUMENT', 'binding must be an object')
+    end
+    for key in pairs(binding) do
+        if key ~= 'namespace' and key ~= 'ref' then
+            return fail('INVALID_ARGUMENT', 'binding contains an unknown field')
+        end
+    end
+    local namespace, namespaceError = validateNamespace(binding.namespace, 'binding.namespace')
+    if not namespace then return nil, namespaceError end
+    local reference, referenceError = validateBoundedIdentifier(binding.ref, 'binding.ref', 128)
+    if not reference then return nil, referenceError end
+    return { namespace = namespace, ref = reference }
+end
+
+function SynexEntityValidation.validateEntityRef(request)
+    if type(request) ~= 'table' then
+        return fail('INVALID_ARGUMENT', 'EntityRef must be an object')
+    end
+    local entityId, entityError = SynexEntityValidation.validateEntityId(request.entityId)
+    if not entityId then return nil, entityError end
+    local generation, generationError = SynexEntityValidation.validateGeneration(request.generation)
+    if not generation then return nil, generationError end
+    return { entityId = entityId, generation = generation }
+end
+
+function SynexEntityValidation.validatePage(limit, cursor, maximum)
+    maximum = maximum or 100
+    if limit == nil then limit = math.min(50, maximum) end
+    if not isInteger(limit) or limit < 1 or limit > maximum then
+        return fail('INVALID_ARGUMENT', 'limit is outside the supported range')
+    end
+    if cursor ~= nil then
+        local normalized, cursorError = validateBoundedIdentifier(cursor, 'cursor', 128)
+        if not normalized then return nil, cursorError end
+        cursor = normalized
+    end
+    return { limit = limit, cursor = cursor }
 end
 
 function SynexEntityValidation.normalizeHash(value)
@@ -238,7 +351,27 @@ function SynexEntityValidation.validateSpawn(request)
     if request.persistent ~= nil and type(request.persistent) ~= 'boolean' then
         return fail('INVALID_ARGUMENT', 'persistent must be a boolean')
     end
-    local persistent = request.persistent == true
+    local persistencePolicy = request.persistencePolicy
+    if persistencePolicy ~= nil then
+        local policyError
+        persistencePolicy, policyError = SynexEntityValidation.validatePersistencePolicy(persistencePolicy)
+        if not persistencePolicy then return nil, policyError end
+    else
+        persistencePolicy = request.persistent == true and 'persistent' or 'temporary'
+    end
+    local persistent = persistencePolicy == 'persistent' or persistencePolicy == 'owner_lifetime'
+    if request.persistent ~= nil and request.persistent ~= persistent then
+        return fail('INVALID_ARGUMENT', 'persistent conflicts with persistencePolicy')
+    end
+
+    local recoveryPolicy = request.recoveryPolicy
+        or (persistent and 'automatic' or 'none')
+    local recoveryError
+    recoveryPolicy, recoveryError = SynexEntityValidation.validateRecoveryPolicy(recoveryPolicy)
+    if not recoveryPolicy then return nil, recoveryError end
+    if not persistent and recoveryPolicy == 'automatic' then
+        return fail('INVALID_ARGUMENT', 'automatic recovery requires durable persistence')
+    end
 
     local persistentKey
     if persistent then
@@ -250,16 +383,93 @@ function SynexEntityValidation.validateSpawn(request)
         return fail('INVALID_ARGUMENT', 'persistentKey is only valid for persistent entities')
     end
 
+    local binding, bindingError = SynexEntityValidation.validateBinding(request.binding, false)
+    if bindingError then return nil, bindingError end
+
+    local archetype
+    if request.archetype ~= nil then
+        if type(request.archetype) ~= 'table' then
+            return fail('INVALID_ARGUMENT', 'archetype must be an object')
+        end
+        for key in pairs(request.archetype) do
+            if key ~= 'namespace' and key ~= 'version' then
+                return fail('INVALID_ARGUMENT', 'archetype contains an unknown field')
+            end
+        end
+        local namespace, namespaceError = validateNamespace(
+            request.archetype.namespace,
+            'archetype.namespace'
+        )
+        if not namespace then return nil, namespaceError end
+        local version = request.archetype.version
+        if not isInteger(version) or version < 1 or version > MAX_SAFE_INTEGER then
+            return fail('INVALID_ARGUMENT', 'archetype.version is outside the supported range')
+        end
+        archetype = { namespace = namespace, schemaVersion = version, version = version }
+    end
+
+    local reasonCode = request.reasonCode
+    if reasonCode ~= nil then
+        local reasonError
+        reasonCode, reasonError = validateReasonCode(reasonCode)
+        if not reasonCode then return nil, reasonError end
+    end
+
+    local timeoutMs = request.timeoutMs
+    if timeoutMs ~= nil and (not isInteger(timeoutMs) or timeoutMs < 250 or timeoutMs > 10000) then
+        return fail('INVALID_ARGUMENT', 'timeoutMs is outside the supported range')
+    end
+
+    local idempotencyKey = request.idempotencyKey
+    if idempotencyKey ~= nil then
+        local keyError
+        idempotencyKey, keyError = validateBoundedIdentifier(
+            idempotencyKey, 'idempotencyKey', 36)
+        if not idempotencyKey then return nil, keyError end
+        if #idempotencyKey < 8 then
+            return fail('INVALID_ARGUMENT', 'idempotencyKey has an invalid length')
+        end
+    end
+
+    local tags = {}
+    if request.tags ~= nil then
+        if type(request.tags) ~= 'table' then
+            return fail('INVALID_ARGUMENT', 'tags must be an array')
+        end
+        local seen = {}
+        for index, tag in ipairs(request.tags) do
+            if index > 16 then return fail('INVALID_ARGUMENT', 'tags exceed the supported limit') end
+            local normalizedTag, tagError = validateNamespace(tag, 'tag')
+            if not normalizedTag then return nil, tagError end
+            if seen[normalizedTag] then return fail('INVALID_ARGUMENT', 'tags must be unique') end
+            seen[normalizedTag] = true
+            tags[index] = normalizedTag
+        end
+        for key in pairs(request.tags) do
+            if type(key) ~= 'number' or key % 1 ~= 0 or key < 1 or key > #tags then
+                return fail('INVALID_ARGUMENT', 'tags must be a dense array')
+            end
+        end
+    end
+
     local normalized = {
+        archetype = archetype,
+        binding = binding,
         bucket = bucket,
         bucketGeneration = bucketReference.generation,
         entityType = request.entityType,
         heading = heading,
+        idempotencyKey = idempotencyKey,
         model = model,
         owner = owner,
         persistent = persistent,
         persistentKey = persistentKey,
+        persistencePolicy = persistencePolicy,
         position = position,
+        reasonCode = reasonCode,
+        recoveryPolicy = recoveryPolicy,
+        tags = tags,
+        timeoutMs = timeoutMs,
     }
 
     if request.entityType == 'vehicle' then

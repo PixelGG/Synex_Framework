@@ -2,7 +2,9 @@
 
 Canonical JSON contract definitions under `packages/contracts` describe request and response schemas, versions, capability requirements, network exposure, idempotency, lifecycle states, and payload limits. Generated Lua and TypeScript artifacts are reproducible build outputs and carry their source checksum.
 
-All public contracts in `0.1.0` remain `experimental`. Semantic versions describe compatibility negotiation inside the current source tree; they do not make a contract stable or add a downstream provider to `synex_core` Production-Beta certification. Contracts owned by groups, accounts, entities, bridges, examples, or other non-Core components may change with their rework.
+All public contracts in `0.1.0` remain `experimental`. Semantic versions describe compatibility negotiation inside the current source tree; they do not make a contract stable or add a downstream provider to `synex_core` Production-Beta certification. The Groups and Accounts Experimental Alpha contracts, and contracts owned by entities, bridges, examples, or other non-Core components, may change before their separate release decisions.
+
+The current source catalog contains 171 versioned definitions: seven are owned by `synex_core`, one by `synex_example`, 71 by `synex_groups`, 59 by `synex_accounts`, and 33 by `synex_entities` across 32 names. Exactly `synex.groups.self.snapshot` declares `client-to-server`; the other 170 definitions, including all Accounts and Entity operations, declare `network: none`. Counts describe this revision and are not a stable ABI promise.
 
 Public contracts use canonical semantic versions. Stable ranges do not select prerelease providers, and prerelease identifiers follow SemVer numeric precedence rather than lexical ordering.
 

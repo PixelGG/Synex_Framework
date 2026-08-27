@@ -8,7 +8,10 @@ Synex accepts responsible security reports for the current `synex_core` developm
 | --- | --- |
 | Current `synex_core` `0.1.x` development line | Reports accepted; fixes are made on the latest maintained revision |
 | Earlier commits, forks, and modified distributions | No guaranteed backports or support |
-| Non-Core resources and libraries | Experimental rework snapshots; not supported as part of the Core Production-Beta target |
+| `synex_groups` Organizations Engine | Experimental Alpha; reports accepted, but no production support, stable-API, or Core Production-Beta certification |
+| `synex_accounts` Financial Engine | Experimental Alpha; reports accepted, but no production support, stable-API, or Core Production-Beta certification |
+| `synex_entities` Entity Authority Engine | Development / Experimental Alpha; reports accepted, but no production support, live-runtime acceptance, stable-API, or Core Production-Beta certification |
+| Other non-Core resources and libraries | Experimental rework snapshots or scaffolds; not supported as part of the Core Production-Beta target |
 | Planned resource directories and scaffolds | Not runnable and not supported |
 
 Security reports about any repository-owned code are still welcome even when that code is outside the supported deployment scope. The status above describes deployment support, not whether a vulnerability matters.

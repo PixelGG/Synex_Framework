@@ -64,7 +64,7 @@ export async function inspectTarget(repositoryRoot: string, target: string): Pro
     const text = await readTextFile(file);
     netEvents += (text.match(/\bRegisterNetEvent\s*\(/gu) ?? []).length;
     exportsCount += (text.match(/\bexports\s*\(/gu) ?? []).length;
-    nuiCallbacks += (text.match(/\bRegisterNUICallback\s*\(/gu) ?? []).length;
+    nuiCallbacks += (text.match(/\bRegister(?:NUI|Nui)Callback\s*\(/gu) ?? []).length;
     directDatabaseCalls += (text.match(/(?:\bMySQL\.|exports\s*\[\s*["']oxmysql["']\s*\])/gu) ?? []).length;
     const lines = text.replace(/\r\n?/gu, "\n").split("\n");
     for (let index = 0; index < lines.length; index += 1) {
@@ -72,7 +72,7 @@ export async function inspectTarget(repositoryRoot: string, target: string): Pro
       for (const [kind, pattern] of [
         ["net-event", /\bRegisterNetEvent\s*\(\s*["']([^"']+)["']/u],
         ["export", /\bexports\s*\(\s*["']([^"']+)["']/u],
-        ["nui-callback", /\bRegisterNUICallback\s*\(\s*["']([^"']+)["']/u],
+        ["nui-callback", /\bRegister(?:NUI|Nui)Callback\s*\(\s*["']([^"']+)["']/u],
       ] as const) {
         const match = pattern.exec(line);
         if (match?.[1]) apiDefinitions.push({ kind, name: match[1], file: displayPath(repositoryRoot, file), line: index + 1 });
@@ -110,6 +110,7 @@ export async function inspectTarget(repositoryRoot: string, target: string): Pro
           version: manifestValue.version,
           synex: manifestValue.synex,
           critical: manifestValue.critical,
+          controlProvider: manifestValue.controlProvider ?? null,
           capabilities: manifestValue.capabilities.request,
           services: manifestValue.services,
           contracts: manifestValue.contracts,

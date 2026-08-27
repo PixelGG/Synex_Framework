@@ -27,6 +27,8 @@ factories.bootstrapLifecycle = function(deps)
         purgeAllPlayers = function() return { players = 0, cleared = 0, replicated = 0, skipped = 0, failures = {} }, nil end
     }
     local runtimeGate = assert(deps.runtimeGate, 'bootstrap lifecycle requires runtime gate')
+    -- Full bootstrap provides both; standalone fixtures may omit their workers.
+    local domainDeletion, dataPort = deps.domainDeletion, deps.dataPort
     local getAPIForCaller = assert(api.getAPIForCaller, 'bootstrap lifecycle requires API lookup')
     local invokeForCaller = assert(api.invokeForCaller, 'bootstrap lifecycle requires contract invocation')
     local guarded = assert(api.guarded, 'bootstrap lifecycle requires capability guard')
@@ -429,6 +431,7 @@ factories.bootstrapLifecycle = function(deps)
                 completeRecovery = completeDatabaseRecovery,
                 setTimeout = platform.setTimeout
             })
+            runtime.databaseRuntimeHealth = databaseRuntimeHealth
             bootStage = 'bootstrap_migration_schema'
             local bootstrapped, bootstrapError = persistence.migrations:bootstrap()
             if not bootstrapped then raiseBootFailure(bootstrapError, 'MIGRATION_BOOTSTRAP_FAILED') end
@@ -508,18 +511,22 @@ factories.bootstrapLifecycle = function(deps)
             end
             local function scheduleDatabaseEvery(intervalMs, handler, name)
                 return scheduleEvery(intervalMs, function(token, cancellation)
-                    local healthy, _, probeState = databaseRuntimeHealth:probe()
-                    if not healthy or probeState == 'suspended'
-                        or not databaseRuntimeHealth:isAvailable() then
+                    local healthy = databaseRuntimeHealth:probe()
+                    if not healthy or not databaseRuntimeHealth:isAvailable() then
                         return lifecycle.scheduler:suspended(), nil
                     end
+                    -- Use cached healthy availability during a concurrent probe;
+                    -- the handler's own database error remains a worker failure.
                     return handler(token, cancellation)
                 end, name)
             end
             bootStage = 'start_runtime_workers'
             scheduleEvery(1000, function()
                 local healthy, healthError, probeState = databaseRuntimeHealth:probe()
-                if probeState == 'suspended' then return lifecycle.scheduler:suspended(), nil end
+                if probeState == 'suspended' then
+                    if databaseRuntimeHealth:isAvailable() then return true, nil end
+                    return lifecycle.scheduler:suspended(), nil
+                end
                 return healthy, healthError
             end, 'core.database.runtime_health')
             if defaultConfig.features.durableEvents then
@@ -556,6 +563,14 @@ factories.bootstrapLifecycle = function(deps)
                     if compactionError then return nil, compactionError end
                     return report ~= nil, nil
                 end, 'core.idempotency.compact_expired')
+            end
+            if dataPort then
+                scheduleDatabaseEvery(defaultConfig.retention.workerIntervalMs, function()
+                    local report, compactionError = dataPort:compactExpired(
+                        math.min(defaultConfig.retention.batchSize or 250, 250))
+                    if compactionError then return nil, compactionError end
+                    return report ~= nil, nil
+                end, 'core.domain_receipts.compact_expired')
             end
             local outboxRetention = defaultConfig.retention
                 and defaultConfig.retention.outbox or nil
@@ -610,6 +625,11 @@ factories.bootstrapLifecycle = function(deps)
             scheduleDatabaseEvery(5000, function()
                 return identity.characters:reconcileUnloads(10)
             end, 'core.characters.unload_reconciliation')
+            if domainDeletion then
+                scheduleDatabaseEvery(5000, function()
+                    return domainDeletion:reconcile(10)
+                end, 'core.domain_deletions.reconciliation')
+            end
             scheduleEvery(defaultConfig.connections.clusterHeartbeatMs or 10000, function()
                 return identity.connections:heartbeat()
             end, 'core.cluster.heartbeat')
@@ -675,6 +695,5 @@ factories.bootstrapLifecycle = function(deps)
         end
         return true, nil
     end
-
     return runtime
 end

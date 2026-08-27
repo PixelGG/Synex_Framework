@@ -5,39 +5,43 @@
     "deny": [
       "synex.admin.*",
       "synex.audit.raw",
-      "synex.accounts.mint",
-      "synex.accounts.burn",
+      "synex.accounts.outbox.retry",
       "synex.characters.delete",
       "synex.entities.delete_persistent"
     ]
   },
   "resources": {
     "synex_groups": {
-      "allow": ["synex.identity.read", "synex.groups.*", "synex.events.durable"],
+      "allow": ["synex.identity.read", "synex.groups.*", "synex.events.durable", "synex.audit.append", "synex.permissions.read", "synex.database.read", "synex.database.write", "synex.database.transaction", "synex.database.maintenance", "synex.deletions.read", "synex.deletions.manage", "synex.deletions.provider", "synex.control.provider.register"],
       "deny": []
     },
     "synex_accounts": {
-      "allow": ["synex.identity.read", "synex.accounts.read", "synex.accounts.transfer", "synex.accounts.holds", "synex.events.durable", "synex.runtime.read"],
+      "allow": ["synex.audit.append", "synex.capabilities.delegate", "synex.deletions.provider", "synex.events.durable", "synex.metrics.write", "synex.runtime.read", "synex.control.provider.register"],
       "deny": []
     },
     "synex_entities": {
-      "allow": ["synex.identity.read", "synex.entities.*", "synex.audit.append"],
+      "allow": ["synex.identity.read", "synex.groups.read", "synex.audit.append", "synex.capabilities.delegate", "synex.database.maintenance", "synex.database.read", "synex.database.transaction", "synex.database.write", "synex.deletions.provider", "synex.metrics.write", "synex.runtime.read", "synex.control.provider.register"],
       "deny": ["synex.entities.delete_persistent"]
     },
     "synex_bridge_qb": {
-      "allow": ["synex.capabilities.delegate", "synex.identity.read", "synex.accounts.read", "synex.accounts.transfer", "synex.groups.read"],
-      "deny": ["synex.accounts.mint", "synex.accounts.burn"]
+      "allow": ["synex.capabilities.delegate", "synex.identity.read", "synex.accounts.read", "synex.accounts.transfer", "synex.accounts.mint", "synex.accounts.burn", "synex.groups.read", "synex.groups.compatibility.set_primary_grade", "synex.groups.duty", "synex.permissions.read", "synex.metrics.write", "synex.tracing.write"],
+      "deny": []
     },
     "synex_bridge_qbx": {
-      "allow": ["synex.capabilities.delegate", "synex.identity.read", "synex.accounts.read", "synex.accounts.transfer", "synex.groups.read"],
-      "deny": ["synex.accounts.mint", "synex.accounts.burn"]
+      "allow": ["synex.capabilities.delegate", "synex.identity.read", "synex.accounts.read", "synex.accounts.transfer", "synex.accounts.mint", "synex.accounts.burn", "synex.groups.read", "synex.groups.compatibility.set_primary_grade", "synex.groups.duty", "synex.metrics.write", "synex.tracing.write"],
+      "deny": []
     },
     "synex_bridge_esx": {
-      "allow": ["synex.capabilities.delegate", "synex.identity.read", "synex.accounts.read", "synex.accounts.transfer", "synex.groups.read"],
-      "deny": ["synex.accounts.mint", "synex.accounts.burn"]
+      "allow": ["synex.capabilities.delegate", "synex.identity.read", "synex.accounts.read", "synex.accounts.transfer", "synex.accounts.mint", "synex.accounts.burn", "synex.groups.read", "synex.groups.compatibility.set_primary_grade", "synex.permissions.read", "synex.metrics.write", "synex.tracing.write"],
+      "deny": []
+    },
+    "synex_bridge": {
+      "allow": ["synex.capabilities.delegate", "synex.database.read", "synex.database.write",
+        "synex.database.transaction", "synex.control.provider.register", "synex.tracing.write"],
+      "deny": []
     },
     "synex_control": {
-      "allow": ["synex.runtime.read", "synex.metrics.read", "synex.audit.summary", "synex.accounts.integrity.read", "synex.groups.read", "synex.entities.read"],
+      "allow": ["synex.control.provider.read", "synex.control.provider.register"],
       "deny": ["synex.admin.*", "synex.audit.raw"]
     }
   }

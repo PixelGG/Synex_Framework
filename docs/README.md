@@ -2,9 +2,9 @@
 
 This documentation describes the code present in Synex `0.1.0`. The release is experimental: contracts, schemas, migrations, and operational behavior may change before a stable release. Passing repository tests does not by itself certify a production deployment.
 
-The Production-Beta effort applies to `synex_core` only. `synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, every later resource, and all non-Core libraries, bridges, integrations, and examples are experimental rework snapshots or scaffolds. They are entirely excluded from this beta profile; do not start or advertise them as certified components.
+The frozen Production-Beta decision applies to one exact `synex_core` tree only. The current workspace extends Core with additive domain persistence, deletion and Control-provider primitives, so those later Core changes do not inherit that decision. `synex_groups` is an Experimental Alpha Organizations Engine with 71 contracts and 31 owned migrations; its earlier working-tree evidence predates migration `032`, and its current acceptance remains open. `synex_accounts` is a server-only Experimental Alpha Financial Engine with 59 contracts and 17 owned migrations. Its automated implementation is largely complete, while real MariaDB, FXServer, restart/recovery, restored-upgrade, and exact-candidate acceptance are deferred. `synex_entities` is Development / Experimental Alpha until its live MariaDB, FXServer/OneSync, restart/recovery and exact-candidate acceptance is complete. The separate optional `synex_control` read-only operations surface is also Development / Experimental Alpha until its provider-runtime and real CEF client acceptance is complete. `synex_bridge` is an implemented but unaccepted Experimental Alpha Compatibility Platform with separate QB/QBX/ESX providers and fail-closed checked-in configuration. Every later resource, remaining library, integration, and example remains experimental. Every non-Core component is excluded from the frozen Core profile.
 
-The documented Core-only profile reached **Production Beta** on 2026-08-25. Commit `7ad4b72ee9bcd0a2a0481cfacfe5f807eb1b3ec5` with Core tree `9f0960f1e27fe43195ae4602cb2ef447cbc0509b` passed its repository, live-database, fresh-boot, public-API, capacity, restart, crash-recovery, stale-facade, database-outage/recovery, automated, real-client, and review gates. The result is a Production-ready beta for the exact supported Core profile, not a stable `1.0` or framework-wide release.
+The documented Core-only profile reached **Production Beta** on 2026-08-25. Commit `7ad4b72ee9bcd0a2a0481cfacfe5f807eb1b3ec5` with Core tree `9f0960f1e27fe43195ae4602cb2ef447cbc0509b` passed its repository, live-database, fresh-boot, public-API, capacity, restart, crash-recovery, stale-facade, database-outage/recovery, automated, real-client, and review gates. The result is a production-oriented beta for that immutable profile, not acceptance of the current working tree, a stable `1.0`, or a framework-wide release.
 
 The tested oxmysql lost-callback condition keeps player admission closed. The documentation does not claim automatic recovery from that condition: restore the database service, then restart the complete FXServer process before reopening admission. Multi-instance and alternate duplicate-policy verification remain explicitly out of scope. The maintained boundary is recorded under [Current acceptance baseline](testing.md#current-acceptance-baseline).
 
@@ -39,22 +39,41 @@ The tested oxmysql lost-callback condition keeps player admission closed. The do
 - [Generated contract catalog](../packages/contracts/generated/docs/contracts.md)
 - [Architecture decisions](architecture/decisions/README.md)
 
-## Foundation rework references
+## Experimental domain and rework references
 
-These non-Core implementations are development inputs for a planned full rework. They are not supported components of the Core Production-Beta profile.
+`synex_groups`, `synex_accounts`, and `synex_entities` are separate Experimental Alpha domains. The current source catalog contains 171 versioned contract definitions: exactly `synex.groups.self.snapshot` is `client-to-server`; the other 170 are server-only. Entities contributes 33 definitions across 32 names because `synex.entities.bucket.create` retains v1 and adds v2. Accounts and Entities have no client or NUI contract surface. The separate `synex_control` Alpha discovers bounded read-only Core, Groups, Accounts, Entities, Control-self and optional Bridge-compatibility providers; it is operator tooling, not a gameplay or banking UI. Future financial gameplay/UI belongs to `synex_banking`. None is a supported component of the frozen Core Production-Beta profile.
 
 - [Database model](reference/database.md)
-- [Groups and memberships](reference/groups.md)
-- [Accounts, ledger, and holds](reference/accounts.md)
-- [Entity authority and routing buckets](reference/entities.md)
-- [Read-only control plane](reference/control-plane.md)
+- [Organizations Engine guide](groups/overview.md)
+- [Groups API reference](reference/groups.md)
+- [Accounts Financial Engine](reference/accounts.md)
+- [Server-only Accounts consumer example](../examples/synex_accounts-server.md)
+- [Entity Authority Engine guide](entities/overview.md)
+- [Entity contracts and configuration](reference/entities.md)
+- [Control overview](control/overview.md)
+- [Read-only control-plane reference](reference/control-plane.md)
+- [Control architecture](control/architecture.md)
+- [Control provider contract](control/providers.md)
+- [Control diagnostics catalog](control/diagnostics.md)
+- [Control permissions](control/permissions.md)
+- [Control security boundary](control/security.md)
+- [Control search and tracing](control/search-and-tracing.md)
+- [Control performance and limits](control/performance.md)
+- [Extending Control](control/extending-control.md)
 
 ## Security and compatibility
 
 - [Capability policy and resource security](security/README.md)
 - [Compatibility boundary](compatibility/README.md)
+- [Compatibility architecture](compatibility/architecture.md)
+- [QBCore](compatibility/qbcore.md), [Qbox](compatibility/qbox.md), and [ESX](compatibility/esx.md) provider surfaces
+- [Compatibility modes and deployment](compatibility/modes.md)
+- [Compatibility mappings](compatibility/mappings.md) and [domain adapters](compatibility/adapters.md)
+- [Compatibility profiles](compatibility/profiles.md) and [certification](compatibility/certification.md)
+- [Compatibility security](compatibility/security.md)
 - [Compatibility matrix](compatibility/matrix.md)
 - [Legacy migration pipeline](compatibility/migration.md)
+- [Compatibility troubleshooting](compatibility/troubleshooting.md)
 
 ## Repository operations
 

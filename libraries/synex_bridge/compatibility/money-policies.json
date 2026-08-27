@@ -1,0 +1,6 @@
+{
+  "$schema": "./schemas/money-policies.schema.json",
+  "schema": 1,
+  "kind": "synex-compatibility-money-policies",
+  "policies": []
+}

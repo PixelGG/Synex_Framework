@@ -1,12 +1,18 @@
 return function(Foundation)
 local domainError = Foundation.domainError
-local isUuid = Foundation.isUuid
+local isPublicId = Foundation.isPublicId
 local DEFAULT_BATCH_SIZE = 25
 local MAXIMUM_BATCH_SIZE = 50
 local MAXIMUM_PAYLOAD_BYTES = 32768
 local CLAIM_LEASE_SECONDS = 60
 local MAXIMUM_ATTEMPTS = 10
 local MAXIMUM_BACKOFF_SECONDS = 300
+local MAXIMUM_CONTEXT_BYTES = 4096
+
+local function validTraceId(value)
+    return type(value) == 'string' and #value >= 8 and #value <= 64
+        and value:match('^[A-Za-z0-9_.:%-]+$') ~= nil
+end
 
 local function createOutboxDispatcher(deps)
     local update = assert(deps.update, 'group outbox dispatcher requires update')
@@ -50,6 +56,27 @@ local function createOutboxDispatcher(deps)
         return { dead = dead, code = failureCode }, nil
     end
 
+    local function traceIdFor(row)
+        if validTraceId(row.correlation_id) then return row.correlation_id end
+        if type(row.context_json) == 'string'
+            and #row.context_json <= MAXIMUM_CONTEXT_BYTES then
+            local decodedOk, decoded = pcall(jsonDecode, row.context_json)
+            if decodedOk then
+                local copiedOk, context = pcall(Foundation.copyPlain, decoded, {
+                    maximumDepth = 4,
+                    maximumKeys = 16,
+                    maximumStringBytes = 256,
+                    preserveContainerKind = false
+                })
+                if copiedOk and type(context) == 'table'
+                    and validTraceId(context.traceId) then
+                    return context.traceId
+                end
+            end
+        end
+        return row.event_id
+    end
+
     local dispatcher = {}
 
     function dispatcher:dispatchBatch(claimToken, publish, options)
@@ -81,11 +108,15 @@ local function createOutboxDispatcher(deps)
             ORDER BY `id` ASC LIMIT ?]], { claimToken, CLAIM_LEASE_SECONDS, maximum })
         if claimError then return nil, claimError end
 
-        local rows, readError = runQuery([[SELECT `id`, `event_id`, `aggregate_id`, `event_type`,
-                `schema_version`, `payload_json`, `attempts`
-            FROM `synex_group_outbox`
-            WHERE `state` = 'publishing' AND `locked_by` = ?
-            ORDER BY `id` ASC LIMIT ?]], { claimToken, maximum })
+        local rows, readError = runQuery([[SELECT `outbox`.`id`, `outbox`.`event_id`,
+                `outbox`.`aggregate_id`, `outbox`.`event_type`, `outbox`.`schema_version`,
+                `outbox`.`payload_json`, `outbox`.`attempts`,
+                `history`.`correlation_id`, `history`.`context_json`
+            FROM `synex_group_outbox` AS `outbox`
+            LEFT JOIN `synex_group_domain_history` AS `history`
+                ON `history`.`event_id` = `outbox`.`event_id`
+            WHERE `outbox`.`state` = 'publishing' AND `outbox`.`locked_by` = ?
+            ORDER BY `outbox`.`id` ASC LIMIT ?]], { claimToken, maximum })
         if not rows then return nil, readError end
 
         local report = {
@@ -114,7 +145,7 @@ local function createOutboxDispatcher(deps)
             end
 
             local schemaVersion = tonumber(row.schema_version)
-            local validEnvelope = isUuid(row.event_id) and isUuid(row.aggregate_id)
+            local validEnvelope = isPublicId(row.event_id) and isPublicId(row.aggregate_id)
                 and type(row.event_type) == 'string' and #row.event_type >= 3 and #row.event_type <= 96
                 and row.event_type:match('^[a-z][a-z0-9_]*%.[a-z][a-z0-9_.]*$') ~= nil
                 and schemaVersion ~= nil and schemaVersion == math.floor(schemaVersion)
@@ -123,13 +154,16 @@ local function createOutboxDispatcher(deps)
             local decoded, payload = false, nil
             if validEnvelope then
                 decoded, payload = pcall(jsonDecode, row.payload_json)
-                decoded = decoded and type(payload) == 'table' and getmetatable(payload) == nil
+                if decoded then
+                    decoded, payload = pcall(Foundation.copyPlain, payload)
+                end
+                decoded = decoded and type(payload) == 'table'
             end
 
             local published, publishResult, publishError = false, nil, nil
             if decoded then
                 published, publishResult, publishError = pcall(publish, row.event_type, payload, {
-                    traceId = row.event_id,
+                    traceId = traceIdFor(row),
                     eventId = row.event_id,
                     aggregateId = row.aggregate_id,
                     schemaVersion = schemaVersion

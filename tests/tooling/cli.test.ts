@@ -65,6 +65,12 @@ test("resource creation rejects a parent symlink before writing outside the repo
 test("benchmark is bounded and labels itself as a local microbenchmark", () => {
   const report = runBenchmark(10);
   assert.equal(report.iterations, 10);
+  assert.equal(report.benchmarks.bridge_projection_copy?.execution, "synex_bridge_lua");
+  assert.equal(report.benchmarks.bridge_callback_argument_validation?.execution, "synex_bridge_lua");
+  assert.equal(report.benchmarks.bridge_account_mapping_resolve?.execution, "synex_bridge_lua");
+  assert.equal(report.benchmarks.bridge_surface_resolve?.execution, "synex_bridge_lua");
+  assert.equal(report.benchmarks.bridge_telemetry_record?.execution, "synex_bridge_lua");
+  assert.match(report.disclaimer, /Bridge/u);
   assert.match(report.disclaimer, /not a FiveM runtime or production performance claim/u);
   assert.throws(() => runBenchmark(0), CliError);
   assert.throws(() => runBenchmark(100_001), CliError);

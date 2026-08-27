@@ -24,7 +24,11 @@ import { createDiagnosticBundle } from "./diagnostic-bundle.ts";
 import { runManagedReload, type ReloadAdapter } from "./dev-reload.ts";
 import { loadSchemaRegistry } from "./schemas.ts";
 import type { ContractCompatibilityChange } from "./compatibility.ts";
-import { compareContracts, scanCompatibility } from "./compatibility.ts";
+import {
+  compareContracts,
+  printCompatibilityReport,
+  runCompatibilityCommand,
+} from "./compatibility.ts";
 import {
   createResource,
   inspectPermissions,
@@ -89,12 +93,22 @@ function helpText(): string {
     "  synex inspect [resource] <path-or-name> [--json]",
     "  synex inspect graph [--json]",
     "  synex create resource <synex_name> [--path <parent>] [--json]",
-    "  synex doctor [path] [--bundle] [--output <file>] [--json]",
+    "  synex doctor [path] [--bundle] [--runtime-evidence <file>] [--output <file>] [--json]",
     "  synex permissions [path] [--json]",
     "  synex security scan [path] [--json]",
     "  synex security fuzz [path] [--json]",
     "  synex certify <repository|resource|path> [--output <file>] [--json]",
+    "  synex compat status [--json]",
+    "  synex compat matrix [--json]",
     "  synex compat scan [path] [--json]",
+    "  synex compat explain [path] [--json]",
+    "  synex compat profile <id> [--json]",
+    "  synex compat adapters [--json]",
+    "  synex compat observe [path] [--runtime-evidence <file>] [--json]",
+    "  synex compat doctor [--runtime-evidence <file>] [--json]",
+    "  synex compat execute <profile-id> [--output artifacts/compatibility/<profile>.execution.json] [--json]",
+    "  synex compat certify <profile-id> --runtime-evidence <file> --execution-evidence <file> --output <declared-artifact> [--json]",
+    "  synex compat drift [--online] [--timeout <ms>] [--json]",
     "  synex benchmark [--iterations <count>] [--baseline <file>] [--output <file>] [--json]",
     "  synex upgrade-check [path] [--against <repository>] [--json]",
     "  synex live-test prepare --probe <external-directory> [--output <.temp/live-test/directory>] [--json]",
@@ -283,16 +297,30 @@ export async function runCli(
 
     if (command === "doctor") {
       const target = resolveWithin(repositoryRoot, subcommand ?? ".");
+      const requestedRuntimeEvidence = optionString(parsed, "runtime-evidence");
+      const requestedOutput = optionString(parsed, "output");
+      const bundleRequested = optionBoolean(parsed, "bundle");
+      if (!bundleRequested && requestedOutput) {
+        throw new CliError("doctor --output requires --bundle.", 2);
+      }
+      if (!bundleRequested && requestedRuntimeEvidence) {
+        throw new CliError("doctor --runtime-evidence requires --bundle.", 2);
+      }
       const report = await runDoctor(repositoryRoot, target);
       let bundlePath: string | null = null;
-      if (optionBoolean(parsed, "bundle")) {
-        const requestedOutput = optionString(parsed, "output");
+      if (bundleRequested) {
         const defaultName = `doctor-${new Date().toISOString().replace(/[:.]/gu, "-")}.json`;
         const output = resolveWithin(repositoryRoot, requestedOutput ?? join(".synex", "diagnostics", defaultName));
-        await writeFileAtomic(output, prettyJson(await createDiagnosticBundle(repositoryRoot, target, report)));
+        const runtimeEvidence = requestedRuntimeEvidence
+          ? await readJsonFile(resolveWithin(repositoryRoot, requestedRuntimeEvidence))
+          : undefined;
+        await writeFileAtomic(output, prettyJson(await createDiagnosticBundle(
+          repositoryRoot,
+          target,
+          report,
+          runtimeEvidence,
+        )));
         bundlePath = output.slice(repositoryRoot.length + 1).replaceAll("\\", "/");
-      } else if (optionString(parsed, "output")) {
-        throw new CliError("doctor --output requires --bundle.", 2);
       }
       if (json) printJson(io, bundlePath ? { ...report, bundle: bundlePath } : report);
       else {
@@ -366,16 +394,31 @@ export async function runCli(
       return report.status === "FAIL" ? 1 : 0;
     }
 
-    if (command === "compat" && subcommand === "scan") {
-      const target = resolveWithin(repositoryRoot, parsed.positionals[2] ?? ".");
-      const report = await scanCompatibility(repositoryRoot, target);
-      if (json) printJson(io, report);
-      else {
-        io.log(`Compatibility scan: ${report.filesScanned} Lua file(s).`);
-        for (const [framework, count] of Object.entries(report.signatureCounts)) io.log(`${framework}: ${count} signature(s).`);
-        io.log(report.disclaimer);
+    if (command === "compat") {
+      const result = await runCompatibilityCommand(
+        repositoryRoot,
+        subcommand ?? "status",
+        parsed.positionals.slice(2),
+        {
+          executionEvidence: optionString(parsed, "execution-evidence"),
+          runtimeEvidence: optionString(parsed, "runtime-evidence"),
+          output: optionString(parsed, "output"),
+          online: optionBoolean(parsed, "online"),
+          ...(optionString(parsed, "timeout") === null
+            ? {}
+            : { timeoutMs: Number(optionString(parsed, "timeout")) }),
+        },
+      );
+      const compatibilityOutput = optionString(parsed, "output");
+      if (compatibilityOutput && (result.exitCode === 0 || subcommand === "execute")) {
+        await writeFileAtomic(
+          resolveWithin(repositoryRoot, compatibilityOutput),
+          prettyJson(result.report),
+        );
       }
-      return 0;
+      if (json) printJson(io, result.report);
+      else printCompatibilityReport(io, result.report);
+      return result.exitCode;
     }
 
     if (command === "benchmark") {

@@ -34,7 +34,15 @@ const modules = [
   'server/saga_runtime.lua',
   'server/commands.lua',
   'server/bootstrap_discovery.lua',
+  'server/bootstrap_api_validation.lua',
+  'server/bootstrap_api_tracing.lua',
   'server/bootstrap_api.lua',
+  'server/bootstrap_diagnostics_shared.lua',
+  'server/bootstrap_diagnostics_runtime.lua',
+  'server/bootstrap_diagnostics_control_shared.lua',
+  'server/bootstrap_diagnostics_control_queries.lua',
+  'server/bootstrap_diagnostics_control_inspect.lua',
+  'server/bootstrap_diagnostics_control_security.lua',
   'server/bootstrap_diagnostics.lua',
   'server/bootstrap_restart.lua',
   'server/bootstrap_resource_events.lua',
@@ -72,6 +80,20 @@ test('identity, runtime persistence, and bootstrap use cohesive fixed manifest-l
     assert.ok(offset > previousRuntimeOffset, `${relativePath} has an invalid manifest load order`);
     previousRuntimeOffset = offset;
   }
+  let previousDiagnosticsOffset = -1;
+  for (const relativePath of [
+    'server/bootstrap_diagnostics_shared.lua',
+    'server/bootstrap_diagnostics_runtime.lua',
+    'server/bootstrap_diagnostics_control_shared.lua',
+    'server/bootstrap_diagnostics_control_queries.lua',
+    'server/bootstrap_diagnostics_control_inspect.lua',
+    'server/bootstrap_diagnostics_control_security.lua',
+    'server/bootstrap_diagnostics.lua',
+  ]) {
+    const offset = manifest.indexOf(`'${relativePath}'`);
+    assert.ok(offset > previousDiagnosticsOffset, `${relativePath} has an invalid manifest load order`);
+    previousDiagnosticsOffset = offset;
+  }
   assert.ok((await source('server/identity.lua')).split(/\r?\n/u).length <= 100);
   assert.ok((await source('server/bootstrap.lua')).split(/\r?\n/u).length <= 250);
 });
@@ -83,7 +105,7 @@ test('GetAPI facade categories and kernel exports preserve their public surface'
     api,
     /getRetentionPolicy\s*=\s*function\(\)[\s\S]*?'synex\.runtime\.read'[\s\S]*?foundation\.copy/u,
   );
-  const categories = [...api.matchAll(/facade\.([A-Za-z]+)\s*=\s*\{/gu)]
+  const categories = [...api.matchAll(/facade\.([A-Za-z]+)\s*=\s*(?:\{|factories\.)/gu)]
     .map((match) => match[1])
     .sort();
   assert.deepEqual(categories, [
@@ -92,7 +114,10 @@ test('GetAPI facade categories and kernel exports preserve their public surface'
     'Capabilities',
     'Characters',
     'Connections',
+    'ControlProviders',
+    'Database',
     'Diagnostics',
+    'DomainDeletions',
     'Events',
     'Hooks',
     'Idempotency',
@@ -107,6 +132,7 @@ test('GetAPI facade categories and kernel exports preserve their public surface'
     'Scheduler',
     'Services',
     'States',
+    'Tracing',
   ]);
   const exports = [...resourceEvents.matchAll(/platform\.export\('([^']+)'/gu)]
     .map((match) => match[1])

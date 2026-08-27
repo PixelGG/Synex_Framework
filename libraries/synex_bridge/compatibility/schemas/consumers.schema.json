@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:synex:compatibility:consumers:schema:1",
+  "title": "Synex bridge compatibility consumers",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schema", "kind", "defaultMode", "consumers"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "const": "./schemas/consumers.schema.json"
+    },
+    "schema": {
+      "type": "integer",
+      "const": 1
+    },
+    "kind": {
+      "type": "string",
+      "const": "synex-compatibility-consumers"
+    },
+    "defaultMode": {
+      "type": "string",
+      "const": "strict"
+    },
+    "consumers": {
+      "type": "array",
+      "maxItems": 512,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/consumer"
+      }
+    }
+  },
+  "$defs": {
+    "provider": {
+      "type": "string",
+      "enum": ["qb", "qbx", "esx"]
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["strict", "compat", "silent"]
+    },
+    "failurePolicy": {
+      "type": "string",
+      "enum": ["warn", "disable", "fail_start"]
+    },
+    "consumer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["resource", "provider", "profileId", "failurePolicy", "enabled"],
+      "properties": {
+        "resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+        },
+        "provider": {
+          "$ref": "#/$defs/provider"
+        },
+        "mode": {
+          "$ref": "#/$defs/mode"
+        },
+        "profileId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[a-z][a-z0-9_.:-]{0,95}$"
+        },
+        "failurePolicy": {
+          "$ref": "#/$defs/failurePolicy"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

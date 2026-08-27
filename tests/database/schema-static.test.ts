@@ -6,25 +6,103 @@ import { loadMigrations, migrationDirectories, repositoryRoot } from './harness.
 
 const runtimeFiles = {
   synex_groups: [
+    'server/cache.lua',
+    'server/validation.lua',
+    'server/domain/constants.lua',
+    'server/domain/lifecycle.lua',
+    'server/domain/graph.lua',
+    'server/domain/capabilities.lua',
+    'server/domain/policy.lua',
+    'server/domain/registry.lua',
+    'server/extension_registries.lua',
+    'server/domain/application_schema.lua',
     'server/foundation.lua',
     'server/outbox.lua',
     'server/service.lua',
+    'server/scheduler.lua',
+    'server/core_bootstrap.lua',
+    'server/json_runtime.lua',
+    'server/persistence/approved_operations.lua',
+    'server/persistence/capability_access.lua',
     'server/persistence.lua',
+    'server/persistence/organizations_shared.lua',
+    'server/persistence/organizations_read.lua',
+    'server/persistence/organizations_creation.lua',
+    'server/persistence/organizations_lifecycle.lua',
+    'server/persistence/organizations_types.lua',
+    'server/persistence/extension_registries.lua',
+    'server/persistence/organizations_structure.lua',
+    'server/persistence/organizations.lua',
+    'server/persistence/memberships_shared.lua',
+    'server/persistence/memberships_read.lua',
+    'server/persistence/memberships_invitations.lua',
+    'server/persistence/memberships_lifecycle.lua',
+    'server/persistence/memberships_access.lua',
+    'server/persistence/memberships_reporting.lua',
+    'server/persistence/memberships.lua',
+    'server/persistence/governance_shared.lua',
+    'server/persistence/governance_capabilities.lua',
+    'server/persistence/governance_capability_rules.lua',
+    'server/persistence/governance_policies.lua',
+    'server/persistence/governance_attribute_values.lua',
+    'server/persistence/governance_attributes.lua',
+    'server/persistence/governance_attribute_activation.lua',
+    'server/persistence/governance_definitions_capabilities.lua',
+    'server/persistence/governance_definitions_hierarchy.lua',
+    'server/persistence/governance_definitions_groups.lua',
+    'server/persistence/governance_definitions.lua',
+    'server/persistence/governance.lua',
+    'server/persistence/workflows_shared.lua',
+    'server/persistence/workflows_duty.lua',
+    'server/persistence/workflows_assignments.lua',
+    'server/persistence/workflows_applications.lua',
+    'server/persistence/workflows_proposals.lua',
+    'server/persistence/workflows.lua',
+    'server/persistence/diagnostics.lua',
+    'server/persistence/workers.lua',
     'server/persistence/observability.lua',
     'server/contracts.lua',
+    'server/runtime_registration.lua',
     'server/main.lua',
   ],
   synex_accounts: [
     'server/foundation.lua',
+    'server/json_runtime.lua',
+    'server/domain.lua',
+    'server/core_bootstrap.lua',
+    'server/operator_adapter.lua',
     'server/outbox.lua',
     'server/retention.lua',
     'server/service.lua',
+    'server/service_v2/runtime.lua',
+    'server/service_v2/catalog_accounts.lua',
+    'server/service_v2/transactions_holds.lua',
+    'server/service_v2/access_policy.lua',
+    'server/service_v2/integrity.lua',
+    'server/service_v2/guard.lua',
+    'server/service_v2.lua',
+    'server/lifecycle.lua',
     'server/persistence.lua',
+    'server/persistence/engine_shared.lua',
     'server/persistence/accounts.lua',
+    'server/persistence/accounts_v2.lua',
     'server/persistence/ledger.lua',
+    'server/persistence/transactions.lua',
+    'server/persistence/transaction_reads.lua',
     'server/persistence/holds.lua',
+    'server/persistence/holds_v2.lua',
     'server/persistence/access.lua',
+    'server/persistence/access_v2.lua',
+    'server/persistence/restrictions_v2.lua',
     'server/persistence/integrity.lua',
+    'server/persistence/integrity_behavior.lua',
+    'server/persistence/integrity_v2.lua',
+    'server/persistence/integrity_control.lua',
+    'server/persistence/observability_control.lua',
+    'server/persistence/observability_inspect.lua',
+    'server/persistence/observability.lua',
+    'server/persistence/lifecycle_groups.lua',
+    'server/persistence/lifecycle.lua',
     'server/contracts.lua',
     'server/main.lua',
   ],
@@ -52,7 +130,81 @@ function transactionBindings(runtime: string): Array<{ query: string; values: st
   for (const match of runtime.matchAll(pattern)) {
     bindings.push({ query: match[1] ?? match[2] ?? '', values: match[3] ?? '' });
   }
+  const directPattern = /tx\.(?:query|one|many|affected|insert)\s*\(\s*(?:\[\[((?:(?!\]\])[\s\S])*)\]\]|'((?:\\.|[^'])*)')\s*,\s*\{([^{}]*)\}\s*\)/gu;
+  for (const match of runtime.matchAll(directPattern)) {
+    bindings.push({ query: match[1] ?? match[2] ?? '', values: match[3] ?? '' });
+  }
   return bindings;
+}
+
+function withoutSqlStringLiterals(statement: string): string {
+  return statement.replace(/'(?:''|\\.|[^'])*'/gu, "''");
+}
+
+function countTopLevelLuaValues(values: string): number {
+  let depth = 0;
+  let quote: "'" | '"' | undefined;
+  let escaped = false;
+  let entryHasContent = false;
+  let count = 0;
+
+  for (const character of values) {
+    if (quote !== undefined) {
+      entryHasContent = true;
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === quote) {
+        quote = undefined;
+      }
+      continue;
+    }
+
+    if (character === "'" || character === '"') {
+      quote = character;
+      entryHasContent = true;
+    } else if (character === '(' || character === '[' || character === '{') {
+      depth += 1;
+      entryHasContent = true;
+    } else if (character === ')' || character === ']' || character === '}') {
+      assert.ok(depth > 0, 'Lua transaction values contain an unmatched closing delimiter');
+      depth -= 1;
+      entryHasContent = true;
+    } else if (character === ',' && depth === 0) {
+      assert.ok(entryHasContent, 'Lua transaction values contain an empty positional entry');
+      count += 1;
+      entryHasContent = false;
+    } else if (!/\s/u.test(character)) {
+      entryHasContent = true;
+    }
+  }
+
+  assert.equal(quote, undefined, 'Lua transaction values contain an unterminated string');
+  assert.equal(depth, 0, 'Lua transaction values contain an unterminated delimiter');
+  return count + (entryHasContent ? 1 : 0);
+}
+
+function assertProcedureCycle(
+  statements: string[],
+  offset: number,
+  procedureName: string,
+  relativePath: string,
+): void {
+  assert.equal(statements[offset], `DROP PROCEDURE IF EXISTS \`${procedureName}\`;`, relativePath);
+  assert.match(
+    statements[offset + 1] ?? '',
+    new RegExp('^CREATE PROCEDURE `' + procedureName + '`\\(\\)', 'u'),
+    relativePath,
+  );
+  assert.equal(statements[offset + 2], `CALL \`${procedureName}\`();`, relativePath);
+  assert.equal(statements[offset + 3], `DROP PROCEDURE IF EXISTS \`${procedureName}\`;`, relativePath);
+  assert.match(
+    statements[offset + 1] ?? '',
+    /`information_schema`\.`(?:TABLES|COLUMNS|STATISTICS|TABLE_CONSTRAINTS)`/u,
+    relativePath,
+  );
+  assert.match(statements[offset + 1] ?? '', /SIGNAL SQLSTATE '45000'/u, relativePath);
 }
 
 test('migrations are deterministic, forward ordered, and split exactly as the core runner expects', async () => {
@@ -70,6 +222,169 @@ test('migrations are deterministic, forward ordered, and split exactly as the co
     const tables = createdTables(migration.contents);
     const createStatements = migration.statements.filter((statement) => statement.startsWith('CREATE TABLE IF NOT EXISTS'));
     assert.equal(createStatements.length, tables.length, `${migration.relativePath} requires one split statement per table`);
+    if (migration.directory === 'resources/synex_accounts/migrations'
+      && Number.parseInt(migration.file.slice(0, 3), 10) >= 7
+      && Number.parseInt(migration.file.slice(0, 3), 10) <= 17) {
+      for (const statement of migration.statements) {
+        const structuralSql = withoutSqlStringLiterals(statement);
+        assert.match(
+          statement,
+          /^(?:CREATE TABLE IF NOT EXISTS|CREATE (?:UNIQUE )?INDEX IF NOT EXISTS|ALTER TABLE|UPDATE|INSERT(?: IGNORE)? INTO|DROP INDEX IF EXISTS) /u,
+          migration.relativePath,
+        );
+        if (statement.startsWith('CREATE TABLE IF NOT EXISTS')) {
+          assert.match(statement, /ENGINE=InnoDB/u, migration.relativePath);
+        }
+        if (statement.startsWith('DROP INDEX')) {
+          assert.ok(new Set([
+            'DROP INDEX IF EXISTS `uq_account_operations_key` ON `synex_account_operations`;',
+            'DROP INDEX IF EXISTS `uq_account_operations_scope` ON `synex_account_operations`;',
+            'DROP INDEX IF EXISTS `idx_account_operations_caller_state` ON `synex_account_operations`;',
+          ]).has(statement), `${migration.relativePath} contains an unexpected destructive index change`);
+        }
+        assert.doesNotMatch(
+          structuralSql,
+          /\b(?:DROP\s+(?:TABLE|COLUMN)|TRUNCATE|RENAME\s+TABLE|DELETE\s+FROM)\b/iu,
+          `${migration.relativePath} must preserve financial data`,
+        );
+        assert.doesNotMatch(structuralSql, /:[A-Za-z_][A-Za-z0-9_]*/u, `${migration.relativePath} uses a named placeholder`);
+        assert.doesNotMatch(structuralSql, /@[A-Za-z_][A-Za-z0-9_]*/u, `${migration.relativePath} uses a named placeholder`);
+      }
+      continue;
+    }
+    if (migration.directory === 'resources/synex_groups/migrations'
+      && migration.file === '024_group_deletion_lifecycle.sql') {
+      assert.equal(migration.statements.length, 9, migration.relativePath);
+      assertProcedureCycle(
+        migration.statements,
+        0,
+        'synex_groups_migrate_024_group_deletion_lifecycle',
+        migration.relativePath,
+      );
+      assert.match(
+        migration.statements[4] ?? '',
+        /^CREATE TABLE IF NOT EXISTS `synex_group_deletion_requests`/u,
+        migration.relativePath,
+      );
+      assertProcedureCycle(
+        migration.statements,
+        5,
+        'synex_groups_verify_024_group_deletion_lifecycle',
+        migration.relativePath,
+      );
+      continue;
+    }
+    if (migration.directory === 'resources/synex_groups/migrations'
+      && migration.file === '025_dynamic_group_creation_approvals.sql') {
+      assert.equal(migration.statements.length, 13, migration.relativePath);
+      assertProcedureCycle(
+        migration.statements,
+        0,
+        'synex_groups_migrate_025_creation_policy',
+        migration.relativePath,
+      );
+      for (const [offset, table] of [
+        [4, 'synex_group_creation_requests'],
+        [5, 'synex_group_creation_approvals'],
+        [6, 'synex_group_slug_reservations'],
+      ] as const) {
+        assert.match(
+          migration.statements[offset] ?? '',
+          new RegExp('^CREATE TABLE IF NOT EXISTS `' + table + '`', 'u'),
+          migration.relativePath,
+        );
+      }
+      assert.match(migration.statements[7] ?? '', /^INSERT IGNORE INTO `synex_group_slug_reservations`/u);
+      assert.match(migration.statements[8] ?? '', /^INSERT IGNORE INTO `synex_group_slug_reservations`/u);
+      assertProcedureCycle(
+        migration.statements,
+        9,
+        'synex_groups_verify_025_creation_approvals',
+        migration.relativePath,
+      );
+      continue;
+    }
+    if (migration.directory === 'resources/synex_groups/migrations'
+      && migration.file === '026_group_attribute_scopes.sql') {
+      assert.equal(migration.statements.length, 8, migration.relativePath);
+      assertProcedureCycle(
+        migration.statements,
+        0,
+        'synex_groups_migrate_026_group_attribute_scopes',
+        migration.relativePath,
+      );
+      assertProcedureCycle(
+        migration.statements,
+        4,
+        'synex_groups_verify_026_group_attribute_scopes',
+        migration.relativePath,
+      );
+      continue;
+    }
+    if (migration.directory === 'resources/synex_groups/migrations'
+      && migration.file === '027_identifier_contract_consistency.sql') {
+      assert.equal(migration.statements.length, 4, migration.relativePath);
+      assertProcedureCycle(
+        migration.statements,
+        0,
+        'synex_groups_migrate_027_identifier_contract_consistency',
+        migration.relativePath,
+      );
+      continue;
+    }
+    if (migration.directory === 'resources/synex_groups/migrations'
+      && migration.file === '028_membership_transition_policies.sql') {
+      assert.equal(migration.statements.length, 5, migration.relativePath);
+      assert.match(
+        migration.statements[0] ?? '',
+        /^CREATE TABLE IF NOT EXISTS `synex_group_membership_transition_policies`/u,
+        migration.relativePath,
+      );
+      assertProcedureCycle(
+        migration.statements,
+        1,
+        'synex_groups_verify_028_membership_transition_policies',
+        migration.relativePath,
+      );
+      continue;
+    }
+    if (migration.directory === 'resources/synex_groups/migrations' && new Set([
+      '008_public_id_compatibility.sql',
+      '009_contract_storage_compatibility.sql',
+      '010_external_resource_ownership.sql',
+      '011_mutation_entity_public_ids.sql',
+      '012_group_history_scope.sql',
+      '013_contract_text_bounds.sql',
+      '014_character_anonymization_ids.sql',
+      '015_primary_membership_public_ids.sql',
+      '017_static_definition_targets.sql',
+      '019_definition_applied_snapshots.sql',
+      '020_capability_delegability.sql',
+      '021_persistent_extension_registries.sql',
+      '022_workflow_lifecycle_expiry.sql',
+      '023_dynamic_type_creation_policies.sql',
+      '029_assignment_member_active_counts.sql',
+      '030_membership_workflow_entities.sql',
+      '032_character_reference_contract.sql',
+    ]).has(migration.file)) {
+      const procedureOffset = migration.file === '009_contract_storage_compatibility.sql'
+        ? 4
+        : migration.file === '023_dynamic_type_creation_policies.sql' ? 2 : 0;
+      const procedureName = `synex_groups_migrate_${migration.file.slice(0, -'.sql'.length)}`;
+      assert.equal(migration.statements.length, procedureOffset + 4, migration.relativePath);
+      assert.ok(migration.statements.slice(0, procedureOffset).every(
+        (statement) => statement.startsWith('CREATE TABLE IF NOT EXISTS'),
+      ));
+      assert.equal(migration.statements[procedureOffset], `DROP PROCEDURE IF EXISTS \`${procedureName}\`;`);
+      assert.match(migration.statements[procedureOffset + 1] ?? '', new RegExp(
+        '^CREATE PROCEDURE `' + procedureName + '`\\(\\)', 'u',
+      ));
+      assert.equal(migration.statements[procedureOffset + 2], `CALL \`${procedureName}\`();`);
+      assert.equal(migration.statements[procedureOffset + 3], `DROP PROCEDURE IF EXISTS \`${procedureName}\`;`);
+      assert.match(migration.statements[procedureOffset + 1] ?? '', /`information_schema`\.`(?:TABLES|COLUMNS|STATISTICS|TABLE_CONSTRAINTS)`/u);
+      assert.match(migration.statements[procedureOffset + 1] ?? '', /SIGNAL SQLSTATE '45000'/u);
+      continue;
+    }
     if (migration.file === '022_idempotency_capacity.sql') {
       assert.equal(migration.statements.length, 7);
       assert.ok(migration.statements.slice(0, 3).every(
@@ -103,6 +418,50 @@ test('migrations are deterministic, forward ordered, and split exactly as the co
       assert.match(migration.statements[5] ?? '', /^DROP PROCEDURE IF EXISTS/u);
       continue;
     }
+    if (migration.directory === 'core/synex_core/migrations'
+      && migration.file === '027_domain_primitives.sql') {
+      assert.equal(migration.statements.length, 15);
+      assert.ok(migration.statements.slice(0, 11).every((statement) =>
+        statement.startsWith('CREATE TABLE IF NOT EXISTS')
+          || statement.startsWith('INSERT INTO')));
+      assertProcedureCycle(
+        migration.statements,
+        11,
+        'synex_migrate_027_domain_deletion_capacity',
+        migration.relativePath,
+      );
+      continue;
+    }
+    if (migration.directory === 'resources/synex_entities/migrations'
+      && migration.file === '002_entity_lifecycle_authority.sql') {
+      assert.equal(migration.statements.length, 6, migration.relativePath);
+      assert.match(migration.statements[0] ?? '', /^ALTER TABLE `synex_entities`/u);
+      assert.match(migration.statements[1] ?? '', /^ALTER TABLE `synex_entities`/u);
+      assert.match(migration.statements[2] ?? '', /^CREATE UNIQUE INDEX IF NOT EXISTS/u);
+      assert.equal(
+        migration.statements[3],
+        'DROP INDEX IF EXISTS `uq_synex_entities_persistent_key` ON `synex_entities`;',
+      );
+      assert.ok(migration.statements.slice(4).every(
+        (statement) => statement.startsWith('CREATE INDEX IF NOT EXISTS'),
+      ));
+      for (const statement of migration.statements) {
+        assert.doesNotMatch(
+          withoutSqlStringLiterals(statement),
+          /\b(?:DROP\s+(?:TABLE|COLUMN)|TRUNCATE|RENAME\s+TABLE|DELETE\s+FROM)\b/iu,
+          `${migration.relativePath} must preserve entity definitions and tombstones`,
+        );
+      }
+      continue;
+    }
+    if (migration.directory === 'resources/synex_entities/migrations'
+      && (migration.file === '003_entity_extensions.sql'
+        || migration.file === '004_entity_cluster_recovery.sql')) {
+      assert.ok(migration.statements.every((statement) =>
+        statement.startsWith('CREATE TABLE IF NOT EXISTS')));
+      assert.ok(migration.statements.every((statement) => /ENGINE=InnoDB/u.test(statement)));
+      continue;
+    }
     if (new Set([
       '014_runtime_owner_attribution.sql',
       '015_character_reconciliation_fencing.sql',
@@ -122,13 +481,40 @@ test('migrations are deterministic, forward ordered, and split exactly as the co
       continue;
     }
     for (const statement of migration.statements) {
+      const structuralSql = withoutSqlStringLiterals(statement);
       assert.match(statement, /^(?:CREATE TABLE IF NOT EXISTS `[a-z0-9_]+`|INSERT INTO `[a-z0-9_]+`)/u, migration.relativePath);
       if (statement.startsWith('CREATE TABLE IF NOT EXISTS')) assert.match(statement, /ENGINE=InnoDB/u, migration.relativePath);
       assert.doesNotMatch(statement, /\b(?:DROP|TRUNCATE|RENAME)\b/iu, `${migration.relativePath} must be forward-only`);
-      assert.doesNotMatch(statement, /:[A-Za-z_][A-Za-z0-9_]*/u, `${migration.relativePath} uses a named placeholder`);
-      assert.doesNotMatch(statement, /@[A-Za-z_][A-Za-z0-9_]*/u, `${migration.relativePath} uses a named placeholder`);
+      assert.doesNotMatch(structuralSql, /:[A-Za-z_][A-Za-z0-9_]*/u, `${migration.relativePath} uses a named placeholder`);
+      assert.doesNotMatch(structuralSql, /@[A-Za-z_][A-Za-z0-9_]*/u, `${migration.relativePath} uses a named placeholder`);
     }
   }
+});
+
+test('Groups workflow expiry migration is manifest-owned and keeps open-application scans indexed', async () => {
+  const migrations = await loadMigrations();
+  const migration = migrations.find((entry) =>
+    entry.directory === 'resources/synex_groups/migrations'
+      && entry.file === '022_workflow_lifecycle_expiry.sql');
+  assert.ok(migration);
+  assert.match(migration.contents, /`expires_at` DATETIME\(6\) NOT NULL/u);
+  assert.match(
+    migration.contents,
+    /idx_group_applications_expiry` \(`status`, `expires_at`, `id`\)/u,
+  );
+  assert.match(
+    migration.contents,
+    /`SEQ_IN_INDEX` = 2 AND `COLUMN_NAME` = 'expires_at'[\s\S]*?`SEQ_IN_INDEX` = 3 AND `COLUMN_NAME` = 'id'/u,
+  );
+  assert.match(migration.contents, /'withdrawn', 'expired'/u);
+  const manifest = JSON.parse(await readFile(
+    path.join(repositoryRoot, 'resources/synex_groups/synex.resource.json'),
+    'utf8',
+  )) as ResourceManifest;
+  assert.ok(manifest.migrations.some((entry) =>
+    entry.id === '022_workflow_lifecycle_expiry'
+      && entry.path === 'migrations/022_workflow_lifecycle_expiry.sql'
+      && entry.transactional === false));
 });
 
 test('nullable default metadata gates accept both MySQL and MariaDB SQL NULL representations', async () => {
@@ -180,36 +566,64 @@ test('domain outbox dispatchers use bounded owner-aware claims and capability-ga
     const directory = path.join(repositoryRoot, 'resources', resourceName);
     const outbox = await readFile(path.join(directory, 'server', 'outbox.lua'), 'utf8');
     const main = await readFile(path.join(directory, 'server', 'main.lua'), 'utf8');
+    const workerRuntime = resourceName === 'synex_groups'
+      ? await readFile(path.join(directory, 'server', 'scheduler.lua'), 'utf8')
+      : main;
     const manifest = JSON.parse(await readFile(path.join(directory, 'synex.resource.json'), 'utf8')) as {
       capabilities: { request: string[] };
     };
     if (resourceName === 'synex_accounts') {
-      assert.deepEqual(manifest.capabilities.request, ['synex.events.durable', 'synex.runtime.read']);
+      assert.deepEqual(manifest.capabilities.request, [
+        'synex.audit.append',
+        'synex.capabilities.delegate',
+        'synex.deletions.provider',
+        'synex.events.durable',
+        'synex.metrics.write',
+        'synex.runtime.read',
+        'synex.control.provider.register',
+      ]);
     } else {
-      assert.deepEqual(manifest.capabilities.request, ['synex.events.durable']);
+      assert.deepEqual(manifest.capabilities.request, [
+        'synex.audit.append',
+        'synex.events.durable',
+        'synex.identity.read',
+        'synex.permissions.read',
+        'synex.deletions.read',
+        'synex.deletions.manage',
+        'synex.deletions.provider',
+        'synex.database.read',
+        'synex.database.write',
+        'synex.database.transaction',
+        'synex.database.maintenance',
+        'synex.control.provider.register',
+      ]);
     }
     assert.match(outbox, new RegExp('UPDATE `' + tableName + '`[\\s\\S]*?`locked_by` = \\?', 'u'));
     assert.match(outbox, /`locked_until` = TIMESTAMPADD\(SECOND, \?, CURRENT_TIMESTAMP\(6\)\)/u);
     assert.match(outbox, /`attempts` = `attempts` \+ 1/u);
     assert.match(outbox, /WHERE `state` = 'pending' AND `available_at` <= CURRENT_TIMESTAMP\(6\)[\s\S]*?ORDER BY `id` ASC LIMIT \?/u);
-    assert.match(outbox, /WHERE `state` = 'publishing' AND `locked_by` = \?[\s\S]*?ORDER BY `id` ASC LIMIT \?/u);
+    assert.match(
+      outbox,
+      /WHERE (?:`[a-z_]+`\.)?`state` = 'publishing' AND (?:`[a-z_]+`\.)?`locked_by` = \?[\s\S]*?ORDER BY (?:`[a-z_]+`\.)?`id` ASC LIMIT \?/u,
+    );
     assert.match(outbox, /`locked_until` IS NULL OR `locked_until` <= CURRENT_TIMESTAMP\(6\)/u);
     assert.match(outbox, /MAXIMUM_PAYLOAD_BYTES = 32768/u);
     assert.match(outbox, /MAXIMUM_BATCH_SIZE = 50/u);
     assert.match(outbox, /MAXIMUM_ATTEMPTS = 10/u);
     assert.match(outbox, /failed == 0/u);
     assert.match(outbox, /OUTBOX_SUBSCRIBER_FAILED/u);
-    assert.match(main, /api\.Ids\.next\('outbox_claim'\)/u);
-    assert.match(main, /api\.Events\.publishOutbox\(topic, payload/u);
-    assert.match(main, /eventId = options\.eventId/u);
-    assert.match(main, /aggregateId = options\.aggregateId/u);
-    assert.match(main, /schemaVersion = options\.schemaVersion/u);
-    assert.match(main, new RegExp(`name = '${resourceName}\\.outbox_dispatcher'`, 'u'));
+    assert.match(workerRuntime, /api\.Ids\.next\('outbox_claim'\)/u);
+    assert.match(workerRuntime, /api\.Events\.publishOutbox\(topic, payload/u);
+    const publicationOptions = resourceName === 'synex_groups' ? 'publishOptions' : 'options';
+    assert.match(workerRuntime, new RegExp(`eventId = ${publicationOptions}\\.eventId`, 'u'));
+    assert.match(workerRuntime, new RegExp(`aggregateId = ${publicationOptions}\\.aggregateId`, 'u'));
+    assert.match(workerRuntime, new RegExp(`schemaVersion = ${publicationOptions}\\.schemaVersion`, 'u'));
+    assert.match(workerRuntime, new RegExp(`name = '${resourceName}\\.outbox_dispatcher'`, 'u'));
     assert.doesNotMatch(outbox, resourceName === 'synex_groups' ? /synex_account_/u : /synex_group_/u);
   }
 });
 
-test('the account schema encodes paired postings and has no directly mutable account balance', async () => {
+test('the account schema encodes bounded multi-leg postings and has no directly mutable balance', async () => {
   const migrations = await loadMigrations();
   const accountSql = migrations
     .filter((migration) => migration.directory === 'resources/synex_accounts/migrations')
@@ -218,9 +632,12 @@ test('the account schema encodes paired postings and has no directly mutable acc
   const accountsTable = accountSql.match(/CREATE TABLE IF NOT EXISTS `synex_accounts`([\s\S]*?)ENGINE=InnoDB/u)?.[1];
   assert.ok(accountsTable);
   assert.doesNotMatch(accountsTable, /`(?:booked_|reserved_|available_)?balance(?:_minor)?`/u);
-  assert.match(accountSql, /CHECK \(`debit_minor` = `credit_minor`\)/u);
-  assert.match(accountSql, /CHECK \(`debit_account_id` <> `credit_account_id`\)/u);
-  assert.match(accountSql, /UNIQUE KEY `uq_ledger_postings_transaction` \(`transaction_id`\)/u);
+  assert.match(accountSql, /CREATE TABLE IF NOT EXISTS `synex_ledger_entries`/u);
+  assert.match(accountSql, /AND `amount_minor` <> 0\)/u);
+  assert.match(accountSql, /UNIQUE KEY `uq_ledger_entries_transaction_sequence` \(`transaction_id`, `sequence_no`\)/u);
+  assert.match(accountSql, /UNIQUE KEY `uq_ledger_entries_transaction_account` \(`transaction_id`, `account_id`\)/u);
+  assert.match(accountSql, /`posting_model` = 'multi_leg' AND `entry_count` BETWEEN 2 AND 16/u);
+  assert.match(accountSql, /COALESCE\(SUM\(`entry`\.`amount_minor`\), 1\) <> 0/u);
   assert.match(accountSql, /UNIQUE KEY `uq_account_hold_events_terminal` \(`hold_id`, `terminal_marker`\)/u);
   assert.match(accountSql, /UNIQUE KEY `uq_ledger_reversals_original` \(`original_transaction_id`\)/u);
   assert.match(accountSql, /UNIQUE KEY `uq_ledger_reversals_reversal` \(`reversal_transaction_id`\)/u);
@@ -237,11 +654,28 @@ test('the account schema encodes paired postings and has no directly mutable acc
 
   const runtime = await readResourceRuntime('synex_accounts');
   assert.doesNotMatch(runtime, /UPDATE\s+`synex_accounts`[\s\S]{0,160}\bbalance/iu);
-  assert.doesNotMatch(runtime, /UPDATE\s+`synex_ledger_(?:transactions|postings)`/iu);
-  assert.doesNotMatch(runtime, /DELETE\s+FROM\s+`synex_(?:ledger_transactions|ledger_postings|financial_transaction_archive)`/iu);
-  for (const operation of ['transfer', 'debit', 'credit', 'mint', 'burn']) {
-    assert.match(runtime, new RegExp(`synex\\.accounts\\.${operation}`, 'u'));
+  const ledgerUpdates = [...runtime.matchAll(
+    /UPDATE\s+`synex_ledger_(?:transactions|postings|entries)`\s+SET\s+([\s\S]*?)\s+WHERE/giu,
+  )];
+  assert.ok(ledgerUpdates.length > 0, 'character/group deletion must anonymize ledger provenance');
+  for (const update of ledgerUpdates) {
+    assert.match(
+      (update[1] ?? '').trim(),
+      /^`(?:actor_ref|reference_id)` = \?$/u,
+      'immutable ledger updates may only anonymize provenance references',
+    );
   }
+  assert.doesNotMatch(runtime, /DELETE\s+FROM\s+`synex_(?:ledger_transactions|ledger_postings|ledger_entries|financial_transaction_archive(?:_v2)?|financial_entry_archive_v2)`/iu);
+  const contracts = JSON.parse(await readFile(
+    path.join(repositoryRoot, 'resources/synex_accounts/accounts.contracts.json'),
+    'utf8',
+  )) as { contracts: Array<{ name: string; network: string }> };
+  const contractNames = new Set(contracts.contracts.map((contract) => contract.name));
+  for (const operation of ['transfer', 'debit', 'credit', 'mint', 'burn']) {
+    assert.ok(contractNames.has(`synex.accounts.${operation}`));
+  }
+  assert.ok(contractNames.has('synex.accounts.post'));
+  assert.ok(contracts.contracts.every((contract) => contract.network === 'none'));
   assert.match(runtime, /api\.RPC\.registerServer/u);
   assert.doesNotMatch(runtime, /registerNetwork/u);
   assert.doesNotMatch(runtime, /exports\(['"](?:Transfer|Debit|Credit|Mint|Burn|CreateHold|CaptureHold|ReleaseHold)['"]/u);
@@ -274,12 +708,12 @@ test('retention archives are self-contained, append-only mirrors with bounded wo
   assert.match(lifecycle, /defaultConfig\.retention\.audit\.mode == 'archive'/u);
   assert.match(lifecycle, /'core\.retention\.audit_archive'/u);
   assert.match(accountMain, /api\.Runtime\.getRetentionPolicy\(\)/u);
-  assert.match(accountMain, /retentionPolicy\.financial\.mode == 'archive'/u);
-  assert.match(accountMain, /name = 'synex_accounts\.retention\.financial_archive'/u);
-  assert.match(accountMain, /sourceRowsDeleted = report\.sourceRowsDeleted/u);
+  assert.match(accountMain, /if policy\.mode == 'archive' then/u);
+  assert.match(accountMain, /name = 'synex_accounts\.financial_retention'/u);
+  assert.match(accountRetention, /sourceRowsDeleted = 0/u);
 });
 
-test('group grades, deny precedence, primary selection, and cache invalidation stay relational', async () => {
+test('group grades, deny precedence, typed primary selection, and synchronous rule evaluation stay relational', async () => {
   const migrations = await loadMigrations();
   const groupSql = migrations
     .filter((migration) => migration.directory === 'resources/synex_groups/migrations')
@@ -290,6 +724,7 @@ test('group grades, deny precedence, primary selection, and cache invalidation s
     'synex_group_grade_capabilities',
     'synex_group_membership_grades',
     'synex_group_primary_memberships',
+    'synex_group_primary_memberships_by_type',
     'synex_group_read_model_versions',
   ]) assert.ok(groupSql.includes('CREATE TABLE IF NOT EXISTS `' + table + '`'), table);
   assert.match(groupSql, /CHECK \(`effect` IN \('allow', 'deny'\)\)/u);
@@ -297,11 +732,16 @@ test('group grades, deny precedence, primary selection, and cache invalidation s
   assert.match(groupSql, /CHECK \(`model_version` > 0\)/u);
 
   const runtime = await readResourceRuntime('synex_groups');
-  const primaryMutation = runtime.match(/function port:setPrimaryMembership[\s\S]*?function port:getReadModel/u)?.[0] ?? '';
+  const primaryMutation = runtime.match(/function handlers\.execute\.members_set_primary[\s\S]*?\nend/u)?.[0] ?? '';
   assert.ok(primaryMutation.length > 0);
   assert.doesNotMatch(primaryMutation, /(?:UPDATE|DELETE FROM)\s+`synex_group_memberships`/iu);
-  assert.match(primaryMutation, /UPDATE `synex_group_read_model_versions`/u);
-  assert.match(runtime, /allowed and not denied/u);
+  assert.match(primaryMutation, /synex_group_primary_memberships_by_type/u);
+  assert.match(runtime, /requireCurrentApi\('Permissions', 'evaluateRules'\)/u);
+  assert.match(runtime, /Foundation\.isCallable\(api\.Permissions\.evaluateRules\)/u);
+  assert.match(runtime, /pcall\(\s*coreEvaluateRules,\s*input\.capability,\s*candidates\)/u);
+  assert.match(runtime, /result\.allowed = result\.matchedAllows > 0 and not result\.denied/u);
+  assert.match(runtime, /if coreResult\.denied ~= result\.denied or coreResult\.allowed ~= result\.allowed then/u);
+  assert.doesNotMatch(runtime, /synex_group_rbac_sync_state|desired_revision/u);
 });
 
 test('domain resources do not hide caller identity behind convenience exports', async () => {
@@ -313,64 +753,58 @@ test('domain resources do not hide caller identity behind convenience exports', 
   }
 });
 
-test('mutable domain methods are exposed only through Core RPC', async () => {
+test('domain methods are exposed only through guarded Core service and RPC registrations', async () => {
   const groupsRuntime = await readResourceRuntime('synex_groups');
   const accountsRuntime = await readResourceRuntime('synex_accounts');
-  const groupsService = groupsRuntime.match(/api\.Services\.provide\(\{([\s\S]*?)\n\}\)/u)?.[1] ?? '';
-  const accountsService = accountsRuntime.match(/api\.Services\.provide\(\{([\s\S]*?)\n\}\)/u)?.[1] ?? '';
-  for (const method of [
-    'create', 'add_membership', 'change_membership', 'remove_membership',
-    'create_grade', 'set_grade_capability', 'set_primary_membership',
-  ]) {
-    assert.doesNotMatch(groupsService, new RegExp(`\\b${method}\\s*=`, 'u'));
-  }
-  for (const method of [
-    'register_currency',
-    'create',
-    'transfer',
-    'debit',
-    'credit',
-    'mint',
-    'burn',
-    'create_hold',
-    'capture_hold',
-    'release_hold',
-    'reverse',
-    'create_access_role',
-    'grant_access',
-    'revoke_access',
-    'run_reconciliation',
-  ]) {
-    assert.doesNotMatch(accountsService, new RegExp(`\\b${method}\\s*=`, 'u'));
-  }
-  assert.match(groupsService, /get\s*=\s*methods\.get/u);
-  assert.match(groupsService, /get_read_model\s*=\s*methods\.get_read_model/u);
-  assert.match(groupsService, /check_capability\s*=\s*methods\.check_capability/u);
-  assert.match(groupsService, /list_subject_memberships\s*=\s*methods\.list_subject_memberships/u);
-  assert.match(groupsService, /get_control_summary\s*=\s*methods\.get_control_summary/u);
-  assert.equal((groupsService.match(/['"]synex\.groups\.read['"]/gu) ?? []).length, 5);
-  assert.match(accountsService, /get_snapshot\s*=\s*methods\.get_snapshot/u);
-  assert.match(accountsService, /get_hold\s*=\s*methods\.get_hold/u);
-  assert.match(accountsService, /get_access\s*=\s*methods\.get_access/u);
-  assert.match(accountsService, /get_integrity\s*=\s*methods\.get_integrity/u);
-  assert.match(accountsService, /list_owner_accounts\s*=\s*methods\.list_owner_accounts/u);
-  assert.equal((accountsService.match(/['"]synex\.accounts\.read['"]/gu) ?? []).length, 3);
-  assert.match(accountsService, /get_access\s*=\s*['"]synex\.accounts\.access\.read['"]/u);
-  assert.match(accountsService, /get_integrity\s*=\s*['"]synex\.accounts\.integrity\.read['"]/u);
+  assert.match(groupsRuntime, /api\.Services\.provide\(options\.serviceDefinition\(binding\)\)/u);
+  assert.match(groupsRuntime, /serviceDefinition\(binding, coreRegistration\)/u);
+  assert.match(groupsRuntime, /serviceMethods\[name\] = registration:guard\(binding, handler\)/u);
+  assert.match(groupsRuntime, /capabilities\[name\] = definition\.capability/u);
+  assert.match(groupsRuntime, /api\.RPC\.registerServer/u);
+  assert.match(groupsRuntime, /api\.RPC\.registerNetwork/u);
+  assert.match(groupsRuntime, /'UNHEALTHY'/u);
+  assert.match(groupsRuntime, /'HEALTHY'/u);
+  assert.doesNotMatch(groupsRuntime, /\bexports\s*\(/u);
+  assert.match(accountsRuntime, /loadContractDefinitions\(rawCatalog, decode\)/u);
+  assert.match(accountsRuntime, /for _, definition in ipairs\(definitions\) do/u);
+  assert.match(accountsRuntime, /serviceMethods\[methodName\] = coreRegistration:guard/u);
+  assert.match(accountsRuntime, /capabilities\[methodName\] = definition\.capability/u);
+  assert.match(accountsRuntime, /api\.Services\.provide\(options\.serviceDefinition\(binding\)\)/u);
+  assert.match(accountsRuntime, /api\.RPC\.registerServer\(definition,/u);
+  assert.doesNotMatch(accountsRuntime, /api\.RPC\.registerNetwork/u);
+  assert.doesNotMatch(accountsRuntime, /\bexports\s*\(/u);
 });
 
-test('all Foundation contracts remain server-only and mutation contracts are idempotent', async () => {
+test('Foundation mutations remain server-only and the one Groups self projection is explicit', async () => {
   for (const resourceName of ['synex_groups', 'synex_accounts'] as const) {
     const source = JSON.parse(await readFile(
       path.join(repositoryRoot, 'resources', resourceName, `${resourceName.slice('synex_'.length)}.contracts.json`),
       'utf8',
-    )) as { contracts: Array<{ name: string; network: string; idempotent?: boolean; errors: string[] }> };
-    assert.ok(source.contracts.every((contract) => contract.network === 'none'));
+    )) as { contracts: Array<{
+      name: string;
+      network: string;
+      idempotent?: boolean;
+      errors: string[];
+      input: { required?: string[] };
+    }> };
+    const networkContracts = source.contracts.filter((contract) => contract.network !== 'none');
+    if (resourceName === 'synex_groups') {
+      assert.deepEqual(
+        networkContracts.map((contract) => contract.name),
+        ['synex.groups.self.snapshot'],
+      );
+      assert.equal(networkContracts[0]?.network, 'client-to-server');
+    } else {
+      assert.deepEqual(networkContracts, []);
+    }
     for (const contract of source.contracts) {
-      const readOnly = /\.(?:get|get_snapshot|get_hold|get_read_model|get_access|get_integrity|check_capability)$/u.test(contract.name);
-      if (!readOnly) {
+      const mutation = contract.input.required?.includes('idempotency_key') === true;
+      if (mutation) {
+        assert.equal(contract.network, 'none', contract.name);
         assert.equal(contract.idempotent, true, contract.name);
         assert.ok(contract.errors.includes('OPERATION_IN_PROGRESS'), contract.name);
+      } else {
+        assert.notEqual(contract.idempotent, true, contract.name);
       }
     }
   }
@@ -378,11 +812,18 @@ test('all Foundation contracts remain server-only and mutation contracts are ide
 
 test('new Foundation contracts use the exact privileged capability split', async () => {
   const expected = new Map<string, string>([
-    ['synex.groups.create_grade', 'synex.groups.grades.manage'],
-    ['synex.groups.set_grade_capability', 'synex.groups.grades.manage'],
-    ['synex.groups.set_primary_membership', 'synex.groups.memberships.primary'],
-    ['synex.groups.get_read_model', 'synex.groups.read'],
-    ['synex.groups.check_capability', 'synex.groups.read'],
+    ['synex.groups.types.register', 'synex.groups.types.manage'],
+    ['synex.groups.members.set_grade', 'synex.groups.grades.manage'],
+    ['synex.groups.members.set_primary', 'synex.groups.members.primary'],
+    ['synex.groups.compatibility.set_primary_grade', 'synex.groups.compatibility.set_primary_grade'],
+    ['synex.groups.grades.create', 'synex.groups.grades.manage'],
+    ['synex.groups.grades.update', 'synex.groups.grades.manage'],
+    ['synex.groups.roles.create', 'synex.groups.roles.manage'],
+    ['synex.groups.roles.assign', 'synex.groups.roles.manage'],
+    ['synex.groups.capabilities.check', 'synex.groups.read'],
+    ['synex.groups.capabilities.explain', 'synex.groups.read'],
+    ['synex.groups.directory.list', 'synex.groups.directory.read'],
+    ['synex.groups.history.list', 'synex.groups.history.read'],
     ['synex.accounts.reverse', 'synex.accounts.reverse'],
     ['synex.accounts.create_access_role', 'synex.accounts.access.manage'],
     ['synex.accounts.grant_access', 'synex.accounts.access.manage'],
@@ -392,13 +833,11 @@ test('new Foundation contracts use the exact privileged capability split', async
     ['synex.accounts.get_integrity', 'synex.accounts.integrity.read'],
   ]);
   const seen = new Set<string>();
-  const runtimes = new Map<string, string>();
   for (const resourceName of ['synex_groups', 'synex_accounts'] as const) {
     const source = JSON.parse(await readFile(
       path.join(repositoryRoot, 'resources', resourceName, `${resourceName.slice('synex_'.length)}.contracts.json`),
       'utf8',
     )) as { contracts: Array<{ name: string; capability?: string }> };
-    runtimes.set(resourceName, await readResourceRuntime(resourceName));
     for (const contract of source.contracts) {
       if (expected.has(contract.name)) {
         seen.add(contract.name);
@@ -407,16 +846,10 @@ test('new Foundation contracts use the exact privileged capability split', async
     }
   }
   assert.deepEqual(seen, new Set(expected.keys()));
-  for (const [name, capability] of expected) {
-    const resourceName = name.startsWith('synex.groups.') ? 'synex_groups' : 'synex_accounts';
-    const escapedName = name.replaceAll('.', '\\.');
-    const escapedCapability = capability.replaceAll('.', '\\.');
-    assert.match(
-      runtimes.get(resourceName) ?? '',
-      new RegExp(`name = '${escapedName}'[\\s\\S]{0,180}capability = '${escapedCapability}'`, 'u'),
-      `${name} runtime definition`,
-    );
-  }
+  const accountsRuntime = await readResourceRuntime('synex_accounts');
+  assert.match(accountsRuntime, /loadContractDefinitions\(rawCatalog, decode\)/u);
+  assert.match(accountsRuntime, /capabilities\[methodName\] = definition\.capability/u);
+  assert.match(accountsRuntime, /api\.RPC\.registerServer\(definition,/u);
 });
 
 test('every explicit oxmysql transaction statement has one positional value per placeholder', async () => {
@@ -425,9 +858,8 @@ test('every explicit oxmysql transaction statement has one positional value per 
     const bindings = transactionBindings(runtime);
     assert.ok(bindings.length > 20, resourceName);
     for (const binding of bindings) {
-      const placeholderCount = (binding.query.match(/\?/gu) ?? []).length;
-      const values = binding.values.trim();
-      const valueCount = values.length === 0 ? 0 : values.split(',').length;
+      const placeholderCount = (withoutSqlStringLiterals(binding.query).match(/\?/gu) ?? []).length;
+      const valueCount = countTopLevelLuaValues(binding.values);
       assert.equal(valueCount, placeholderCount, binding.query.replaceAll(/\s+/gu, ' ').trim());
     }
   }
@@ -435,7 +867,6 @@ test('every explicit oxmysql transaction statement has one positional value per 
 
 test('idempotent Foundation mutations replay before consulting current domain state', async () => {
   const expected = new Map<keyof typeof runtimeFiles, string[]>([
-    ['synex_groups', ['createGrade', 'setGradeCapability', 'setPrimaryMembership']],
     ['synex_accounts', ['reverse', 'createAccessRole', 'grantAccess', 'revokeAccess', 'runReconciliation']],
   ]);
   for (const [resourceName, methods] of expected) {
@@ -448,6 +879,18 @@ test('idempotent Foundation mutations replay before consulting current domain st
       assert.ok(replayAt >= 0 && (queryAt < 0 || replayAt < queryAt), `${resourceName}.${method}`);
     }
   }
+  const groupsRuntime = await readResourceRuntime('synex_groups');
+  const execute = groupsRuntime.match(
+    /function port:execute\(operation, request, context\)([\s\S]*?)(?=\n    if modules)/u,
+  )?.[1] ?? '';
+  assert.ok(execute.length > 0, 'synex_groups.execute');
+  const transactionAt = execute.indexOf('dataPort:transaction({');
+  const idempotencyAt = execute.indexOf('idempotencyKey = request.idempotency_key');
+  const handlerAt = execute.indexOf('handler, tx, request');
+  assert.ok(
+    transactionAt >= 0 && idempotencyAt > transactionAt && handlerAt > idempotencyAt,
+    'synex_groups.execute delegates receipt replay to the Core transaction before its domain handler',
+  );
 });
 
 test('Foundation runtime modules stay cohesive and every executable file is manifest-listed', async () => {

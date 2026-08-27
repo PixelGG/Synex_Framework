@@ -3,7 +3,7 @@
 Generated SDK artifacts share one canonical contract source hash. `npm run generate` updates them; `npm run generate:check` fails when committed outputs drift.
 
 > [!WARNING]
-> The SDKs and generated consumer integrations are experimental rework surfaces outside `synex_core` Production-Beta certification. Examples that call accounts or other domain contracts describe the current snapshot only and may change with those resources.
+> The SDKs and generated consumer integrations are experimental surfaces outside `synex_core` Production-Beta certification. Accounts is a server-only Experimental Alpha, and its examples may change before a separate release decision.
 
 ## Lua SDK
 
@@ -13,8 +13,10 @@ The Lua SDK is server-side and calls the core exports under the immediate consum
 local client, connectError = SynexLuaSDK.connect('^1.0.0')
 if not client then error(connectError.message) end
 
-local snapshot, requestError = client:request('synex.accounts.get_snapshot', {
-    account_id = accountId
+local snapshot, requestError = client:request('synex.accounts.get', {
+    account_id = accountId,
+    actor_kind = 'character',
+    actor_ref = characterId
 })
 ```
 
@@ -30,8 +32,10 @@ The TypeScript package provides generated input/output/error types plus a small 
 
 ```ts
 const client = new SynexClient(transport);
-const snapshot = await client.request("synex.accounts.get_snapshot", {
+const snapshot = await client.request("synex.accounts.get", {
   account_id: accountId,
+  actor_kind: "character",
+  actor_ref: characterId,
 });
 ```
 

@@ -12,7 +12,7 @@
       "permission": "user",
       "permission_grade": 0,
       "vehicles": [],
-      "metadata": {}
+      "metadata": { "hunger": 77 }
     }
   ]
 }

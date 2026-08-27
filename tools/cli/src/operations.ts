@@ -212,10 +212,26 @@ export async function runDoctor(
     status: deprecated.length > 0 ? "WARN" : "PASS",
     detail: `${deprecated.length} statically detectable deprecated API use(s). Runtime usage counters require an FXServer snapshot.`,
   });
+  const declaredControlProviders = resources.manifests
+    .filter((resource) => resource.manifest.controlProvider !== undefined);
+  const providerNamespaces = new Set<string>();
+  let duplicateProviderNamespaces = 0;
+  let providerContractErrors = 0;
+  for (const resource of declaredControlProviders) {
+    const provider = resource.manifest.controlProvider;
+    if (!provider) continue;
+    if (providerNamespaces.has(provider.namespace)) duplicateProviderNamespaces += 1;
+    providerNamespaces.add(provider.namespace);
+    const operations = new Set(provider.operations);
+    if (!provider.views.every((view) => operations.has(view.operation))
+      || !resource.manifest.capabilities.request.includes("synex.control.provider.register")) {
+      providerContractErrors += 1;
+    }
+  }
   checks.push({
-    name: "provider-health",
-    status: "WARN",
-    detail: "Provider declarations were checked statically; live provider health requires the restricted FXServer doctor command or a runtime snapshot.",
+    name: "control-provider-contracts",
+    status: duplicateProviderNamespaces > 0 || providerContractErrors > 0 ? "FAIL" : "PASS",
+    detail: `${declaredControlProviders.length} provider declaration(s), ${duplicateProviderNamespaces} duplicate namespace(s), ${providerContractErrors} invalid operation/capability declaration(s). Runtime timeout, redaction, output-bound and health checks still require the Control provider test suite or FXServer evidence.`,
   });
   checks.push(...await runDatabaseDoctor(repositoryRoot));
 
@@ -251,6 +267,16 @@ async function nuiClosedStateCheck(
       ? "Transparent closed surface and resource-stop focus cleanup were found statically."
       : "NUI closed-state guarantees could not be established statically; test transparency and focus cleanup in runtime.",
   };
+}
+
+export function extractSynexSqlTableReferences(text: string): string[] {
+  const referencedTables = new Set<string>();
+  for (const match of text.matchAll(
+    /\b(?:FROM|JOIN|INTO|UPDATE|TABLE)\s+`(synex_[a-z0-9_]+)`/giu,
+  )) {
+    if (match[1]) referencedTables.add(match[1].toLowerCase());
+  }
+  return [...referencedTables].sort(compareText);
 }
 
 export async function certify(
@@ -290,6 +316,27 @@ export async function certify(
 
   const schemas = await loadSchemaRegistry(repositoryRoot);
   const resources = await loadResourceManifests(repositoryRoot, resolve(target), schemas);
+  const certifiedControlProviders = resources.manifests
+    .filter((resource) => resource.manifest.controlProvider !== undefined);
+  const certifiedProviderNamespaces = new Set<string>();
+  let certifiedProviderDuplicates = 0;
+  let certifiedProviderErrors = 0;
+  for (const resource of certifiedControlProviders) {
+    const provider = resource.manifest.controlProvider;
+    if (!provider) continue;
+    if (certifiedProviderNamespaces.has(provider.namespace)) certifiedProviderDuplicates += 1;
+    certifiedProviderNamespaces.add(provider.namespace);
+    const operations = new Set(provider.operations);
+    if (!provider.views.every((view) => operations.has(view.operation))
+      || !resource.manifest.capabilities.request.includes("synex.control.provider.register")) {
+      certifiedProviderErrors += 1;
+    }
+  }
+  checks.push({
+    name: "control-provider-contracts",
+    status: certifiedProviderDuplicates > 0 || certifiedProviderErrors > 0 ? "FAIL" : "PASS",
+    detail: `${certifiedControlProviders.length} provider declaration(s), ${certifiedProviderDuplicates} duplicate namespace(s), ${certifiedProviderErrors} invalid operation/capability declaration(s). Runtime timeout, redaction, output-bound and health checks require the Control provider test suite or FXServer evidence.`,
+  });
   const graph = await buildResourceGraph(repositoryRoot);
   const targetNames = new Set(resources.manifests.map((resource) => resource.manifest.name));
   const cycles = graph.cycles.filter((cycle) => cycle.some((resource) => targetNames.has(resource)));
@@ -384,9 +431,7 @@ export async function certify(
       for (const file of luaFiles) {
         const text = await readTextFile(file);
         directDatabaseCalls += (text.match(/(?:\bMySQL\.|exports\s*\[\s*["']oxmysql["']\s*\])/gu) ?? []).length;
-        for (const match of text.matchAll(/`(synex_[a-z0-9_]+)`/gu)) {
-          if (match[1]) referencedTables.add(match[1]);
-        }
+        for (const table of extractSynexSqlTableReferences(text)) referencedTables.add(table);
       }
       const ownedTables = new Set(resource.manifest.dataOwnership.tables);
       const unownedTables = [...referencedTables].filter((table) => !ownedTables.has(table)).sort(compareText);
@@ -737,10 +782,23 @@ function sampleString(schema: JsonSchema): string {
   if (Array.isArray(schema.enum) && typeof schema.enum[0] === "string") return schema.enum[0];
   if (typeof schema.const === "string") return schema.const;
   const pattern = typeof schema.pattern === "string" ? schema.pattern : "";
-  if (pattern.includes("[0-9a-f-]{36}")) return "11111111-1111-4111-8111-111111111111";
+  const minimum = typeof schema.minLength === "number" ? schema.minLength : 1;
+  const maximum = typeof schema.maxLength === "number" ? schema.maxLength : 65_536;
+  const candidates = [
+    "11111111-1111-4111-8111-111111111111",
+    "2000-01-01T00:00:00Z",
+    `synex_${"a".repeat(Math.max(1, minimum - 6))}`,
+    `a.${"a".repeat(Math.max(1, minimum - 2))}`,
+    "a".repeat(Math.max(1, minimum)),
+    "0".repeat(Math.max(1, minimum)),
+  ];
+  if (pattern !== "") {
+    const matcher = new RegExp(pattern, "u");
+    const match = candidates.find((candidate) => candidate.length <= maximum && matcher.test(candidate));
+    if (match !== undefined) return match;
+  }
   const repeated = /\{([0-9]+)(?:,([0-9]+))?\}/u.exec(pattern);
   const requested = repeated ? Number(repeated[1]) + (pattern.includes("^[a-z]") ? 1 : 0) : 0;
-  const minimum = typeof schema.minLength === "number" ? schema.minLength : 1;
   return "a".repeat(Math.max(1, minimum, requested));
 }
 
@@ -757,7 +815,10 @@ function sampleForSchema(schema: JsonSchema, depth = 0): unknown {
   const type = schemaPrimaryType(schema);
   if (type === "string") return sampleString(schema);
   if (type === "integer" || type === "number") {
-    const minimum = typeof schema.minimum === "number" ? schema.minimum : 0;
+    let minimum = typeof schema.minimum === "number" ? schema.minimum : 0;
+    if (typeof schema.exclusiveMinimum === "number" && minimum <= schema.exclusiveMinimum) {
+      minimum = schema.exclusiveMinimum + 1;
+    }
     return type === "integer" ? Math.ceil(minimum) : minimum;
   }
   if (type === "boolean") return false;
@@ -822,7 +883,7 @@ export async function fuzzContractInputs(
     }
     const mutations: Array<{ name: string; value: unknown }> = [];
     const type = schemaPrimaryType(contract.input);
-    mutations.push({ name: "wrong-root-type", value: wrongType(type) });
+    if (type !== null) mutations.push({ name: "wrong-root-type", value: wrongType(type) });
 
     if (type === "object" && isRecord(baseline)) {
       const properties = isRecord(contract.input.properties) ? contract.input.properties : {};
@@ -839,9 +900,12 @@ export async function fuzzContractInputs(
       }
       for (const [name, rawProperty] of Object.entries(properties)) {
         if (!isRecord(rawProperty)) continue;
-        const invalidType = structuredClone(baseline);
-        invalidType[name] = wrongType(schemaPrimaryType(rawProperty));
-        mutations.push({ name: `wrong-type:${name}`, value: invalidType });
+        const propertyType = schemaPrimaryType(rawProperty);
+        if (propertyType !== null) {
+          const invalidType = structuredClone(baseline);
+          invalidType[name] = wrongType(propertyType);
+          mutations.push({ name: `wrong-type:${name}`, value: invalidType });
+        }
         if (typeof rawProperty.maxLength === "number" && rawProperty.maxLength >= 0 && rawProperty.maxLength <= 65_536) {
           const oversized = structuredClone(baseline);
           oversized[name] = "x".repeat(rawProperty.maxLength + 1);

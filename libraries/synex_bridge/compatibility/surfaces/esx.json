@@ -1,0 +1,453 @@
+{
+  "$schema": "../schemas/surfaces.schema.json",
+  "schema": 1,
+  "kind": "synex-compatibility-surfaces",
+  "provider": "esx",
+  "providerResource": "synex_bridge_esx",
+  "providerVersion": "0.1.0",
+  "targetFrameworkApiRange": null,
+  "upstream": {
+    "name": "ESX Legacy",
+    "repository": "https://github.com/esx-framework/esx_core",
+    "branch": "main",
+    "revision": "2f7bada4abe1e22a7e1911cf951087b8569cec6d",
+    "sources": [
+      {
+        "id": "esx.server.main",
+        "path": "[core]/es_extended/server/main.lua",
+        "bytes": 29321,
+        "sha256": "f1204c1dcfb6d512e77ce1c0a15c62e4a422d9d8e80922a32cb41dbcf7db38a5"
+      },
+      {
+        "id": "esx.server.functions",
+        "path": "[core]/es_extended/server/functions.lua",
+        "bytes": 29322,
+        "sha256": "5ebffa9eb27ebfd504dba018d20e553f4d84eaad53f185a7c5109ed16c08ba72"
+      },
+      {
+        "id": "esx.server.player",
+        "path": "[core]/es_extended/server/classes/player.lua",
+        "bytes": 38323,
+        "sha256": "5fa9f85929b1064b55ee07974ab3de2c22207cfd7b41a6efbbfeb3b7d047b520"
+      },
+      {
+        "id": "esx.client.functions",
+        "path": "[core]/es_extended/client/functions.lua",
+        "bytes": 17903,
+        "sha256": "83b2489b1c24fa74b450d4c69e18480872586b9ca9b2eba709e4b9227140f137"
+      },
+      {
+        "id": "esx.imports",
+        "path": "[core]/es_extended/imports.lua",
+        "bytes": 10835,
+        "sha256": "afb23ec7c0d827e1b84b3d14bc2b915445fa39cd9095254ddb41a1ab56056fdc"
+      }
+    ],
+    "evidenceUrls": [
+      "https://docs.esx-framework.org/en/esx_core/es_extended/server/functions",
+      "https://docs.esx-framework.org/en/esx_core/es_extended/server/xplayer",
+      "https://docs.esx-framework.org/en/esx_core/es_extended/client/functions",
+      "https://github.com/esx-framework/esx_core/blob/2f7bada4abe1e22a7e1911cf951087b8569cec6d/%5Bcore%5D/es_extended/server/functions.lua",
+      "https://github.com/esx-framework/esx_core/blob/2f7bada4abe1e22a7e1911cf951087b8569cec6d/%5Bcore%5D/es_extended/imports.lua",
+      "https://github.com/esx-framework/esx_core/blob/2f7bada4abe1e22a7e1911cf951087b8569cec6d/%5Bcore%5D/es_extended/server/main.lua",
+      "https://github.com/esx-framework/esx_core/blob/2f7bada4abe1e22a7e1911cf951087b8569cec6d/%5Bcore%5D/es_extended/server/classes/player.lua"
+    ]
+  },
+  "surfaces": [
+    {
+      "name": "esx.server.shared_object",
+      "scope": "server",
+      "type": "object",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.esx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-static.test.ts",
+        "tests/compatibility/bridge-runtime.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "esx.server.player_lookup",
+      "scope": "server",
+      "type": "method",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.esx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-runtime.test.ts",
+        "tests/compatibility/bridge-cross-provider-mutations.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "esx.server.callback_registration",
+      "scope": "server",
+      "type": "callback",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.esx.callbacks",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-runtime.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "esx.xplayer.accounts_read",
+      "scope": "server",
+      "type": "method",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.esx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-runtime.test.ts",
+        "tests/compatibility/bridge-cross-provider-mutations.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "esx.xplayer.money_mutation",
+      "scope": "server",
+      "type": "method",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": "synex.accounts.transfer_v2/mint_v2/burn_v2@2",
+      "requiredCapability": "synex.compat.esx.write",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-static.test.ts",
+        "tests/compatibility/bridge-runtime.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "esx.xplayer.job_read",
+      "scope": "server",
+      "type": "method",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.esx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-runtime.test.ts",
+        "tests/compatibility/bridge-cross-provider-mutations.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "esx.xplayer.job_mutation",
+      "scope": "server",
+      "type": "method",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": "synex.groups.compatibility.set_primary_grade@1",
+      "requiredCapability": "synex.compat.esx.write",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-runtime.test.ts",
+        "tests/compatibility/bridge-cross-provider-mutations.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "esx.xplayer.duty_mutation",
+      "scope": "server",
+      "type": "method",
+      "status": "UNSUPPORTED",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": null,
+      "requiredAdapter": null,
+      "modes": [
+        "strict",
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-esx-atomicity.test.ts",
+        "tests/compatibility/bridge-surface-coverage.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "esx.xplayer.metadata_mutation",
+      "scope": "server",
+      "type": "method",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": "synex_bridge.compatibility_metadata@1",
+      "requiredCapability": "synex.compat.esx.write",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-provider-facades.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "esx.client.player_data",
+      "scope": "client",
+      "type": "object",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.esx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-static.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "esx.client.callback_invocation",
+      "scope": "client",
+      "type": "callback",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.esx.callbacks",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-lifecycle-parity.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "esx.shared.lifecycle_events",
+      "scope": "shared",
+      "type": "event",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.esx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-static.test.ts",
+        "tests/compatibility/bridge-runtime.test.ts",
+        "tests/compatibility/bridge-lifecycle-parity.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "esx.server.identifier_player_lookup",
+      "scope": "server",
+      "type": "method",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.esx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-surface-coverage.test.ts",
+        "tests/compatibility/bridge-esx-safe-remainders.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "esx.server.player_enumeration",
+      "scope": "server",
+      "type": "method",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.esx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-surface-coverage.test.ts",
+        "tests/compatibility/bridge-esx-safe-remainders.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "esx.shared.job_update_events",
+      "scope": "shared",
+      "type": "event",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.esx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-lifecycle-parity.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "esx.shared.account_update_events",
+      "scope": "shared",
+      "type": "event",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.esx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-lifecycle-parity.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "esx.xplayer.custom_accounts",
+      "scope": "server",
+      "type": "method",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.esx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-surface-coverage.test.ts",
+        "tests/compatibility/bridge-esx-safe-remainders.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "esx.xplayer.inventory",
+      "scope": "server",
+      "type": "method",
+      "status": "UNSUPPORTED",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": null,
+      "requiredAdapter": null,
+      "modes": [
+        "strict",
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-surface-coverage.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "esx.xplayer.permission_group",
+      "scope": "server",
+      "type": "method",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": "synex.permissions.check@1",
+      "requiredCapability": "synex.compat.esx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-permission-projection.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "esx.server.permission_admin",
+      "scope": "server",
+      "type": "method",
+      "status": "UNSUPPORTED",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": null,
+      "requiredAdapter": null,
+      "modes": [
+        "strict",
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-surface-coverage.test.ts"
+      ],
+      "adapterOperations": []
+    }
+  ]
+}

@@ -4,9 +4,631 @@
   "name": "synex_groups",
   "version": "0.1.0",
   "synex": "^1.0.0",
-  "critical": true,
+  "critical": false,
   "capabilities": {
-    "request": ["synex.events.durable"]
+    "request": [
+      "synex.audit.append",
+      "synex.events.durable",
+      "synex.identity.read",
+      "synex.permissions.read",
+      "synex.deletions.read",
+      "synex.deletions.manage",
+      "synex.deletions.provider",
+      "synex.database.read",
+      "synex.database.write",
+      "synex.database.transaction",
+      "synex.database.maintenance",
+      "synex.control.provider.register"
+    ]
+  },
+  "controlProvider": {
+    "schemaVersion": 1,
+    "namespace": "groups",
+    "label": "Groups",
+    "category": "domain",
+    "version": "1.0.0",
+    "operations": ["summary", "health", "list", "inspect", "search", "findings", "simulate"],
+    "views": [
+      {
+        "id": "overview",
+        "label": "Groups overview",
+        "operation": "summary",
+        "presentation": "key-value",
+        "order": 10,
+        "description": "Bounded organization and membership totals.",
+        "accessClass": "general"
+      },
+      {
+        "id": "health",
+        "label": "Groups health",
+        "operation": "health",
+        "presentation": "key-value",
+        "order": 20,
+        "description": "Read-only domain consistency checks.",
+        "accessClass": "general"
+      },
+      {
+        "id": "groups",
+        "label": "Groups",
+        "operation": "list",
+        "presentation": "table",
+        "order": 30,
+        "description": "Cursor-based organization directory.",
+        "accessClass": "general"
+      },
+      {
+        "id": "memberships",
+        "label": "Memberships",
+        "operation": "list",
+        "presentation": "table",
+        "order": 40,
+        "description": "Cursor-based memberships for an authorized actor.",
+        "input": {
+          "fields": [
+            {
+              "key": "group_id",
+              "label": "Group ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            },
+            {
+              "key": "actor_character_id",
+              "label": "Actor character ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "hierarchy",
+        "label": "Hierarchy",
+        "operation": "list",
+        "presentation": "graph",
+        "order": 50,
+        "description": "Bounded parent and child organization edges.",
+        "input": {
+          "fields": [
+            {
+              "key": "group_id",
+              "label": "Group ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "roles",
+        "label": "Roles",
+        "operation": "list",
+        "presentation": "table",
+        "order": 60,
+        "description": "Cursor-based roles owned by one group.",
+        "input": {
+          "fields": [
+            {
+              "key": "group_id",
+              "label": "Group ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "grades",
+        "label": "Grades",
+        "operation": "list",
+        "presentation": "table",
+        "order": 70,
+        "description": "Cursor-based grades owned by one group.",
+        "input": {
+          "fields": [
+            {
+              "key": "group_id",
+              "label": "Group ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "capabilities",
+        "label": "Capabilities",
+        "operation": "list",
+        "presentation": "table",
+        "order": 80,
+        "description": "Bounded role and grade capability rules.",
+        "input": {
+          "fields": [
+            {
+              "key": "group_id",
+              "label": "Group ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "duty",
+        "label": "Duty",
+        "operation": "list",
+        "presentation": "timeline",
+        "order": 90,
+        "description": "Cursor-based duty sessions for an authorized actor.",
+        "input": {
+          "fields": [
+            {
+              "key": "group_id",
+              "label": "Group ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            },
+            {
+              "key": "actor_character_id",
+              "label": "Actor character ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "assignments",
+        "label": "Assignments",
+        "operation": "list",
+        "presentation": "table",
+        "order": 100,
+        "description": "Cursor-based group assignments.",
+        "input": {
+          "fields": [
+            {
+              "key": "group_id",
+              "label": "Group ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            },
+            {
+              "key": "actor_character_id",
+              "label": "Actor character ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "delegations",
+        "label": "Delegations",
+        "operation": "list",
+        "presentation": "table",
+        "order": 110,
+        "description": "Cursor-based delegated capability metadata.",
+        "input": {
+          "fields": [
+            {
+              "key": "group_id",
+              "label": "Group ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "relationships",
+        "label": "Relationships",
+        "operation": "list",
+        "presentation": "graph",
+        "order": 120,
+        "description": "Bounded organization relationship graph.",
+        "input": {
+          "fields": [
+            {
+              "key": "group_id",
+              "label": "Group ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            },
+            {
+              "key": "actor_character_id",
+              "label": "Actor character ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "policies",
+        "label": "Policies",
+        "operation": "list",
+        "presentation": "table",
+        "order": 130,
+        "description": "Cursor-based policy metadata without conditions.",
+        "input": {
+          "fields": [
+            {
+              "key": "group_id",
+              "label": "Group ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "drift",
+        "label": "Drift",
+        "operation": "findings",
+        "presentation": "findings",
+        "order": 140,
+        "description": "Current definition, registry, cache, and runtime findings.",
+        "accessClass": "general"
+      },
+      {
+        "id": "history",
+        "label": "History",
+        "operation": "list",
+        "presentation": "timeline",
+        "order": 150,
+        "description": "Cursor-based domain history.",
+        "input": {
+          "fields": [
+            {
+              "key": "group_id",
+              "label": "Group ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            },
+            {
+              "key": "actor_character_id",
+              "label": "Actor character ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "group",
+        "label": "Group inspector",
+        "operation": "inspect",
+        "presentation": "detail",
+        "order": 160,
+        "description": "Inspect one organization with bounded counts, health, and related views.",
+        "input": {
+          "fields": [
+            {
+              "key": "id",
+              "label": "Group ID",
+              "source": "id",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "membership",
+        "label": "Membership inspector",
+        "operation": "inspect",
+        "presentation": "detail",
+        "order": 170,
+        "description": "Inspect one membership with bounded roles, duty, assignments, and delegations.",
+        "input": {
+          "fields": [
+            {
+              "key": "id",
+              "label": "Membership ID",
+              "source": "id",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "relationship",
+        "label": "Relationship inspector",
+        "operation": "inspect",
+        "presentation": "detail",
+        "order": 180,
+        "description": "Inspect one authorized relationship read model.",
+        "input": {
+          "fields": [
+            {
+              "key": "id",
+              "label": "Relationship ID",
+              "source": "id",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            },
+            {
+              "key": "group_id",
+              "label": "Group ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            },
+            {
+              "key": "actor_character_id",
+              "label": "Actor character ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "capability",
+        "label": "Capability explain",
+        "operation": "inspect",
+        "presentation": "detail",
+        "order": 190,
+        "description": "Explain an existing capability decision.",
+        "input": {
+          "fields": [
+            {
+              "key": "id",
+              "label": "Group ID",
+              "source": "id",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            },
+            {
+              "key": "character_id",
+              "label": "Character ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            },
+            {
+              "key": "capability",
+              "label": "Capability",
+              "source": "filter",
+              "type": "string",
+              "format": "capability",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 96
+            },
+            {
+              "key": "actor_character_id",
+              "label": "Actor character ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": false,
+              "minLength": 1,
+              "maxLength": 64
+            },
+            {
+              "key": "scope",
+              "label": "Scope",
+              "source": "filter",
+              "type": "string",
+              "format": "text",
+              "required": false,
+              "minLength": 1,
+              "maxLength": 128
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "search",
+        "label": "Find group",
+        "operation": "search",
+        "presentation": "table",
+        "order": 200,
+        "description": "Exact lookup by public group identifier.",
+        "accessClass": "general",
+        "search": {
+          "kinds": [
+            {
+              "id": "group",
+              "modes": [
+                "exact"
+              ],
+              "accessClass": "general"
+            },
+            {
+              "id": "membership",
+              "modes": [
+                "exact"
+              ],
+              "accessClass": "general"
+            }
+          ]
+        }
+      },
+      {
+        "id": "findings",
+        "label": "Findings",
+        "operation": "findings",
+        "presentation": "findings",
+        "order": 210,
+        "description": "Current Groups doctor findings.",
+        "accessClass": "general"
+      },
+      {
+        "id": "policy_simulation",
+        "label": "Policy simulation",
+        "operation": "simulate",
+        "presentation": "detail",
+        "order": 220,
+        "description": "Read-only evaluation of an existing policy.",
+        "input": {
+          "fields": [
+            {
+              "key": "actor_character_id",
+              "label": "Actor character ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            },
+            {
+              "key": "group_id",
+              "label": "Group ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            },
+            {
+              "key": "action",
+              "label": "Action",
+              "source": "filter",
+              "type": "string",
+              "format": "action",
+              "required": true,
+              "minLength": 3,
+              "maxLength": 64
+            },
+            {
+              "key": "target_membership_id",
+              "label": "Target membership ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": false,
+              "minLength": 1,
+              "maxLength": 64
+            },
+            {
+              "key": "target_grade_id",
+              "label": "Target grade ID",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": false,
+              "minLength": 1,
+              "maxLength": 64
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "character_relations",
+        "label": "Character relations",
+        "operation": "inspect",
+        "presentation": "detail",
+        "order": 230,
+        "description": "Bounded organization links for one exact character identifier.",
+        "accessClass": "general"
+      }
+    ]
   },
   "services": {
     "provide": ["synex.groups@1"],
@@ -16,15 +638,76 @@
   "contracts": {
     "provide": [
       "synex.groups.create",
+      "synex.groups.delete",
+      "synex.groups.creation_requests.get",
+      "synex.groups.creation_requests.approve",
+      "synex.groups.creation_requests.reject",
       "synex.groups.get",
-      "synex.groups.add_membership",
-      "synex.groups.change_membership",
-      "synex.groups.remove_membership",
-      "synex.groups.create_grade",
-      "synex.groups.set_grade_capability",
-      "synex.groups.set_primary_membership",
-      "synex.groups.get_read_model",
-      "synex.groups.check_capability"
+      "synex.groups.list",
+      "synex.groups.update",
+      "synex.groups.archive",
+      "synex.groups.registries.begin",
+      "synex.groups.types.register",
+      "synex.groups.relation_types.register",
+      "synex.groups.duty_states.register",
+      "synex.groups.relationships.get",
+      "synex.groups.relationships.list",
+      "synex.groups.relationships.create",
+      "synex.groups.relationships.update",
+      "synex.groups.members.get",
+      "synex.groups.members.list",
+      "synex.groups.members.invite",
+      "synex.groups.members.accept",
+      "synex.groups.members.decline",
+      "synex.groups.members.revoke_invite",
+      "synex.groups.members.transition_policy.get",
+      "synex.groups.members.transition_policy.set",
+      "synex.groups.members.transition",
+      "synex.groups.members.set_grade",
+      "synex.groups.members.set_visibility",
+      "synex.groups.members.set_primary",
+      "synex.groups.reporting.set",
+      "synex.groups.grades.create",
+      "synex.groups.grades.update",
+      "synex.groups.roles.create",
+      "synex.groups.roles.update",
+      "synex.groups.roles.assign",
+      "synex.groups.roles.remove",
+      "synex.groups.capabilities.set",
+      "synex.groups.capabilities.check",
+      "synex.groups.capabilities.explain",
+      "synex.groups.duty.list",
+      "synex.groups.duty.start",
+      "synex.groups.duty.update",
+      "synex.groups.duty.stop",
+      "synex.groups.assignments.get",
+      "synex.groups.assignments.list",
+      "synex.groups.assignments.create",
+      "synex.groups.assignments.join",
+      "synex.groups.assignments.leave",
+      "synex.groups.assignments.complete",
+      "synex.groups.assignments.cancel",
+      "synex.groups.delegations.create",
+      "synex.groups.delegations.revoke",
+      "synex.groups.applications.submit",
+      "synex.groups.applications.review",
+      "synex.groups.applications.withdraw",
+      "synex.groups.proposals.create",
+      "synex.groups.proposals.approve",
+      "synex.groups.proposals.reject",
+      "synex.groups.policies.set",
+      "synex.groups.policies.simulate",
+      "synex.groups.attributes.get",
+      "synex.groups.attributes.register_schema",
+      "synex.groups.attributes.set",
+      "synex.groups.definitions.sync",
+      "synex.groups.directory.list",
+      "synex.groups.history.list",
+      "synex.groups.self.snapshot",
+      "synex.groups.compatibility.snapshot",
+      "synex.groups.compatibility.resolve_target",
+      "synex.groups.compatibility.set_primary_grade",
+      "synex.groups.doctor"
     ],
     "consume": []
   },
@@ -34,53 +717,114 @@
   },
   "hooks": {
     "register": [],
-    "run": []
+    "run": ["synex.groups.*"]
   },
   "dependencies": {
     "required": [
-      {
-        "name": "synex_core",
-        "version": ">=0.1.0"
-      },
-      {
-        "name": "oxmysql",
-        "version": ">=2.14.1"
-      }
+      { "name": "synex_core", "version": ">=0.1.0" }
     ],
     "optional": [],
     "development": []
   },
   "migrations": [
-    {
-      "id": "001_groups",
-      "path": "migrations/001_groups.sql",
-      "transactional": false
-    },
-    {
-      "id": "002_grades_primary_read_models",
-      "path": "migrations/002_grades_primary_read_models.sql",
-      "transactional": false
-    },
-    {
-      "id": "003_character_lifecycle",
-      "path": "migrations/003_character_lifecycle.sql",
-      "transactional": false
-    }
+    { "id": "001_groups", "path": "migrations/001_groups.sql", "transactional": false },
+    { "id": "002_grades_primary_read_models", "path": "migrations/002_grades_primary_read_models.sql", "transactional": false },
+    { "id": "003_character_lifecycle", "path": "migrations/003_character_lifecycle.sql", "transactional": false },
+    { "id": "004_organization_types_graph", "path": "migrations/004_organization_types_graph.sql", "transactional": false },
+    { "id": "005_roles_policies_attributes", "path": "migrations/005_roles_policies_attributes.sql", "transactional": false },
+    { "id": "006_membership_workflows", "path": "migrations/006_membership_workflows.sql", "transactional": false },
+    { "id": "007_audit_definitions_retention", "path": "migrations/007_audit_definitions_retention.sql", "transactional": false },
+    { "id": "008_public_id_compatibility", "path": "migrations/008_public_id_compatibility.sql", "transactional": false },
+    { "id": "009_contract_storage_compatibility", "path": "migrations/009_contract_storage_compatibility.sql", "transactional": false },
+    { "id": "010_external_resource_ownership", "path": "migrations/010_external_resource_ownership.sql", "transactional": false },
+    { "id": "011_mutation_entity_public_ids", "path": "migrations/011_mutation_entity_public_ids.sql", "transactional": false },
+    { "id": "012_group_history_scope", "path": "migrations/012_group_history_scope.sql", "transactional": false },
+    { "id": "013_contract_text_bounds", "path": "migrations/013_contract_text_bounds.sql", "transactional": false },
+    { "id": "014_character_anonymization_ids", "path": "migrations/014_character_anonymization_ids.sql", "transactional": false },
+    { "id": "015_primary_membership_public_ids", "path": "migrations/015_primary_membership_public_ids.sql", "transactional": false },
+    { "id": "017_static_definition_targets", "path": "migrations/017_static_definition_targets.sql", "transactional": false },
+    { "id": "018_default_membership_capabilities", "path": "migrations/018_default_membership_capabilities.sql", "transactional": false },
+    { "id": "019_definition_applied_snapshots", "path": "migrations/019_definition_applied_snapshots.sql", "transactional": false },
+    { "id": "020_capability_delegability", "path": "migrations/020_capability_delegability.sql", "transactional": false },
+    { "id": "021_persistent_extension_registries", "path": "migrations/021_persistent_extension_registries.sql", "transactional": false },
+    { "id": "022_workflow_lifecycle_expiry", "path": "migrations/022_workflow_lifecycle_expiry.sql", "transactional": false },
+    { "id": "023_dynamic_type_creation_policies", "path": "migrations/023_dynamic_type_creation_policies.sql", "transactional": false },
+    { "id": "024_group_deletion_lifecycle", "path": "migrations/024_group_deletion_lifecycle.sql", "transactional": false },
+    { "id": "025_dynamic_group_creation_approvals", "path": "migrations/025_dynamic_group_creation_approvals.sql", "transactional": false },
+    { "id": "026_group_attribute_scopes", "path": "migrations/026_group_attribute_scopes.sql", "transactional": false },
+    { "id": "027_identifier_contract_consistency", "path": "migrations/027_identifier_contract_consistency.sql", "transactional": false },
+    { "id": "028_membership_transition_policies", "path": "migrations/028_membership_transition_policies.sql", "transactional": false },
+    { "id": "029_assignment_member_active_counts", "path": "migrations/029_assignment_member_active_counts.sql", "transactional": false },
+    { "id": "030_membership_workflow_entities", "path": "migrations/030_membership_workflow_entities.sql", "transactional": false },
+    { "id": "031_registry_owner_sync_sessions", "path": "migrations/031_registry_owner_sync_sessions.sql", "transactional": false },
+    { "id": "032_character_reference_contract", "path": "migrations/032_character_reference_contract.sql", "transactional": false }
   ],
   "dataOwnership": {
     "tables": [
-      "synex_groups",
-      "synex_group_memberships",
-      "synex_group_membership_events",
-      "synex_group_operations",
-      "synex_group_outbox",
-      "synex_group_grades",
+      "synex_group_applications",
+      "synex_group_approvals",
+      "synex_group_assignment_members",
+      "synex_group_assignments",
+      "synex_group_attribute_schemas",
+      "synex_group_audit_delivery",
+      "synex_group_character_deletions",
+      "synex_group_command_receipts",
+      "synex_group_creation_approvals",
+      "synex_group_creation_requests",
+      "synex_group_definition_issues",
+      "synex_group_definition_migrations",
+      "synex_group_definition_sets",
+      "synex_group_deletion_requests",
+      "synex_group_delegations",
+      "synex_group_domain_history",
+      "synex_group_domain_history_archive",
+      "synex_group_duty_events",
+      "synex_group_duty_sessions",
+      "synex_group_duty_states",
+      "synex_group_default_capabilities",
       "synex_group_grade_capabilities",
+      "synex_group_grade_capability_scopes",
+      "synex_group_grade_controls",
+      "synex_group_grades",
+      "synex_group_hierarchy_closure",
+      "synex_group_hierarchy_edges",
+      "synex_group_invitation_roles",
+      "synex_group_invitations",
+      "synex_group_membership_attributes",
+      "synex_group_membership_capabilities",
+      "synex_group_membership_events",
       "synex_group_membership_grades",
-      "synex_group_primary_memberships",
+      "synex_group_membership_profiles",
+      "synex_group_membership_roles",
+      "synex_group_membership_states",
+      "synex_group_membership_transition_policies",
+      "synex_group_memberships",
+      "synex_group_operations",
+      "synex_group_organization_profiles",
+      "synex_group_outbox",
+      "synex_group_policies",
+      "synex_group_policy_rules",
       "synex_group_primary_membership_events",
+      "synex_group_primary_memberships",
+      "synex_group_primary_memberships_by_type",
+      "synex_group_proposals",
       "synex_group_read_model_versions",
-      "synex_group_character_deletions"
+      "synex_group_relation_types",
+      "synex_group_relationships",
+      "synex_group_reporting_closure",
+      "synex_group_reporting_edges",
+      "synex_group_registry_owner_syncs",
+      "synex_group_retention_checkpoints",
+      "synex_group_retention_policies",
+      "synex_group_role_capabilities",
+      "synex_group_roles",
+      "synex_group_slug_reservations",
+      "synex_group_type_duty_states",
+      "synex_group_type_default_grades",
+      "synex_group_type_default_roles",
+      "synex_group_type_membership_states",
+      "synex_group_types",
+      "synex_groups"
     ],
     "characterDelete": "anonymize"
   },

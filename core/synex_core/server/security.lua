@@ -26,10 +26,25 @@ factories.security = function(deps)
     local auditSink = nil
     local denialAudit = {}
     local denialAuditSize = 0
+    local diagnosticMaximum = tonumber(deps.securityDiagnosticsMaximum)
+    if type(diagnosticMaximum) ~= 'number' or diagnosticMaximum ~= diagnosticMaximum
+        or diagnosticMaximum == math.huge or diagnosticMaximum == -math.huge then
+        diagnosticMaximum = 512
+    end
+    diagnosticMaximum = math.max(32, math.min(math.floor(diagnosticMaximum), 2048))
+    local diagnosticFindings = {}
+    local diagnosticStart = 1
+    local diagnosticCount = 0
+    local diagnosticDropped = 0
+    local diagnosticSequence = 0
+    local diagnosticTimestampMs = 0
+    local diagnosticCategoryCounts = {}
 
     local capabilityClass = {
         ['synex.runtime.read'] = 'normal',
         ['synex.metrics.read'] = 'sensitive',
+        ['synex.metrics.write'] = 'sensitive',
+        ['synex.tracing.write'] = 'sensitive',
         ['synex.identity.read'] = 'sensitive',
         ['synex.audit.summary'] = 'sensitive',
         ['synex.audit.raw'] = 'privileged',
@@ -39,6 +54,17 @@ factories.security = function(deps)
         ['synex.capabilities.delegate'] = 'privileged',
         ['synex.permissions.manage'] = 'privileged',
         ['synex.sagas.register'] = 'privileged',
+        ['synex.accounts.configure'] = 'privileged',
+        ['synex.accounts.post'] = 'privileged',
+        ['synex.accounts.reverse'] = 'privileged',
+        ['synex.accounts.refund'] = 'privileged',
+        ['synex.accounts.access.manage'] = 'privileged',
+        ['synex.accounts.integrity.run'] = 'privileged',
+        ['synex.accounts.outbox.retry'] = 'privileged',
+        ['synex.accounts.create'] = 'sensitive',
+        ['synex.accounts.hold'] = 'sensitive',
+        ['synex.accounts.access.read'] = 'sensitive',
+        ['synex.accounts.integrity.read'] = 'sensitive',
         ['synex.accounts.mint'] = 'privileged',
         ['synex.accounts.burn'] = 'privileged',
         ['synex.characters.delete'] = 'destructive',
@@ -70,7 +96,257 @@ factories.security = function(deps)
         return topic:sub(1, #prefix) == prefix and #topic > #prefix
     end
 
+    local diagnosticSeverities = {
+        INFO = true,
+        WARNING = true,
+        ERROR = true,
+        CRITICAL = true
+    }
+    local diagnosticAllowedFields = {
+        category = true, severity = true, code = true, resource = true,
+        scope = true, operation = true, summary = true
+    }
+    local capabilityDenialCodes = {
+        unregistered = 'RESOURCE_NOT_REGISTERED',
+        undeclared = 'CAPABILITY_UNDECLARED',
+        denied = 'CAPABILITY_DENIED',
+        not_granted = 'CAPABILITY_DENIED'
+    }
+
+    local function validDiagnosticToken(value, maximum)
+        return type(value) == 'string' and #value >= 1 and #value <= maximum
+            and value:match('^[A-Za-z0-9_%.:%-]+$') ~= nil
+    end
+
+    local function diagnosticTokenOr(value, fallback)
+        return validDiagnosticToken(value, 128) and value or fallback
+    end
+
+    local function diagnosticSecretValue(value)
+        if type(value) ~= 'string' then return false end
+        local candidate = value:sub(1, 512)
+        local normalized = candidate:lower()
+        local github = normalized:match('github_pat_([a-z0-9_%-]+)')
+        local compactToken = normalized:match('gh[pousr]_([a-z0-9_%-]+)')
+        local cfx = normalized:match('cfxk_([a-z0-9_%-]+)')
+        local aws = candidate:match('AKIA([A-Z0-9]+)')
+        return normalized:match('bearer%s+[%w%._~+/=%-]+') ~= nil
+            or normalized:find('mysql://', 1, true) ~= nil
+            or normalized:find('mariadb://', 1, true) ~= nil
+            or normalized:find('discord.com/api/webhooks/', 1, true) ~= nil
+            or normalized:find('discordapp.com/api/webhooks/', 1, true) ~= nil
+            or normalized:find('-----begin ', 1, true) ~= nil
+                and normalized:find('private key-----', 1, true) ~= nil
+            or github ~= nil and #github >= 20
+            or compactToken ~= nil and #compactToken >= 20
+            or cfx ~= nil and #cfx >= 20
+            or aws ~= nil and #aws >= 16
+            or normalized:match('[?&]access[_%-]?token=[^&#%s]+') ~= nil
+            or normalized:match('[?&]api[_%-]?key=[^&#%s]+') ~= nil
+            or normalized:match('[?&]secret=[^&#%s]+') ~= nil
+            or normalized:match('[?&]signature=[^&#%s]+') ~= nil
+            or normalized:match('[?&]token=[^&#%s]+') ~= nil
+            or normalized:find('://', 1, true) ~= nil
+                and normalized:match('[a-z][a-z0-9+.-]*://[^/%s:]+:[^@/%s]+@') ~= nil
+    end
+
+    local diagnostics = {}
+    function diagnostics:record(finding)
+        if type(finding) ~= 'table' or getmetatable(finding) ~= nil then
+            return nil, foundation.error('INVALID_SECURITY_DIAGNOSTIC_FINDING',
+                'Security diagnostic findings must be bounded plain objects.')
+        end
+        for key in pairs(finding) do
+            if type(key) ~= 'string' or not diagnosticAllowedFields[key] then
+                return nil, foundation.error('INVALID_SECURITY_DIAGNOSTIC_FINDING',
+                    'Security diagnostic findings contain an unknown property.')
+            end
+        end
+        if type(finding.category) ~= 'string' or #finding.category < 1
+            or #finding.category > 32
+            or not finding.category:match('^[a-z][a-z0-9_]*$')
+            or not diagnosticSeverities[finding.severity]
+            or type(finding.code) ~= 'string' or #finding.code < 1 or #finding.code > 64
+            or not finding.code:match('^[A-Z][A-Z0-9_]*$')
+            or finding.resource ~= nil and not validDiagnosticToken(finding.resource, 128)
+            or finding.scope ~= nil and not validDiagnosticToken(finding.scope, 128)
+            or not validDiagnosticToken(finding.operation, 128)
+            or type(finding.summary) ~= 'string' or #finding.summary < 1
+            or #finding.summary > 192
+            or finding.summary:find('[%z\1-\31\127-\255]')
+            or diagnosticSecretValue(finding.resource)
+            or diagnosticSecretValue(finding.scope)
+            or diagnosticSecretValue(finding.operation)
+            or diagnosticSecretValue(finding.summary)
+            or finding.resource == nil and finding.scope == nil then
+            return nil, foundation.error('INVALID_SECURITY_DIAGNOSTIC_FINDING',
+                'Security diagnostic finding fields are invalid.')
+        end
+
+        diagnosticSequence = diagnosticSequence + 1
+        local observedAtMs = foundation.monotonicMs()
+        if observedAtMs <= diagnosticTimestampMs then observedAtMs = diagnosticTimestampMs + 1 end
+        diagnosticTimestampMs = observedAtMs
+        local stored = {
+            id = diagnosticSequence,
+            timestampMs = observedAtMs,
+            timestamp = foundation.utcIso(),
+            category = finding.category,
+            severity = finding.severity,
+            code = finding.code,
+            resource = finding.resource,
+            scope = finding.scope,
+            operation = finding.operation,
+            summary = finding.summary
+        }
+        local slot
+        if diagnosticCount < diagnosticMaximum then
+            slot = ((diagnosticStart + diagnosticCount - 1) % diagnosticMaximum) + 1
+            diagnosticCount = diagnosticCount + 1
+        else
+            slot = diagnosticStart
+            local replaced = diagnosticFindings[slot]
+            diagnosticCategoryCounts[replaced.category] = math.max(0,
+                (diagnosticCategoryCounts[replaced.category] or 1) - 1)
+            if diagnosticCategoryCounts[replaced.category] == 0 then
+                diagnosticCategoryCounts[replaced.category] = nil
+            end
+            diagnosticStart = (diagnosticStart % diagnosticMaximum) + 1
+            diagnosticDropped = diagnosticDropped + 1
+        end
+        diagnosticFindings[slot] = stored
+        diagnosticCategoryCounts[stored.category] =
+            (diagnosticCategoryCounts[stored.category] or 0) + 1
+        return foundation.copy(stored), nil
+    end
+
+    function diagnostics:page(request)
+        request = request == nil and {} or request
+        if type(request) ~= 'table' or getmetatable(request) ~= nil then
+            return nil, foundation.error('INVALID_ARGUMENT',
+                'Security diagnostics require a bounded plain request.')
+        end
+        for key in pairs(request) do
+            if key ~= 'cursor' and key ~= 'limit' and key ~= 'category' then
+                return nil, foundation.error('INVALID_ARGUMENT',
+                    'Security diagnostics request contains an unknown property.')
+            end
+        end
+        local limit = request.limit == nil and 25 or request.limit
+        if type(limit) ~= 'number' or math.type(limit) ~= 'integer'
+            or limit < 1 or limit > 50 then
+            return nil, foundation.error('INVALID_ARGUMENT',
+                'Security diagnostics limit must be an integer from 1 through 50.')
+        end
+        local category = request.category
+        if category ~= nil and (type(category) ~= 'string' or #category < 1
+            or #category > 32 or not category:match('^[a-z][a-z0-9_]*$')) then
+            return nil, foundation.error('INVALID_ARGUMENT',
+                'Security diagnostics category is invalid.')
+        end
+        local cursor = nil
+        if request.cursor ~= nil then
+            if type(request.cursor) ~= 'string' or #request.cursor < 1
+                or #request.cursor > 20 or not request.cursor:match('^[1-9]%d*$') then
+                return nil, foundation.error('INVALID_CURSOR',
+                    'Security diagnostics cursor is invalid.')
+            end
+            cursor = tonumber(request.cursor)
+            if cursor == nil or math.type(cursor) ~= 'integer'
+                or cursor > diagnosticSequence + 1 then
+                return nil, foundation.error('INVALID_CURSOR',
+                    'Security diagnostics cursor is invalid.')
+            end
+        end
+
+        local items, hasMore, matched = {}, false, 0
+        for offset = 0, diagnosticCount - 1 do
+            local slot = ((diagnosticStart + diagnosticCount - 2 - offset)
+                % diagnosticMaximum) + 1
+            local finding = diagnosticFindings[slot]
+            if (cursor == nil or finding.id < cursor)
+                and (category == nil or finding.category == category) then
+                matched = matched + 1
+                if #items < limit then
+                    local projected = foundation.copy(finding)
+                    projected.cursor = tostring(finding.id)
+                    items[#items + 1] = projected
+                else
+                    hasMore = true
+                end
+            end
+        end
+        return {
+            status = 'AVAILABLE',
+            items = items,
+            nextCursor = hasMore and tostring(items[#items].id) or nil,
+            hasMore = hasMore,
+            truncated = hasMore,
+            retained = diagnosticCount,
+            matched = category and matched or nil,
+            maximumRetained = diagnosticMaximum,
+            dropped = diagnosticDropped,
+            retentionTruncated = diagnosticDropped > 0,
+            payloadsExposed = false
+        }, nil
+    end
+
+    function diagnostics:snapshot(limit)
+        local page, pageError = self:page({ limit = limit == nil and 25 or limit })
+        if not page then return nil, pageError end
+        page.categories = foundation.copy(diagnosticCategoryCounts)
+        page.latestId = diagnosticSequence > 0 and diagnosticSequence or nil
+        page.latestTimestampMs = diagnosticSequence > 0 and diagnosticTimestampMs or nil
+        return page, nil
+    end
+
+    local function recordDiagnosticFinding(finding)
+        local recorded, recordError = diagnostics:record(finding)
+        if recorded then return end
+        logger:error('security diagnostic finding rejected', {
+            category = diagnosticTokenOr(finding.category, 'unknown'),
+            code = foundation.failureCode(recordError, 'SECURITY_DIAGNOSTIC_RECORD_FAILED')
+        })
+    end
+
+    local function recordAuthorityDenial(kind, resource, scope, declaration, reason, code)
+        recordDiagnosticFinding({
+            category = kind .. '_authorization',
+            severity = 'WARNING',
+            code = code,
+            resource = diagnosticTokenOr(resource, 'unknown'),
+            scope = diagnosticTokenOr(scope, 'unknown'),
+            operation = kind .. '.' .. declaration,
+            summary = reason == 'foreign_namespace'
+                and ('Foreign %s namespace call rejected.'):format(kind)
+                or ('Undeclared %s call rejected.'):format(kind)
+        })
+    end
+
+    local function recordRateLimitRejection(key, reason)
+        local scope = type(key) == 'string' and key:match('^[^:]+') or nil
+        recordDiagnosticFinding({
+            category = 'rate_limit_rejection',
+            severity = 'WARNING',
+            code = 'RATE_LIMITED',
+            scope = diagnosticTokenOr(scope, 'unknown'),
+            operation = 'rate_limit.consume',
+            summary = reason == 'capacity'
+                and 'Rate-limit bucket capacity rejection.'
+                or 'Rate-limit token budget rejection.'
+        })
+    end
+
     local function auditCapabilityDenial(resource, capability, context, reason)
+        recordDiagnosticFinding({
+            category = 'capability_denial',
+            severity = 'WARNING',
+            code = capabilityDenialCodes[reason] or 'CAPABILITY_DENIED',
+            resource = diagnosticTokenOr(resource, 'unknown'),
+            scope = diagnosticTokenOr(capability, 'unknown'),
+            operation = diagnosticTokenOr(context.operation, 'capability.check'),
+            summary = 'Capability authorization rejected.'
+        })
         if type(auditSink) ~= 'function' then return end
         local key = tostring(resource) .. ':' .. tostring(capability)
         local now = foundation.monotonicMs()
@@ -220,6 +496,8 @@ factories.security = function(deps)
                 metrics:increment('synex_event_authorization_denials_total', {
                     operation = operation, reason = 'foreign_namespace'
                 })
+                recordAuthorityDenial('event', resource, topic, declaration,
+                    'foreign_namespace', 'EVENT_TOPIC_FORBIDDEN')
                 return nil, foundation.error('EVENT_TOPIC_FORBIDDEN',
                     'A resource may publish only within its owned event namespace.')
             end
@@ -230,6 +508,9 @@ factories.security = function(deps)
         metrics:increment('synex_event_authorization_denials_total', {
             operation = operation, reason = 'undeclared'
         })
+        recordAuthorityDenial('event', resource, topic, declaration, 'undeclared',
+            declaration == 'publish' and 'EVENT_PUBLISH_UNDECLARED'
+                or 'EVENT_SUBSCRIBE_UNDECLARED')
         return nil, foundation.error(
             declaration == 'publish' and 'EVENT_PUBLISH_UNDECLARED' or 'EVENT_SUBSCRIBE_UNDECLARED',
             declaration == 'publish'
@@ -259,6 +540,8 @@ factories.security = function(deps)
                 metrics:increment('synex_hook_authorization_denials_total', {
                     operation = declaration, reason = 'foreign_namespace'
                 })
+                recordAuthorityDenial('hook', resource, name, declaration,
+                    'foreign_namespace', 'HOOK_NAME_FORBIDDEN')
                 return nil, foundation.error('HOOK_NAME_FORBIDDEN',
                     'A resource may execute only hooks within its owned namespace.')
             end
@@ -269,6 +552,9 @@ factories.security = function(deps)
         metrics:increment('synex_hook_authorization_denials_total', {
             operation = declaration, reason = 'undeclared'
         })
+        recordAuthorityDenial('hook', resource, name, declaration, 'undeclared',
+            declaration == 'register' and 'HOOK_REGISTER_UNDECLARED'
+                or 'HOOK_RUN_UNDECLARED')
         return nil, foundation.error(
             declaration == 'register' and 'HOOK_REGISTER_UNDECLARED' or 'HOOK_RUN_UNDECLARED',
             declaration == 'register'
@@ -328,6 +614,44 @@ factories.security = function(deps)
             if seen[key] then return nil, foundation.error('DUPLICATE_PERMISSION', 'Role permission entries must be unique.') end
             seen[key] = true
             normalized[#normalized + 1] = { permission = permission, effect = effect }
+        end
+        return normalized, nil
+    end
+
+    local function normalizeEvaluationRules(rules)
+        if type(rules) ~= 'table' or #rules > 512 then
+            return nil, foundation.error('INVALID_PERMISSION_SET',
+                'Permission evaluation rules must be a bounded array.')
+        end
+        local normalized, count = {}, 0
+        for key, candidate in pairs(rules) do
+            count = count + 1
+            if type(key) ~= 'number' or math.type(key) ~= 'integer'
+                or key < 1 or key > #rules or type(candidate) ~= 'table' then
+                return nil, foundation.error('INVALID_PERMISSION_SET',
+                    'Permission evaluation rules must be a dense array of objects.')
+            end
+            local propertyCount = 0
+            for property in pairs(candidate) do
+                propertyCount = propertyCount + 1
+                if property ~= 'permission' and property ~= 'effect' then
+                    return nil, foundation.error('INVALID_PERMISSION_SET',
+                        'Permission evaluation rules contain an unknown property.')
+                end
+            end
+            if propertyCount < 1 or not validPermission(candidate.permission)
+                or (candidate.effect ~= 'allow' and candidate.effect ~= 'deny') then
+                return nil, foundation.error('INVALID_PERMISSION',
+                    ('Permission evaluation rule %d is invalid.'):format(key))
+            end
+            normalized[key] = {
+                permission = candidate.permission,
+                effect = candidate.effect
+            }
+        end
+        if count ~= #rules then
+            return nil, foundation.error('INVALID_PERMISSION_SET',
+                'Permission evaluation rules must be a dense array.')
         end
         return normalized, nil
     end
@@ -586,11 +910,7 @@ factories.security = function(deps)
         return true, nil
     end
 
-    function rbac:check(subject, permission, explicitDenies)
-        if not validSubject(subject) or not validPermission(permission) then return false, nil end
-        local policyCurrent, policyError = ensureRolePolicyCurrent()
-        if not policyCurrent then return false, policyError end
-        if matchesAny(explicitDenies, permission) then return false, nil end
+    local function loadSubjectRoles(subject)
         local roles = subjectRoles[subject] or {}
         if rbacStore then
             local now = foundation.monotonicMs()
@@ -600,7 +920,7 @@ factories.security = function(deps)
                 local currentVersion, versionError = loadCurrentSubjectVersion(subject)
                 if currentVersion == nil then
                     metrics:increment('synex_rbac_cache_total', { result = 'error' })
-                    return false, versionError
+                    return nil, versionError
                 end
                 local refreshedNow = foundation.monotonicMs()
                 if currentVersion == cached.version and cached.expiresAt > refreshedNow then
@@ -617,13 +937,13 @@ factories.security = function(deps)
                 local loaded, loadError = rbacStore:loadSubject(subject)
                 if type(loaded) ~= 'table' or type(loaded.roles) ~= 'table' then
                     metrics:increment('synex_rbac_cache_total', { result = 'error' })
-                    return false, loadError or foundation.error('RBAC_DATA_INVALID',
+                    return nil, loadError or foundation.error('RBAC_DATA_INVALID',
                         'The persistent RBAC subject snapshot is invalid.')
                 end
                 local loadedVersion, versionError = normalizedSubjectVersion(loaded.version)
                 if loadedVersion == nil then
                     metrics:increment('synex_rbac_cache_total', { result = 'error' })
-                    return false, versionError
+                    return nil, versionError
                 end
                 local validForMs = loaded.validForMs
                 if validForMs ~= nil then
@@ -631,20 +951,20 @@ factories.security = function(deps)
                     if not validForMs or math.type(validForMs) ~= 'integer'
                         or validForMs < 0 or validForMs > 31536000000 then
                         metrics:increment('synex_rbac_cache_total', { result = 'error' })
-                        return false, foundation.error('RBAC_DATA_INVALID',
+                        return nil, foundation.error('RBAC_DATA_INVALID',
                             'The persistent RBAC assignment validity is invalid.')
                     end
                 end
                 if #loaded.roles > 512 then
                     metrics:increment('synex_rbac_cache_total', { result = 'error' })
-                    return false, foundation.error('RBAC_DATA_INVALID',
+                    return nil, foundation.error('RBAC_DATA_INVALID',
                         'The persistent RBAC subject assignments exceed the safe bound.')
                 end
                 roles = {}
                 for _, role in ipairs(loaded.roles) do
                     if not validRole(role) then
                         metrics:increment('synex_rbac_cache_total', { result = 'error' })
-                        return false, foundation.error('RBAC_DATA_INVALID',
+                        return nil, foundation.error('RBAC_DATA_INVALID',
                             'The persistent RBAC subject contains an invalid role.')
                     end
                     if rolePermissions[role] then roles[role] = true end
@@ -653,19 +973,154 @@ factories.security = function(deps)
                 metrics:increment('synex_rbac_cache_total', { result = 'miss' })
             end
         end
+        return roles, nil
+    end
+
+    local function preferredEvidence(current, candidate, permission)
+        if not current then return candidate end
+        local candidateExact = candidate.pattern == permission
+        local currentExact = current.pattern == permission
+        if candidateExact ~= currentExact then return candidateExact and candidate or current end
+        if #candidate.pattern ~= #current.pattern then
+            return #candidate.pattern > #current.pattern and candidate or current
+        end
+        local candidateRole = candidate.role or ''
+        local currentRole = current.role or ''
+        if candidateRole ~= currentRole then return candidateRole < currentRole and candidate or current end
+        return candidate.pattern < current.pattern and candidate or current
+    end
+
+    local function evaluateRolePermission(roles, permission, includeEvidence)
         local allowed = false
+        local grantedEvidence, deniedEvidence = nil, nil
         for role in pairs(roles) do
             local permissions = rolePermissions[role]
             if permissions then
                 for denied in pairs(permissions.deny or {}) do
-                    if foundation.wildcardMatch(denied, permission) then return false, nil end
+                    if foundation.wildcardMatch(denied, permission) then
+                        if not includeEvidence then return false, nil end
+                        deniedEvidence = preferredEvidence(deniedEvidence, {
+                            role = role, effect = 'deny', pattern = denied, source = 'role'
+                        }, permission)
+                    end
                 end
                 for granted in pairs(permissions.allow or {}) do
-                    if foundation.wildcardMatch(granted, permission) then allowed = true end
+                    if foundation.wildcardMatch(granted, permission) then
+                        allowed = true
+                        if includeEvidence then
+                            grantedEvidence = preferredEvidence(grantedEvidence, {
+                                role = role, effect = 'allow', pattern = granted, source = 'role'
+                            }, permission)
+                        end
+                    end
                 end
             end
         end
+        if not includeEvidence then return allowed, nil end
+        if deniedEvidence then return false, deniedEvidence end
+        return grantedEvidence ~= nil, grantedEvidence
+    end
+
+    local function validateExplicitDenies(explicitDenies)
+        if explicitDenies == nil then return {}, nil end
+        if type(explicitDenies) ~= 'table' or not foundation.jsonContainerKind(explicitDenies)
+            or #explicitDenies > 512 then
+            return nil, foundation.error('INVALID_PERMISSION_SET',
+                'Explicit permission denies must be a bounded array.')
+        end
+        local count = 0
+        for key, pattern in pairs(explicitDenies) do
+            count = count + 1
+            if count > 512 or type(key) ~= 'number' or math.type(key) ~= 'integer'
+                or key < 1 or key > #explicitDenies
+                or (pattern ~= '*' and not validPermission(pattern)) then
+                return nil, foundation.error('INVALID_PERMISSION_SET',
+                    'Explicit permission denies must contain only valid permission patterns.')
+            end
+        end
+        if count ~= #explicitDenies then
+            return nil, foundation.error('INVALID_PERMISSION_SET',
+                'Explicit permission denies must be a dense array.')
+        end
+        return explicitDenies, nil
+    end
+
+    function rbac:check(subject, permission, explicitDenies)
+        if not validSubject(subject) or not validPermission(permission) then return false, nil end
+        local policyCurrent, policyError = ensureRolePolicyCurrent()
+        if not policyCurrent then return false, policyError end
+        if matchesAny(explicitDenies, permission) then return false, nil end
+        local roles, rolesError = loadSubjectRoles(subject)
+        if not roles then return false, rolesError end
+        local allowed = evaluateRolePermission(roles, permission)
         return allowed, nil
+    end
+
+    function rbac:explain(subject, permission, explicitDenies)
+        if not validSubject(subject) then
+            return nil, foundation.error('INVALID_SUBJECT', 'RBAC subject is invalid.')
+        end
+        if not validPermission(permission) then
+            return nil, foundation.error('INVALID_PERMISSION', 'RBAC permission is invalid.')
+        end
+        local normalizedDenies, deniesError = validateExplicitDenies(explicitDenies)
+        if not normalizedDenies then return nil, deniesError end
+        local policyCurrent, policyError = ensureRolePolicyCurrent()
+        if not policyCurrent then return nil, policyError end
+        for _, pattern in ipairs(normalizedDenies) do
+            if foundation.wildcardMatch(pattern, permission) then
+                return {
+                    allowed = false,
+                    subject = subject,
+                    permission = permission,
+                    matched = { effect = 'deny', pattern = pattern, source = 'explicit' }
+                }, nil
+            end
+        end
+        local roles, rolesError = loadSubjectRoles(subject)
+        if not roles then return nil, rolesError end
+        local allowed, evidence = evaluateRolePermission(roles, permission, true)
+        return {
+            allowed = allowed,
+            subject = subject,
+            permission = permission,
+            matched = evidence
+        }, nil
+    end
+
+    function rbac:evaluateRules(permission, rules)
+        if not validPermission(permission) or permission:find('*', 1, true) then
+            return nil, foundation.error('INVALID_PERMISSION',
+                'The evaluated permission must be a concrete permission identifier.')
+        end
+        local normalized, normalizeError = normalizeEvaluationRules(rules)
+        if not normalized then return nil, normalizeError end
+        local matches = {}
+        local matchedAllows, matchedDenies = 0, 0
+        for index, rule in ipairs(normalized) do
+            if foundation.wildcardMatch(rule.permission, permission) then
+                matches[#matches + 1] = {
+                    index = index,
+                    permission = rule.permission,
+                    effect = rule.effect
+                }
+                if rule.effect == 'deny' then
+                    matchedDenies = matchedDenies + 1
+                else
+                    matchedAllows = matchedAllows + 1
+                end
+            end
+        end
+        local denied = matchedDenies > 0
+        return {
+            permission = permission,
+            allowed = matchedAllows > 0 and not denied,
+            denied = denied,
+            matchedAllows = matchedAllows,
+            matchedDenies = matchedDenies,
+            evaluatedRules = #normalized,
+            matches = matches
+        }, nil
     end
 
     function rbac:invalidate(subject)
@@ -726,6 +1181,7 @@ factories.security = function(deps)
                 metrics:increment('synex_rate_limit_rejections_total', {
                     scope = key:match('^[^:]+') or 'unknown'
                 })
+                recordRateLimitRejection(key, 'capacity')
                 return nil, foundation.error('RATE_LIMITED', 'The operation rate limit was exceeded.', {
                     retryable = true, details = { retryAfterMs = rateLimiterTtlMs }
                 })
@@ -740,6 +1196,7 @@ factories.security = function(deps)
         bucket.touchedAt = now
         if bucket.tokens < cost then
             metrics:increment('synex_rate_limit_rejections_total', { scope = key:match('^[^:]+') or 'unknown' })
+            recordRateLimitRejection(key, 'tokens')
             local retryAfterMs = math.ceil((cost - bucket.tokens) / refillPerSecond * 1000)
             return nil, foundation.error('RATE_LIMITED', 'The operation rate limit was exceeded.', {
                 retryable = true, details = { retryAfterMs = retryAfterMs }
@@ -811,6 +1268,7 @@ factories.security = function(deps)
         capabilities = capabilityPolicy,
         rbac = rbac,
         rateLimiter = limiter,
+        diagnostics = diagnostics,
         validateNetworkEnvelope = validateNetworkEnvelope
     }
 end

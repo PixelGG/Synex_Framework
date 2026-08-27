@@ -145,7 +145,7 @@ WHERE state <> 'applied';
 if ($LASTEXITCODE -ne 0) { throw 'Restored-schema verification query failed.' }
 ```
 
-Require exactly `26` Core migrations and zero non-applied attempts/fences for the current candidate. Then point an isolated FXServer profile—not the normal server—at the drill schema, give it a distinct stable `synex_instance_id`, start only `oxmysql` and the exact candidate `synex_core`, and require:
+Require exactly `26` Core migrations and zero non-applied attempts/fences when reproducing the frozen accepted Core revision. The current source candidate declares migration `027_domain_primitives` and therefore requires a separate 27-migration restore drill and exact-candidate acceptance; do not mix that schema with this frozen-profile evidence. Then point an isolated FXServer profile—not the normal server—at the drill schema, give it a distinct stable `synex_instance_id`, start only `oxmysql` and the exact frozen `synex_core` revision, and require:
 
 ```text
 Core lifecycle: READY

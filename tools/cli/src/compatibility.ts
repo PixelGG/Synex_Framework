@@ -1,4 +1,3 @@
-import { resolve } from "node:path";
 import type {
   JsonSchema,
   LoadedContractCollection,
@@ -8,10 +7,7 @@ import type {
 import {
   canonicalJson,
   compareText,
-  displayPath,
   isRecord,
-  readTextFile,
-  walkFiles,
 } from "./filesystem.ts";
 import { flattenContracts } from "./contracts.ts";
 import { compareVersion, parseVersion } from "./semver.ts";
@@ -324,80 +320,4 @@ export function compareContracts(
   });
 }
 
-interface CompatibilityFinding {
-  framework: "synex" | "qbcore" | "qbx" | "esx" | "vrp" | "ox_core";
-  file: string;
-  line: number;
-  signal: string;
-  migrationNote: string;
-}
-
-interface CompatibilityReport {
-  target: string;
-  filesScanned: number;
-  signatureCounts: Record<CompatibilityFinding["framework"], number>;
-  findings: CompatibilityFinding[];
-  disclaimer: string;
-}
-
-const COMPATIBILITY_PATTERNS: Array<{
-  framework: CompatibilityFinding["framework"];
-  pattern: RegExp;
-  signal: string;
-  migrationNote: string;
-}> = [
-  { framework: "synex", pattern: /(?:exports[\[.]?["']?synex_core|\bSynex\.)/u, signal: "Native Synex API", migrationNote: "No bridge indicated by this signal." },
-  { framework: "qbcore", pattern: /(?:\bQBCore\b|qb-core)/iu, signal: "QBCore API", migrationNote: "Review the QB bridge matrix and mutable PlayerData assumptions." },
-  { framework: "qbx", pattern: /(?:qbx_core|\bQBX\b)/iu, signal: "Qbox API", migrationNote: "Use the QBX-specific bridge; do not treat it as identical to QBCore." },
-  { framework: "esx", pattern: /(?:\bESX\b|es_extended|\bxPlayer\b)/u, signal: "ESX API", migrationNote: "Review xPlayer, callback, account, and job mappings." },
-  { framework: "vrp", pattern: /(?:\bvRP\b|Tunnel\.bindInterface|Proxy\.getInterface)/u, signal: "vRP API", migrationNote: "Review extension and Tunnel semantics manually." },
-  { framework: "ox_core", pattern: /(?:ox_core|OxPlayer|OxAccount)/u, signal: "ox_core API", migrationNote: "Review relational domain and group/account mappings." },
-];
-
-export async function scanCompatibility(
-  repositoryRoot: string,
-  target = repositoryRoot,
-): Promise<CompatibilityReport> {
-  const files = await walkFiles(resolve(target), (path) => path.endsWith(".lua"), { skipTopLevelTests: true });
-  const findings: CompatibilityFinding[] = [];
-  const counts: CompatibilityReport["signatureCounts"] = {
-    synex: 0,
-    qbcore: 0,
-    qbx: 0,
-    esx: 0,
-    vrp: 0,
-    ox_core: 0,
-  };
-
-  for (const file of files) {
-    let text: string;
-    try {
-      text = await readTextFile(file);
-    } catch {
-      continue;
-    }
-    const lines = text.replace(/\r\n?/gu, "\n").split("\n");
-    for (let index = 0; index < lines.length; index += 1) {
-      const line = lines[index] ?? "";
-      for (const definition of COMPATIBILITY_PATTERNS) {
-        if (!definition.pattern.test(line)) continue;
-        counts[definition.framework] += 1;
-        findings.push({
-          framework: definition.framework,
-          file: displayPath(repositoryRoot, file),
-          line: index + 1,
-          signal: definition.signal,
-          migrationNote: definition.migrationNote,
-        });
-      }
-    }
-  }
-
-  return {
-    target: displayPath(repositoryRoot, resolve(target)),
-    filesScanned: files.length,
-    signatureCounts: counts,
-    findings,
-    disclaimer: "Signature detection identifies APIs for migration review; it does not prove behavioral compatibility.",
-  };
-}
+export * from "./compatibility/index.ts";

@@ -10,7 +10,7 @@
       "job": "{\"name\":\"mechanic\",\"grade\":{\"level\":2}}",
       "gang": "{\"name\":\"none\",\"grade\":{\"level\":0}}",
       "vehicles": [{ "fixture": true }],
-      "metadata": { "fixture": true }
+      "metadata": { "hunger": 35 }
     }
   ]
 }

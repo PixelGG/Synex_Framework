@@ -7,9 +7,11 @@
     "firstName": "charinfo.firstname",
     "lastName": "charinfo.lastname",
     "money": { "cash": "money.cash", "bank": "money.bank" },
-    "job": { "name": "job.name", "grade": "job.grade.level" },
-    "group": { "name": "gang.name", "grade": "gang.grade.level" },
     "vehicles": "vehicles",
     "metadata": "metadata"
+  },
+  "compatibilityMetadata": {
+    "catalogDigest": "aa5f22fa8d8471295e58349cd220520c7bd39140c55736e81b48946272edfb71",
+    "mappingIds": ["qbx.hunger"]
   }
 }

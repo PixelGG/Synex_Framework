@@ -1,0 +1,7 @@
+{
+  "$schema": "./schemas/consumers.schema.json",
+  "schema": 1,
+  "kind": "synex-compatibility-consumers",
+  "defaultMode": "strict",
+  "consumers": []
+}

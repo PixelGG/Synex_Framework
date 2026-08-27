@@ -20,6 +20,7 @@ import {
   type Scanner,
   type SourceFile,
 } from "typescript/unstable/ast";
+import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 
 import type {
@@ -41,6 +42,10 @@ import {
 const SECURITY_DISCLAIMER =
   "Static analysis reports review candidates; it does not prove that a resource is secure or production-ready.";
 const LUA_DYNAMIC_CODE_PATTERN = /(?<![:.])\b(?:loadstring|load)\s*\(/u;
+const REVIEWED_MANIFEST_LOADER = {
+  file: "resources/synex_groups/server/module_loader.lua",
+  normalizedSha256: "c420e2a42a628704272d27ea9169c7472d545b3b7ee5be34aea4f88e79cbba90",
+} as const;
 const SEVERITY_ORDER: Record<SecuritySeverity, number> = {
   critical: 0,
   high: 1,
@@ -217,6 +222,27 @@ function luaNodeLine(node: LuaAstNode): number {
   return node.loc?.start?.line ?? 1;
 }
 
+function reviewedManifestLoaderDynamicLine(text: string, file: string): number | null {
+  if (file.replace(/\\/gu, "/") !== REVIEWED_MANIFEST_LOADER.file) return null;
+
+  const normalizedText = text.replace(/\r\n?/gu, "\n");
+  const digest = createHash("sha256").update(normalizedText, "utf8").digest("hex");
+  if (digest !== REVIEWED_MANIFEST_LOADER.normalizedSha256) return null;
+
+  const parsed = parseLuaAst(text);
+  if (!parsed.ast) return null;
+  const dynamicCalls: Array<{ call: string; line: number }> = [];
+  walkLuaAst(parsed.ast, (node) => {
+    if (node.type !== "CallExpression") return;
+    const call = luaExpressionName(node.base);
+    if (call === "load" || call === "loadstring") {
+      dynamicCalls.push({ call, line: luaNodeLine(node) });
+    }
+  });
+  if (dynamicCalls.length !== 1 || dynamicCalls[0]?.call !== "load") return null;
+  return dynamicCalls[0].line;
+}
+
 function addLineFinding(
   findings: SecurityFinding[],
   lines: string[],
@@ -259,6 +285,7 @@ const KNOWN_MALICIOUS_HOSTS = [
 export function scanLuaText(text: string, file = "<memory>"): SecurityFinding[] {
   const lines = text.replace(/\r\n?/gu, "\n").split("\n");
   const findings: SecurityFinding[] = [];
+  const reviewedDynamicLine = reviewedManifestLoaderDynamicLine(text, file);
 
   addLineFinding(
     findings,
@@ -270,16 +297,20 @@ export function scanLuaText(text: string, file = "<memory>"): SecurityFinding[] 
     /\b(?:os\.execute|io\.popen)\s*\(/u,
     "OS command execution has no expected role in a FiveM resource and requires immediate review.",
   );
-  addLineFinding(
-    findings,
-    lines,
-    file,
-    "lua-dynamic-code",
-    "high",
-    "medium",
-    LUA_DYNAMIC_CODE_PATTERN,
-    "Dynamic Lua execution is dangerous; confirm that the code is local, fixed, and never attacker-controlled.",
-  );
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line !== undefined && LUA_DYNAMIC_CODE_PATTERN.test(line) && reviewedDynamicLine !== index + 1) {
+      findings.push({
+        severity: "high",
+        confidence: "medium",
+        rule: "lua-dynamic-code",
+        file,
+        line: index + 1,
+        explanation: "Dynamic Lua execution is dangerous; confirm that the code is local, fixed, and never attacker-controlled.",
+        evidence: redactEvidence(line),
+      });
+    }
+  }
   addLineFinding(
     findings,
     lines,
@@ -445,7 +476,7 @@ export function scanLuaText(text: string, file = "<memory>"): SecurityFinding[] 
           evidence: call,
         });
       }
-      if (call === "load" || call === "loadstring") {
+      if ((call === "load" || call === "loadstring") && reviewedDynamicLine !== line) {
         findings.push({
           severity: "high",
           confidence: "high",

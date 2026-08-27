@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve, sep } from "node:path";
 import {
   connectImportDatabase,
@@ -7,6 +7,34 @@ import {
   LegacyImportError,
   loadReviewedMigrationPlan,
 } from "./importer.ts";
+import {
+  MAX_MIGRATION_ARTIFACT_BYTES,
+  MAX_MIGRATION_CHARACTERS,
+  MAX_MIGRATION_CURRENCIES,
+  MAX_MIGRATION_ISSUES,
+  MAX_MIGRATION_MEMBERSHIPS,
+} from "./limits.ts";
+import { pathContainsSymbolicLink } from "./path-safety.ts";
+import {
+  type CompatibilityMetadataCatalog,
+  type CompatibilityMetadataDefinition,
+  compatibilityMetadataValueIsValid,
+  loadCompatibilityMetadataCatalog,
+  selectCompatibilityMetadataDefinitions,
+} from "./compatibility-metadata.ts";
+import {
+  type CompatibilityAccountCatalog,
+  type CompatibilityAccountDefinition,
+  loadCompatibilityAccountCatalog,
+  ownerScopedCompatibilityAccountKey,
+  selectCompatibilityAccountDefinitions,
+} from "./compatibility-accounts.ts";
+import {
+  type CompatibilityGroupCatalog,
+  type CompatibilityGroupDefinition,
+  loadCompatibilityGroupCatalog,
+  selectCompatibilityGroupDefinitions,
+} from "./compatibility-groups.ts";
 
 export type LegacyFramework = "qb" | "qbx" | "esx";
 
@@ -26,11 +54,23 @@ export interface MigrationMapping {
     characterId: string;
     firstName: string;
     lastName: string;
-    money: { cash: string; bank: string };
+    money: Record<string, string>;
     job?: { name: string; grade: string };
     group?: { name: string; grade: string };
     vehicles?: string;
     metadata?: string;
+  };
+  compatibilityGroups?: {
+    catalogDigest: string;
+    definitions: CompatibilityGroupDefinition[];
+  };
+  compatibilityAccounts: {
+    catalogDigest: string;
+    definitions: CompatibilityAccountDefinition[];
+  };
+  compatibilityMetadata?: {
+    catalogDigest: string;
+    definitions: CompatibilityMetadataDefinition[];
   };
 }
 
@@ -59,9 +99,58 @@ export interface MigrationPlan {
       conflicts: number;
     };
     economy: {
-      source: { cash: string; bank: string };
-      transformed: { cash: string; bank: string };
+      source: Record<string, string>;
+      transformed: Record<string, string>;
       conserved: boolean;
+    };
+    accounts: {
+      catalogDigest: string;
+      mappingIds: string[];
+      evidenceDigest: string;
+      targetTable: "synex_accounts";
+      ownerScopedKeys: true;
+      directBalanceWrites: false;
+    };
+    groups: {
+      catalogDigest: string | null;
+      mappingIds: string[];
+      evidenceDigest: string;
+      targetTables: [
+        "synex_group_memberships",
+        "synex_group_membership_profiles",
+        "synex_group_membership_grades",
+        "synex_group_primary_memberships_by_type",
+      ];
+      createsGroups: false;
+      createsGrades: false;
+    };
+    identity: {
+      identifierTypes: Record<string, number>;
+      evidenceDigest: string;
+      preservationPlan: {
+        artifact: "id-map.json";
+        classification: "restricted-personal-data";
+        targetTables: [
+          "synex_identifiers",
+          "synex_legacy_id_mappings",
+          "synex_compatibility_identities",
+        ];
+        rawValuesInReport: false;
+        credentialsCaptured: false;
+      };
+    };
+    metadata: {
+      catalogDigest: string | null;
+      mappingIds: string[];
+      evidenceDigest: string;
+      sourceEntries: number;
+      transformedEntries: number;
+      omittedEntries: number;
+      rejectedEntries: number;
+      targetTable: "synex_compatibility_metadata";
+      valuesInReport: false;
+      blobCopied: false;
+      credentialsCaptured: false;
     };
     unsupported: MigrationIssue[];
     unsupportedTruncated: number;
@@ -88,15 +177,34 @@ export interface MigrationPlan {
     }>;
     openingBalances: Array<{
       characterId: string;
-      currency: "bank" | "cash";
+      alias: string;
+      mappingId: string;
+      mappingVersion: string;
+      currency: string;
+      accountKey: string;
+      accountRole: "asset";
+      minorUnit: number;
       amount: number;
       reason: "legacy_migration_opening_balance";
     }>;
     groups: Array<{
       characterId: string;
-      kind: "group" | "job";
-      name: string;
-      grade: number;
+      legacyType: "gang" | "job";
+      legacyName: string;
+      legacyGrade: number;
+      mappingId: string;
+      mappingVersion: string;
+      nativeGroupType: string;
+      nativeGroupKey: string;
+      gradeKey: string;
+      primary: true;
+    }>;
+    metadata: Array<{
+      characterId: string;
+      mappingId: string;
+      mappingVersion: string;
+      metadataKey: string;
+      value: boolean | number | string;
     }>;
   };
 }
@@ -116,10 +224,8 @@ export class MigrationError extends Error {
   }
 }
 
-const MAX_SOURCE_BYTES = 16 * 1024 * 1024;
-const MAX_RECORDS = 100_000;
-const MAX_ISSUES = 1_000;
 const PATH_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*){0,11}$/u;
+const GROUP_KEY_PATTERN = /^[a-z][a-z0-9_.:-]{0,63}$/u;
 const FRAMEWORKS = new Set<LegacyFramework>(["qb", "qbx", "esx"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -207,7 +313,7 @@ function countUnsupportedValue(value: unknown): number {
 }
 
 function pushBoundedIssue(target: MigrationIssue[], issue: MigrationIssue): void {
-  if (target.length < MAX_ISSUES) target.push(issue);
+  if (target.length < MAX_MIGRATION_ISSUES) target.push(issue);
 }
 
 function validateFramework(value: unknown, label: string): asserts value is LegacyFramework {
@@ -219,14 +325,21 @@ function validateFramework(value: unknown, label: string): asserts value is Lega
 export function validateSource(value: unknown): MigrationSource {
   if (!isRecord(value) || value.schema !== 1) throw new MigrationError("Source schema must equal 1.");
   validateFramework(value.framework, "Source framework");
-  if (!Array.isArray(value.records) || value.records.length > MAX_RECORDS) {
-    throw new MigrationError(`Source records must be an array with at most ${MAX_RECORDS} entries.`);
+  if (!Array.isArray(value.records) || value.records.length > MAX_MIGRATION_CHARACTERS) {
+    throw new MigrationError(
+      `Source records must be an array with at most ${MAX_MIGRATION_CHARACTERS} entries.`,
+    );
   }
   if (!value.records.every(isRecord)) throw new MigrationError("Every source record must be an object.");
   return { schema: 1, framework: value.framework, records: value.records };
 }
 
-export function validateMapping(value: unknown): MigrationMapping {
+export function validateMapping(
+  value: unknown,
+  metadataCatalog?: CompatibilityMetadataCatalog,
+  accountCatalog?: CompatibilityAccountCatalog,
+  groupCatalog?: CompatibilityGroupCatalog,
+): MigrationMapping {
   if (!isRecord(value) || value.schema !== 1) throw new MigrationError("Mapping schema must equal 1.");
   validateFramework(value.framework, "Mapping framework");
   if (!isRecord(value.fields) || !isRecord(value.fields.money)) {
@@ -237,15 +350,38 @@ export function validateMapping(value: unknown): MigrationMapping {
   validatePath(value.fields.characterId, "fields.characterId");
   validatePath(value.fields.firstName, "fields.firstName");
   validatePath(value.fields.lastName, "fields.lastName");
-  validatePath(value.fields.money.cash, "fields.money.cash");
-  validatePath(value.fields.money.bank, "fields.money.bank");
+  const accountAliases = Object.keys(value.fields.money).sort(compareText);
+  if (accountAliases.length === 0 || accountAliases.length > MAX_MIGRATION_CURRENCIES) {
+    throw new MigrationError(
+      `fields.money must map between 1 and ${MAX_MIGRATION_CURRENCIES} account aliases.`,
+    );
+  }
+  const money: Record<string, string> = {};
+  for (const alias of accountAliases) {
+    const path = value.fields.money[alias];
+    validatePath(path, `fields.money.${alias}`);
+    money[alias] = path;
+  }
+  if (!accountCatalog) {
+    throw new MigrationError("fields.money requires the checked-in compatibility account catalog.");
+  }
+  let accountDefinitions: CompatibilityAccountDefinition[];
+  try {
+    accountDefinitions = selectCompatibilityAccountDefinitions(
+      accountCatalog,
+      value.framework,
+      accountAliases,
+    );
+  } catch (error) {
+    throw new MigrationError(error instanceof Error ? error.message : "Account mappings are invalid.");
+  }
 
   const fields: MigrationMapping["fields"] = {
     userId: value.fields.userId,
     characterId: value.fields.characterId,
     firstName: value.fields.firstName,
     lastName: value.fields.lastName,
-    money: { cash: value.fields.money.cash, bank: value.fields.money.bank },
+    money,
   };
 
   if (value.fields.job !== undefined) {
@@ -268,7 +404,77 @@ export function validateMapping(value: unknown): MigrationMapping {
     validatePath(value.fields.metadata, "fields.metadata");
     fields.metadata = value.fields.metadata;
   }
-  return { schema: 1, framework: value.framework, fields };
+  if (value.groupMappings !== undefined) {
+    throw new MigrationError(
+      "groupMappings is obsolete; use catalog-bound compatibilityGroups mappings.",
+    );
+  }
+  let compatibilityGroups: MigrationMapping["compatibilityGroups"];
+  if (fields.job !== undefined || fields.group !== undefined) {
+    if (!groupCatalog || !isRecord(value.compatibilityGroups)
+      || Object.keys(value.compatibilityGroups).length !== 2
+      || typeof value.compatibilityGroups.catalogDigest !== "string"
+      || value.compatibilityGroups.catalogDigest !== groupCatalog.digest) {
+      throw new MigrationError(
+        "fields.job and fields.group require an exact compatibilityGroups catalog digest and mapping selection.",
+      );
+    }
+    let definitions: CompatibilityGroupDefinition[];
+    try {
+      definitions = selectCompatibilityGroupDefinitions(
+        groupCatalog,
+        value.framework,
+        value.compatibilityGroups.mappingIds,
+      );
+    } catch (error) {
+      throw new MigrationError(error instanceof Error ? error.message : "Group mappings are invalid.");
+    }
+    compatibilityGroups = { catalogDigest: groupCatalog.digest, definitions };
+  } else if (value.compatibilityGroups !== undefined) {
+    throw new MigrationError(
+      "compatibilityGroups is valid only when fields.job or fields.group is configured.",
+    );
+  }
+  let compatibilityMetadata: MigrationMapping["compatibilityMetadata"];
+  if (fields.metadata !== undefined) {
+    if (!metadataCatalog || !isRecord(value.compatibilityMetadata)
+      || Object.keys(value.compatibilityMetadata).length !== 2
+      || typeof value.compatibilityMetadata.catalogDigest !== "string"
+      || value.compatibilityMetadata.catalogDigest !== metadataCatalog.digest) {
+      throw new MigrationError(
+        "fields.metadata requires an exact compatibilityMetadata catalog digest and mapping selection.",
+      );
+    }
+    let definitions: CompatibilityMetadataDefinition[];
+    try {
+      definitions = selectCompatibilityMetadataDefinitions(
+        metadataCatalog,
+        value.framework,
+        value.compatibilityMetadata.mappingIds,
+      );
+    } catch (error) {
+      throw new MigrationError(error instanceof Error ? error.message : "Metadata mappings are invalid.");
+    }
+    compatibilityMetadata = {
+      catalogDigest: metadataCatalog.digest,
+      definitions,
+    };
+  } else if (value.compatibilityMetadata !== undefined) {
+    throw new MigrationError("compatibilityMetadata is valid only when fields.metadata is configured.");
+  }
+  const compatibilityAccounts = {
+    catalogDigest: accountCatalog.digest,
+    definitions: accountDefinitions,
+  };
+  const validated: MigrationMapping = {
+    schema: 1,
+    framework: value.framework,
+    fields,
+    compatibilityAccounts,
+    ...(compatibilityGroups ? { compatibilityGroups } : {}),
+    ...(compatibilityMetadata ? { compatibilityMetadata } : {}),
+  };
+  return validated;
 }
 
 export function buildMigrationPlan(
@@ -286,15 +492,43 @@ export function buildMigrationPlan(
   const characters: MigrationPlan["bundle"]["characters"] = [];
   const openingBalances: MigrationPlan["bundle"]["openingBalances"] = [];
   const groups: MigrationPlan["bundle"]["groups"] = [];
+  const metadata: MigrationPlan["bundle"]["metadata"] = [];
   const slotsByUser = new Map<string, number>();
   const unsupported: MigrationIssue[] = [];
   const conflicts: MigrationIssue[] = [];
   let unsupportedCount = 0;
   let conflictCount = 0;
   let vehicleCount = 0;
-  let metadataCount = 0;
-  const sourceEconomy = { cash: 0n, bank: 0n };
-  const transformedEconomy = { cash: 0n, bank: 0n };
+  let metadataSourceCount = 0;
+  let metadataOmittedCount = 0;
+  let metadataRejectedCount = 0;
+  const accountDefinitionsByAlias = new Map(
+    mapping.compatibilityAccounts.definitions.map((definition) => [definition.alias, definition]),
+  );
+  const accountMappings = Object.entries(mapping.fields.money)
+    .sort(([left], [right]) => compareText(left, right))
+    .map(([alias, path]) => {
+      const definition = accountDefinitionsByAlias.get(alias);
+      if (!definition) throw new MigrationError(`Account alias ${alias} lost its catalog binding.`);
+      return { alias, path, definition };
+    });
+  const sourceEconomy = Object.fromEntries(
+    accountMappings.map(({ alias }) => [alias, 0n]),
+  ) as Record<string, bigint>;
+  const transformedEconomy = Object.fromEntries(
+    accountMappings.map(({ alias }) => [alias, 0n]),
+  ) as Record<string, bigint>;
+  const groupDefinitions = mapping.compatibilityGroups?.definitions ?? [];
+  const groupMappingsByLegacy = new Map(
+    groupDefinitions.map((entry) => [
+      `${entry.legacyType}:${entry.legacyName}`,
+      entry,
+    ]),
+  );
+  const metadataDefinitions = mapping.compatibilityMetadata?.definitions ?? [];
+  const metadataByLegacyKey = new Map(
+    metadataDefinitions.map((definition) => [definition.key, definition]),
+  );
 
   source.records.forEach((record, index) => {
     const recordNumber = index + 1;
@@ -302,16 +536,18 @@ export function buildMigrationPlan(
     const legacyCharacterId = mappedString(record, mapping.fields.characterId, 128);
     const firstName = mappedString(record, mapping.fields.firstName, 64);
     const lastName = mappedString(record, mapping.fields.lastName, 64);
-    const cash = mappedInteger(record, mapping.fields.money.cash);
-    const bank = mappedInteger(record, mapping.fields.money.bank);
+    const mappedMoney = accountMappings.map(({ alias, path, definition }) => ({
+      alias,
+      definition,
+      amount: mappedInteger(record, path),
+    }));
 
     const required: Array<[string, unknown]> = [
       ["userId", legacyUserId],
       ["characterId", legacyCharacterId],
       ["firstName", firstName],
       ["lastName", lastName],
-      ["money.cash", cash],
-      ["money.bank", bank],
+      ...mappedMoney.map(({ alias, amount }) => [`money.${alias}`, amount] as [string, unknown]),
     ];
     for (const [field, value] of required) {
       if (value === null) {
@@ -341,21 +577,61 @@ export function buildMigrationPlan(
         });
       }
     }
+    const preparedMetadata: Array<{
+      definition: CompatibilityMetadataDefinition;
+      value: boolean | number | string;
+    }> = [];
     if (mapping.fields.metadata) {
-      const count = countUnsupportedValue(readMapped(record, mapping.fields.metadata));
-      if (count > 0) {
-        metadataCount += count;
-        unsupportedCount += 1;
-        pushBoundedIssue(unsupported, {
-          record: recordNumber,
-          field: "metadata",
-          reason: "reported_but_not_transformed",
-        });
+      const rawMetadata = readMapped(record, mapping.fields.metadata);
+      if (rawMetadata !== undefined && rawMetadata !== null && rawMetadata !== "") {
+        if (!isRecord(rawMetadata)) {
+          const rejected = countUnsupportedValue(rawMetadata);
+          metadataSourceCount += rejected;
+          metadataRejectedCount += rejected;
+          conflictCount += 1;
+          pushBoundedIssue(conflicts, {
+            record: recordNumber,
+            field: "metadata",
+            reason: "invalid_metadata_container",
+          });
+        } else {
+          const sourceKeys = Object.keys(rawMetadata);
+          metadataSourceCount += sourceKeys.length;
+          const omitted = sourceKeys.filter((key) => !metadataByLegacyKey.has(key)).length;
+          if (omitted > 0) {
+            metadataOmittedCount += omitted;
+            unsupportedCount += 1;
+            pushBoundedIssue(unsupported, {
+              record: recordNumber,
+              field: "metadata",
+              reason: "unmapped_or_forbidden_fields_omitted",
+            });
+          }
+          for (const definition of metadataDefinitions) {
+            if (!Object.hasOwn(rawMetadata, definition.key)) continue;
+            const candidate = rawMetadata[definition.key];
+            if (!compatibilityMetadataValueIsValid(definition, candidate)) {
+              metadataRejectedCount += 1;
+              conflictCount += 1;
+              pushBoundedIssue(conflicts, {
+                record: recordNumber,
+                field: `metadata.${definition.key}`,
+                reason: "invalid_mapped_metadata_value",
+              });
+              continue;
+            }
+            preparedMetadata.push({
+              definition,
+              value: candidate as boolean | number | string,
+            });
+          }
+        }
       }
     }
 
-    if (cash !== null) sourceEconomy.cash += BigInt(cash);
-    if (bank !== null) sourceEconomy.bank += BigInt(bank);
+    for (const { alias, amount } of mappedMoney) {
+      if (amount !== null) sourceEconomy[alias] = (sourceEconomy[alias] ?? 0n) + BigInt(amount);
+    }
     if (required.some(([, value]) => value === null) || !platformIdentifierValid) return;
 
     const safeUserId = legacyUserId as string;
@@ -398,20 +674,38 @@ export function buildMigrationPlan(
       firstName: firstName as string,
       lastName: lastName as string,
     });
+    for (const entry of preparedMetadata) {
+      metadata.push({
+        characterId: synexCharacterId,
+        mappingId: entry.definition.id,
+        mappingVersion: entry.definition.version,
+        metadataKey: entry.definition.storageKey,
+        value: entry.value,
+      });
+    }
 
-    for (const [currency, amount] of [["cash", cash], ["bank", bank]] as const) {
+    for (const { alias, definition, amount } of mappedMoney) {
       openingBalances.push({
         characterId: synexCharacterId,
-        currency,
+        alias,
+        mappingId: definition.id,
+        mappingVersion: definition.version,
+        currency: definition.currencyCode,
+        accountKey: ownerScopedCompatibilityAccountKey(definition, synexCharacterId),
+        accountRole: definition.accountRole,
+        minorUnit: definition.minorUnit,
         amount: amount as number,
         reason: "legacy_migration_opening_balance",
       });
-      transformedEconomy[currency] += BigInt(amount as number);
+      transformedEconomy[alias] = (transformedEconomy[alias] ?? 0n) + BigInt(amount as number);
     }
 
-    const mappedGroups: Array<{ kind: "group" | "job"; mapping: { name: string; grade: string } }> = [];
-    if (mapping.fields.job) mappedGroups.push({ kind: "job", mapping: mapping.fields.job });
-    if (mapping.fields.group) mappedGroups.push({ kind: "group", mapping: mapping.fields.group });
+    const mappedGroups: Array<{
+      legacyType: "gang" | "job";
+      mapping: { name: string; grade: string };
+    }> = [];
+    if (mapping.fields.job) mappedGroups.push({ legacyType: "job", mapping: mapping.fields.job });
+    if (mapping.fields.group) mappedGroups.push({ legacyType: "gang", mapping: mapping.fields.group });
     for (const entry of mappedGroups) {
       const name = mappedString(record, entry.mapping.name, 64);
       const grade = mappedInteger(record, entry.mapping.grade);
@@ -420,31 +714,90 @@ export function buildMigrationPlan(
         conflictCount += 1;
         pushBoundedIssue(conflicts, {
           record: recordNumber,
-          field: entry.kind,
+          field: entry.legacyType,
           reason: "incomplete_or_invalid_group_mapping",
         });
         continue;
       }
-      groups.push({ characterId: synexCharacterId, kind: entry.kind, name, grade });
+      const normalizedName = name.toLowerCase();
+      const definition = groupMappingsByLegacy.get(`${entry.legacyType}:${normalizedName}`);
+      if (!definition) {
+        conflictCount += 1;
+        pushBoundedIssue(conflicts, {
+          record: recordNumber,
+          field: entry.legacyType,
+          reason: entry.legacyType === "job" ? "unknown_job_mapping" : "unknown_gang_mapping",
+        });
+        continue;
+      }
+      const gradeDefinition = definition.grades.find((candidate) => candidate.legacyGrade === grade);
+      if (!gradeDefinition) {
+        conflictCount += 1;
+        pushBoundedIssue(conflicts, {
+          record: recordNumber,
+          field: entry.legacyType,
+          reason: "unknown_grade_mapping",
+        });
+        continue;
+      }
+      groups.push({
+        characterId: synexCharacterId,
+        legacyType: entry.legacyType,
+        legacyName: normalizedName,
+        legacyGrade: grade,
+        mappingId: definition.id,
+        mappingVersion: definition.version,
+        nativeGroupType: definition.nativeGroupType,
+        nativeGroupKey: definition.nativeGroupKey,
+        gradeKey: gradeDefinition.gradeKey,
+        primary: true,
+      });
     }
   });
+
+  for (const { alias } of accountMappings) {
+    if ((sourceEconomy[alias] ?? 0n) > BigInt(Number.MAX_SAFE_INTEGER)) {
+      conflictCount += 1;
+      pushBoundedIssue(conflicts, {
+        record: 0,
+        field: `money.${alias}`,
+        reason: "account_total_exceeds_safe_integer",
+      });
+    }
+  }
 
   users.sort((left, right) => compareText(left.legacyId, right.legacyId));
   characters.sort((left, right) => compareText(left.legacyId, right.legacyId));
   openingBalances.sort((left, right) =>
-    compareText(left.characterId, right.characterId) || compareText(left.currency, right.currency),
+    compareText(left.characterId, right.characterId) || compareText(left.alias, right.alias),
   );
   groups.sort((left, right) =>
     compareText(left.characterId, right.characterId)
-      || compareText(left.kind, right.kind)
-      || compareText(left.name, right.name),
+      || compareText(left.legacyType, right.legacyType)
+      || compareText(left.nativeGroupType, right.nativeGroupType)
+      || compareText(left.nativeGroupKey, right.nativeGroupKey)
+      || compareText(left.gradeKey, right.gradeKey),
+  );
+  metadata.sort((left, right) =>
+    compareText(left.characterId, right.characterId)
+      || compareText(left.metadataKey, right.metadataKey)
+      || compareText(left.mappingId, right.mappingId),
   );
   conflicts.sort((left, right) => left.record - right.record || compareText(left.field, right.field));
   unsupported.sort((left, right) => left.record - right.record || compareText(left.field, right.field));
 
-  const conserved = sourceEconomy.cash === transformedEconomy.cash
-    && sourceEconomy.bank === transformedEconomy.bank;
+  const conserved = accountMappings.every(({ alias }) =>
+    (sourceEconomy[alias] ?? 0n) === (transformedEconomy[alias] ?? 0n));
   const mappingDigest = digest(canonicalJson(mapping));
+  const identifierTypes: Record<string, number> = {};
+  for (const user of users) {
+    const separator = user.legacyId.indexOf(":");
+    const type = separator > 0 ? user.legacyId.slice(0, separator).toLowerCase() : "unknown";
+    identifierTypes[type] = (identifierTypes[type] ?? 0) + 1;
+  }
+  const identityEvidenceDigest = digest(canonicalJson(
+    users.map((entry) => digest(entry.legacyId)).sort(compareText),
+  ));
   const reportWithoutDigest = {
     schema: 1 as const,
     artifactKind: "synex-legacy-migration-plan" as const,
@@ -457,14 +810,78 @@ export function buildMigrationPlan(
       moneyEntries: openingBalances.length,
       groups: groups.length,
       vehicles: vehicleCount,
-      metadata: metadataCount,
+      metadata: metadata.length,
       unsupported: unsupportedCount,
       conflicts: conflictCount,
     },
     economy: {
-      source: { cash: sourceEconomy.cash.toString(), bank: sourceEconomy.bank.toString() },
-      transformed: { cash: transformedEconomy.cash.toString(), bank: transformedEconomy.bank.toString() },
+      source: Object.fromEntries(accountMappings.map(({ alias }) => [
+        alias, (sourceEconomy[alias] ?? 0n).toString(),
+      ])),
+      transformed: Object.fromEntries(accountMappings.map(({ alias }) => [
+        alias, (transformedEconomy[alias] ?? 0n).toString(),
+      ])),
       conserved,
+    },
+    accounts: {
+      catalogDigest: mapping.compatibilityAccounts.catalogDigest,
+      mappingIds: mapping.compatibilityAccounts.definitions.map((definition) => definition.id),
+      evidenceDigest: digest(canonicalJson(openingBalances)),
+      targetTable: "synex_accounts" as const,
+      ownerScopedKeys: true as const,
+      directBalanceWrites: false as const,
+    },
+    groups: {
+      catalogDigest: mapping.compatibilityGroups?.catalogDigest ?? null,
+      mappingIds: groupDefinitions.map((definition) => definition.id),
+      evidenceDigest: digest(canonicalJson(groups)),
+      targetTables: [
+        "synex_group_memberships",
+        "synex_group_membership_profiles",
+        "synex_group_membership_grades",
+        "synex_group_primary_memberships_by_type",
+      ] as [
+        "synex_group_memberships",
+        "synex_group_membership_profiles",
+        "synex_group_membership_grades",
+        "synex_group_primary_memberships_by_type",
+      ],
+      createsGroups: false as const,
+      createsGrades: false as const,
+    },
+    identity: {
+      identifierTypes: Object.fromEntries(
+        Object.entries(identifierTypes).sort(([left], [right]) => compareText(left, right)),
+      ),
+      evidenceDigest: identityEvidenceDigest,
+      preservationPlan: {
+        artifact: "id-map.json" as const,
+        classification: "restricted-personal-data" as const,
+        targetTables: [
+          "synex_identifiers",
+          "synex_legacy_id_mappings",
+          "synex_compatibility_identities",
+        ] as [
+          "synex_identifiers",
+          "synex_legacy_id_mappings",
+          "synex_compatibility_identities",
+        ],
+        rawValuesInReport: false as const,
+        credentialsCaptured: false as const,
+      },
+    },
+    metadata: {
+      catalogDigest: mapping.compatibilityMetadata?.catalogDigest ?? null,
+      mappingIds: metadataDefinitions.map((definition) => definition.id),
+      evidenceDigest: digest(canonicalJson(metadata)),
+      sourceEntries: metadataSourceCount,
+      transformedEntries: metadata.length,
+      omittedEntries: metadataOmittedCount,
+      rejectedEntries: metadataRejectedCount,
+      targetTable: "synex_compatibility_metadata" as const,
+      valuesInReport: false as const,
+      blobCopied: false as const,
+      credentialsCaptured: false as const,
     },
     unsupported,
     unsupportedTruncated: Math.max(0, unsupportedCount - unsupported.length),
@@ -488,14 +905,18 @@ export function buildMigrationPlan(
       characters,
       openingBalances,
       groups,
+      metadata,
     },
   };
 }
 
 async function loadBoundedJson(path: string, label: string): Promise<{ raw: string; value: unknown }> {
-  const metadata = await stat(path);
-  if (!metadata.isFile() || metadata.size > MAX_SOURCE_BYTES) {
-    throw new MigrationError(`${label} must be a file no larger than ${MAX_SOURCE_BYTES} bytes.`);
+  const metadata = await lstat(path);
+  if (!metadata.isFile() || metadata.isSymbolicLink() || await pathContainsSymbolicLink(path)
+    || metadata.size > MAX_MIGRATION_ARTIFACT_BYTES) {
+    throw new MigrationError(
+      `${label} must be a regular non-symlink file no larger than ${MAX_MIGRATION_ARTIFACT_BYTES} bytes.`,
+    );
   }
   const raw = await readFile(path, "utf8");
   try {
@@ -513,11 +934,30 @@ export async function loadMigrationPlan(
   const sourceFile = await loadBoundedJson(sourcePath, "Source");
   const mappingFile = await loadBoundedJson(mappingPath, "Mapping");
   const source = validateSource(sourceFile.value);
-  const mapping = validateMapping(mappingFile.value);
+  let metadataCatalog: CompatibilityMetadataCatalog;
+  let accountCatalog: CompatibilityAccountCatalog;
+  let groupCatalog: CompatibilityGroupCatalog;
+  try {
+    [metadataCatalog, accountCatalog, groupCatalog] = await Promise.all([
+      loadCompatibilityMetadataCatalog(),
+      loadCompatibilityAccountCatalog(),
+      loadCompatibilityGroupCatalog(),
+    ]);
+  } catch (error) {
+    throw new MigrationError(
+      error instanceof Error ? error.message : "Compatibility catalog loading failed.",
+    );
+  }
+  const mapping = validateMapping(
+    mappingFile.value,
+    metadataCatalog,
+    accountCatalog,
+    groupCatalog,
+  );
   if (source.framework !== expectedFramework || mapping.framework !== expectedFramework) {
     throw new MigrationError("--framework must match both source and mapping files.");
   }
-  return buildMigrationPlan(source, mapping, digest(sourceFile.raw));
+  return buildMigrationPlan(source, mapping, digest(canonicalJson(source)));
 }
 
 function pathIsInside(parent: string, candidate: string): boolean {
@@ -555,7 +995,8 @@ export async function materializeMigrationPlan(
   }
   const parent = dirname(target);
   const parentMetadata = await lstat(parent);
-  if (!parentMetadata.isDirectory() || parentMetadata.isSymbolicLink()) {
+  if (!parentMetadata.isDirectory() || parentMetadata.isSymbolicLink()
+    || await pathContainsSymbolicLink(parent)) {
     throw new MigrationError("The apply target parent must be a real directory, not a symbolic link.");
   }
 
@@ -647,7 +1088,7 @@ Import a reviewed bundle into an empty/non-conflicting migrated Synex database:
 
 Options:
   --report <new-file>       Write the machine-readable dry-run report without overwriting.
-  --allow-unsupported       Explicitly acknowledge reported metadata/vehicle omissions.
+  --allow-unsupported       Explicitly acknowledge unmapped metadata/vehicle omissions.
   --database-env <name>     Read the target DB URL from a named environment variable (never argv).
   --help                    Show this help.
 `;
@@ -716,7 +1157,7 @@ export async function runMigratorCli(
         schema: 1 as const,
         mode: "dry-run" as const,
         report: plan.report,
-        idMap: plan.idMap,
+        identityEvidence: plan.report.identity,
       };
       if (options.report) {
         const reportPath = resolve(options.report);

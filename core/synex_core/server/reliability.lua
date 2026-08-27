@@ -484,6 +484,16 @@ factories.reliability = function(deps)
 
     local outbox = {}
     local outboxCompactionTurn = 1
+    local outboxStates = { pending = true, publishing = true, published = true, dead = true }
+    local function boundedDiagnosticInteger(value)
+        if type(value) ~= 'string' and type(value) ~= 'number' then return nil end
+        local canonical = tostring(value)
+        if not canonical:match('^%d+$') or #canonical > 16 then return nil end
+        local numeric = tonumber(canonical)
+        if not numeric or math.type(numeric) ~= 'integer'
+            or numeric < 0 or numeric > 9007199254740991 then return nil end
+        return numeric
+    end
     function outbox:enqueue(owner, event)
         local enabled, featureError = requireFeature(features.durableEvents, 'durable events')
         if not enabled then return nil, featureError end
@@ -526,6 +536,171 @@ factories.reliability = function(deps)
         })
         if insertError then return nil, insertError end
         return { id = inserted, eventId = eventId }, nil
+    end
+
+    function outbox:snapshot(options)
+        if features.durableEvents == false then
+            return {
+                status = 'DISABLED', enabled = false,
+                states = {
+                    pending = { total = 0, retried = 0, attempts = 0, maximumAttempts = 0, oldestAgeMs = 0 },
+                    publishing = { total = 0, retried = 0, attempts = 0, maximumAttempts = 0, oldestAgeMs = 0 },
+                    published = { total = 0, retried = 0, attempts = 0, maximumAttempts = 0, oldestAgeMs = 0 },
+                    dead = { total = 0, retried = 0, attempts = 0, maximumAttempts = 0, oldestAgeMs = 0 }
+                },
+                total = 0, backlog = 0, retried = 0, oldestBacklogAgeMs = 0,
+                items = {}, nextCursor = nil, hasMore = false, truncated = false,
+                payloadsExposed = false, headersExposed = false
+            }, nil
+        end
+        options = options or {}
+        if type(options) ~= 'table' then
+            return nil, foundation.error('INVALID_ARGUMENT',
+                'Outbox diagnostics require a bounded options object.')
+        end
+        for key in pairs(options) do
+            if key ~= 'cursor' and key ~= 'limit' then
+                return nil, foundation.error('INVALID_ARGUMENT',
+                    'Outbox diagnostics contain an unknown option.')
+            end
+        end
+        local cursor = options.cursor
+        local limit = options.limit or 25
+        if type(limit) ~= 'number' or math.type(limit) ~= 'integer'
+            or limit < 1 or limit > 50 then
+            return nil, foundation.error('INVALID_LIMIT',
+                'Outbox diagnostics limit must be an integer from 1 through 50.')
+        end
+        if cursor ~= nil and (type(cursor) ~= 'string' or #cursor < 1
+            or #cursor > 20 or not cursor:match('^[1-9]%d*$')) then
+            return nil, foundation.error('INVALID_CURSOR',
+                'Outbox diagnostics cursor is invalid.')
+        end
+        local totals, totalsError = database:query([[SELECT `state`,
+                CAST(COUNT(*) AS CHAR) AS `total`,
+                CAST(COALESCE(SUM(`attempts` > 0), 0) AS CHAR) AS `retried`,
+                CAST(COALESCE(SUM(`attempts`), 0) AS CHAR) AS `attempts`,
+                CAST(COALESCE(MAX(`attempts`), 0) AS CHAR) AS `maximum_attempts`,
+                CAST(COALESCE(MAX(GREATEST(0,
+                    TIMESTAMPDIFF(MICROSECOND, `created_at`, CURRENT_TIMESTAMP(6)) DIV 1000)), 0)
+                    AS CHAR) AS `oldest_age_ms`
+            FROM `synex_outbox` GROUP BY `state` ORDER BY `state` ASC]], {})
+        if totalsError then return nil, totalsError end
+        totals = totals or {}
+        if #totals > 4 then
+            return nil, foundation.error('DATABASE_RESULT_INVALID',
+                'Outbox diagnostics returned more states than the schema permits.', {
+                    retryable = true
+                })
+        end
+        local states = {
+            pending = { total = 0, retried = 0, attempts = 0, maximumAttempts = 0, oldestAgeMs = 0 },
+            publishing = { total = 0, retried = 0, attempts = 0, maximumAttempts = 0, oldestAgeMs = 0 },
+            published = { total = 0, retried = 0, attempts = 0, maximumAttempts = 0, oldestAgeMs = 0 },
+            dead = { total = 0, retried = 0, attempts = 0, maximumAttempts = 0, oldestAgeMs = 0 }
+        }
+        local observedStates = {}
+        for _, row in ipairs(totals) do
+            local state = row.state
+            local total = boundedDiagnosticInteger(row.total)
+            local retried = boundedDiagnosticInteger(row.retried)
+            local attempts = boundedDiagnosticInteger(row.attempts)
+            local maximumAttempts = boundedDiagnosticInteger(row.maximum_attempts)
+            local oldestAgeMs = boundedDiagnosticInteger(row.oldest_age_ms)
+            if not outboxStates[state] or observedStates[state] or total == nil
+                or retried == nil or attempts == nil or maximumAttempts == nil
+                or oldestAgeMs == nil or retried > total then
+                return nil, foundation.error('DATABASE_RESULT_INVALID',
+                    'Outbox diagnostics returned an invalid state aggregate.', {
+                        retryable = true
+                    })
+            end
+            observedStates[state] = true
+            states[state] = {
+                total = total,
+                retried = retried,
+                attempts = attempts,
+                maximumAttempts = maximumAttempts,
+                oldestAgeMs = oldestAgeMs
+            }
+        end
+        local cursorClause = ''
+        local parameters = {}
+        if cursor ~= nil then
+            cursorClause = ' WHERE `id` < CAST(? AS UNSIGNED)'
+            parameters[#parameters + 1] = cursor
+        end
+        parameters[#parameters + 1] = limit + 1
+        local rows, readError = database:query([[SELECT CAST(`id` AS CHAR) AS `cursor_id`,
+                `event_id`, `producer_resource`, `aggregate_type`, `event_type`, `schema_version`,
+                `state`, `attempts`, `last_error_code`,
+                DATE_FORMAT(`available_at`, '%Y-%m-%dT%H:%i:%s.%fZ') AS `available_at`,
+                DATE_FORMAT(`locked_until`, '%Y-%m-%dT%H:%i:%s.%fZ') AS `locked_until`,
+                DATE_FORMAT(`published_at`, '%Y-%m-%dT%H:%i:%s.%fZ') AS `published_at`,
+                DATE_FORMAT(`created_at`, '%Y-%m-%dT%H:%i:%s.%fZ') AS `created_at`,
+                DATE_FORMAT(`payload_compacted_at`, '%Y-%m-%dT%H:%i:%s.%fZ') AS `payload_compacted_at`,
+                CAST(GREATEST(0, TIMESTAMPDIFF(MICROSECOND, `created_at`,
+                    CURRENT_TIMESTAMP(6)) DIV 1000) AS CHAR) AS `age_ms`
+            FROM `synex_outbox`]] .. cursorClause .. [[ ORDER BY `id` DESC LIMIT ?]], parameters)
+        if readError then return nil, readError end
+        rows = rows or {}
+        if #rows > limit + 1 then
+            return nil, foundation.error('DATABASE_RESULT_INVALID',
+                'Outbox diagnostics exceeded the bounded page.', { retryable = true })
+        end
+        local hasMore = #rows > limit
+        local items = {}
+        for index = 1, math.min(#rows, limit) do
+            local row = rows[index]
+            local cursorId = type(row.cursor_id) == 'string' and row.cursor_id or nil
+            local attempts = boundedDiagnosticInteger(row.attempts)
+            local ageMs = boundedDiagnosticInteger(row.age_ms)
+            if not cursorId or not cursorId:match('^[1-9]%d*$')
+                or not outboxStates[row.state] or attempts == nil or ageMs == nil then
+                return nil, foundation.error('DATABASE_RESULT_INVALID',
+                    'Outbox diagnostics returned an invalid row.', { retryable = true })
+            end
+            items[index] = {
+                cursor = cursorId,
+                eventId = row.event_id,
+                producerResource = row.producer_resource,
+                aggregateType = row.aggregate_type,
+                eventType = row.event_type,
+                schemaVersion = tonumber(row.schema_version),
+                state = row.state,
+                attempts = attempts,
+                lastErrorCode = row.last_error_code,
+                availableAt = row.available_at,
+                lockedUntil = row.locked_until,
+                publishedAt = row.published_at,
+                createdAt = row.created_at,
+                payloadCompactedAt = row.payload_compacted_at,
+                ageMs = ageMs
+            }
+        end
+        local total = states.pending.total + states.publishing.total
+            + states.published.total + states.dead.total
+        local backlog = states.pending.total + states.publishing.total + states.dead.total
+        local retried = states.pending.retried + states.publishing.retried
+            + states.published.retried + states.dead.retried
+        return {
+            status = 'AVAILABLE',
+            enabled = true,
+            health = states.dead.total > 0 and 'ERROR'
+                or states.pending.maximumAttempts > 1 and 'WARNING' or 'HEALTHY',
+            states = states,
+            total = total,
+            backlog = backlog,
+            retried = retried,
+            oldestBacklogAgeMs = math.max(states.pending.oldestAgeMs,
+                states.publishing.oldestAgeMs, states.dead.oldestAgeMs),
+            items = items,
+            nextCursor = hasMore and items[#items] and items[#items].cursor or nil,
+            hasMore = hasMore,
+            truncated = hasMore,
+            payloadsExposed = false,
+            headersExposed = false
+        }, nil
     end
 
     function outbox:dispatchBatch(handler, maximum)
@@ -1371,7 +1546,7 @@ factories.reliability = function(deps)
         if type(request) ~= 'table' or getmetatable(request) ~= nil then
             return nil, foundation.error('INVALID_AUDIT_SEARCH', 'Audit search requires a plain request object.')
         end
-        local allowedKeys = { kind = true, value = true, limit = true }
+        local allowedKeys = { kind = true, value = true, limit = true, cursor = true }
         for key in pairs(request) do
             if type(key) ~= 'string' or not allowedKeys[key] then
                 return nil, foundation.error('INVALID_AUDIT_SEARCH', 'Audit search contains an unknown property.')
@@ -1388,14 +1563,27 @@ factories.reliability = function(deps)
         if type(limit) ~= 'number' or math.type(limit) ~= 'integer' or limit < 1 or limit > 64 then
             return nil, foundation.error('INVALID_AUDIT_SEARCH', 'Audit search limit must be an integer from 1 through 64.')
         end
+        local cursor = request.cursor
+        if cursor ~= nil and (type(cursor) ~= 'string' or #cursor < 1 or #cursor > 20
+            or not cursor:match('^[1-9]%d*$')) then
+            return nil, foundation.error('INVALID_AUDIT_SEARCH',
+                'Audit search cursor must be a positive decimal row identifier.')
+        end
         local parameters = definition.parameters(value)
+        local cursorClause = ''
+        if cursor then
+            cursorClause = ' AND `id` < CAST(? AS UNSIGNED)'
+            parameters[#parameters + 1] = cursor
+        end
         parameters[#parameters + 1] = limit + 1
-        local rows, queryError = database:query([[SELECT `event_id`, `occurred_at`, `actor_type`, `actor_id`,
+        local rows, queryError = database:query([[SELECT CAST(`id` AS CHAR) AS `cursor_id`,
+                `event_id`, `occurred_at`, `actor_type`, `actor_id`,
                 `action`, `target_type`, `target_id`, `trace_id`
-            FROM `synex_audit_log` WHERE ]] .. definition.clause .. [[
+            FROM `synex_audit_log` WHERE ]] .. definition.clause .. cursorClause .. [[
             ORDER BY `id` DESC LIMIT ?]], parameters)
         if queryError then return nil, queryError end
         rows = rows or {}
+        local hasMore = #rows > limit
         local entries = {}
         for index = 1, math.min(#rows, limit) do
             local row = rows[index]
@@ -1418,11 +1606,19 @@ factories.reliability = function(deps)
             }
         end
         metrics:increment('synex_audit_search_total', { kind = kind })
+        local last = hasMore and rows[limit] or nil
+        local nextCursor = last and last.cursor_id or nil
+        if nextCursor ~= nil and not nextCursor:match('^[1-9]%d*$') then
+            return nil, foundation.error('DATABASE_RESULT_INVALID',
+                'Audit search returned an invalid pagination marker.', { retryable = true })
+        end
         return {
             kind = kind,
             limit = limit,
             entries = entries,
-            truncated = #rows > limit
+            nextCursor = nextCursor,
+            hasMore = hasMore,
+            truncated = hasMore
         }, nil
     end
 

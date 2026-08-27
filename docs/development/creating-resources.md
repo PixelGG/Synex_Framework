@@ -72,9 +72,27 @@ Do not bypass `SESSION_PERSISTENCE_PENDING`. It indicates that Core has unloaded
 
 Adding a manifest declaration records intent; it does not grant access. The operator separately grants the exact capability in `core/synex_core/config/capabilities.json`. Keep requests minimal and never request wildcards simply for convenience.
 
+A resource that provides Groups extension definitions must request both `synex.groups.registries.manage` and the exact registration capability it consumes. On every resource start it calls `synex.groups.registries.begin` with one start-scoped idempotency key before registering the complete desired group-type, relation-type, duty-state, or attribute-schema set. A restart uses a new begin key; stale owner epochs fail closed. See [Custom group types and definitions](../groups/custom-group-types.md#owner-bound-group-types).
+
+## Expose optional Control diagnostics
+
+When a resource owns a diagnostic read model, it may declare one `controlProvider` in `synex.resource.json` and request `synex.control.provider.register`. The resource depends on Core, never on the optional `synex_control` NUI.
+
+The descriptor declares a unique namespace, bounded label/category/version, a subset of the fixed read-operation allowlist, and one through 32 fixed presentation views. Every view has an access class; declare closed bounded input fields when it needs operator values, and declare kinds, modes, and a per-kind access class for every search view. Runtime registration through `api.ControlProviders.register` must match the descriptor exactly. Keep `summary` compact; use stable cursor/keyset pages and server-side filter/sort allowlists for larger read models. Control keeps provider cursors behind scoped opaque browser handles. A registration failure leaves diagnostics unavailable but must not stop the owning domain or create a broad fallback service.
+
+Provider handlers receive a defensive request and a read-only context with `deadlineAt`. Return only bounded JSON projections and public errors: no secrets, SQL, paths, stack traces, raw registries, database adapters, callables or mutation methods. `simulate` may explain an existing policy decision but cannot persist it. Control applies another sanitizer before NUI transport, but the provider remains responsible for least-data projection.
+
+See [Control provider contract](../control/providers.md) and [Extending Control](../control/extending-control.md). Static validation and certification check declarations and dependency direction; runtime timeout, owner-restart, output-bound, redaction and real CEF behavior require separate tests.
+
 ## Own persistence
 
-Place forward-only SQL in the resource's `migrations/` directory and declare every file and owned table in the resource manifest. Use positional `?` parameters for runtime SQL. Do not write another resource's tables; cross-domain changes use contracts, idempotency, outbox events, or a saga.
+Place forward-only SQL in the resource's `migrations/` directory and declare every file and owned table in the resource manifest. Reviewed server domains use the caller-bound `api.Database` DataPort instead of declaring a direct oxmysql dependency. Request and receive only the operations needed (`read`, `write`, `transaction`, or `maintenance`); Core validates the current owner epoch, positional parameters, statement shape, limits, and every referenced table against `dataOwnership.tables`.
+
+Use `transaction` for an externally initiated atomic mutation with a bounded operation name, idempotency key, canonical request object, and handler. Use `maintenance` only for bounded reconciliation or worker batches that already have domain-owned retry authority. Do not write another resource's tables; cross-domain changes use contracts, idempotency, durable events, a saga, or an explicitly registered `api.DomainDeletions` provider.
+
+DataPort claims the exact receipt key before a transaction handler runs, but different keys may run concurrently. Global and owner receipt-capacity rows are locked only after the handler returns and its response validates. Treat the receipt as replay protection, not as a domain mutex: lock conflicting rows in a deterministic order and/or use compare-and-swap versions. Because a deadlock, validation failure, or capacity failure can roll the transaction back, the handler must not perform irreversible external effects.
+
+A domain-deletion provider must keep `preflight` and `execute` bounded and make `execute` idempotent. Do not replace a registered schema version while pending actions still depend on it; Core rejects that upgrade, and it rechecks the provider schema under the catalog lock before persisting a new plan. Terminal plan replay is retained for 30 days, not forever, and every plan state counts against the Core limits until physical purge.
 
 Follow [Migrations](../migrations.md) before changing schema.
 

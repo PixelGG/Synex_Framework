@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:synex:compatibility:review-lock:schema:1",
+  "title": "Synex bridge checked-in compatibility review lock",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "schema",
+    "kind",
+    "algorithm",
+    "mappingCatalog",
+    "consumerCatalog",
+    "moneyPolicyCatalog",
+    "entries"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "const": "./schemas/review-lock.schema.json"
+    },
+    "schema": { "type": "integer", "const": 1 },
+    "kind": { "type": "string", "const": "synex-compatibility-review-lock" },
+    "algorithm": { "type": "string", "const": "sha256" },
+    "mappingCatalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "catalogPath", "catalogSha256"],
+      "properties": {
+        "id": { "type": "string", "const": "central.compatibility-mappings" },
+        "catalogPath": {
+          "type": "string",
+          "const": "libraries/synex_bridge/compatibility/mappings.json"
+        },
+        "catalogSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "consumerCatalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "catalogPath", "catalogSha256"],
+      "properties": {
+        "id": { "type": "string", "const": "central.compatibility-consumers" },
+        "catalogPath": {
+          "type": "string",
+          "const": "libraries/synex_bridge/compatibility/consumers.json"
+        },
+        "catalogSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "moneyPolicyCatalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "catalogPath", "catalogSha256"],
+      "properties": {
+        "id": { "type": "string", "const": "central.money-policies" },
+        "catalogPath": {
+          "type": "string",
+          "const": "libraries/synex_bridge/compatibility/money-policies.json"
+        },
+        "catalogSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "provider",
+          "providerVersion",
+          "targetFrameworkApiRange",
+          "catalogPath",
+          "catalogSha256",
+          "upstream",
+          "evidenceUrls"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96,
+            "pattern": "^[a-z][a-z0-9_.:-]{0,95}$"
+          },
+          "provider": { "type": "string", "enum": ["qb", "qbx", "esx"] },
+          "providerVersion": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 64,
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
+          },
+          "targetFrameworkApiRange": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 2,
+                "maxLength": 64,
+                "pattern": "^[0-9A-Za-z*<>=~^| .+-]+$"
+              },
+              { "type": "null" }
+            ]
+          },
+          "catalogPath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^libraries/synex_bridge/compatibility/surfaces/(?:qb|qbx|esx)\\.json$"
+          },
+          "catalogSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "upstream": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["repository", "branch", "revision", "pinSha256"],
+            "properties": {
+              "repository": {
+                "type": "string",
+                "minLength": 24,
+                "maxLength": 128,
+                "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+              },
+              "branch": {
+                "type": "string",
+                "const": "main"
+              },
+              "revision": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "pinSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          },
+          "evidenceUrls": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 12,
+              "maxLength": 512,
+              "pattern": "^https://[^\\s]+$"
+            }
+          }
+        }
+      }
+    }
+  }
+}

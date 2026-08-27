@@ -1,0 +1,520 @@
+{
+  "$schema": "../schemas/surfaces.schema.json",
+  "schema": 1,
+  "kind": "synex-compatibility-surfaces",
+  "provider": "qbx",
+  "providerResource": "synex_bridge_qbx",
+  "providerVersion": "0.1.0",
+  "targetFrameworkApiRange": null,
+  "upstream": {
+    "name": "Qbox",
+    "repository": "https://github.com/Qbox-project/qbx_core",
+    "branch": "main",
+    "revision": "c1c3ca16721cd14eb814cfb95e8f8631690d247d",
+    "sources": [
+      {
+        "id": "qbx.server.player",
+        "path": "server/player.lua",
+        "bytes": 53949,
+        "sha256": "eef2e13f20a287d1f6383c7c9b6eab9c47cc9cf58ffbcfadee116b73587c4292"
+      },
+      {
+        "id": "qbx.server.events",
+        "path": "server/events.lua",
+        "bytes": 8754,
+        "sha256": "560f1211e7ef452c609a5fa1b5e6e789328a081c95fc976db669274a5b6063e8"
+      },
+      {
+        "id": "qbx.client.events",
+        "path": "client/events.lua",
+        "bytes": 8495,
+        "sha256": "74f46288df37968f22ec74a78c119aaceac24685e67ec221d8ea5448e157980a"
+      },
+      {
+        "id": "qbx.server.functions",
+        "path": "server/functions.lua",
+        "bytes": 18666,
+        "sha256": "0f169e5959b08418bbf0743a4e262facbaaba8287b0ee877a7b698293b268b0c"
+      },
+      {
+        "id": "qbx.shared.functions",
+        "path": "shared/functions.lua",
+        "bytes": 3674,
+        "sha256": "1811a640336c8f728e55e641268ed646b787d9ae6d74de1a5bea507b1e417365"
+      },
+      {
+        "id": "qbx.client.functions",
+        "path": "client/functions.lua",
+        "bytes": 2179,
+        "sha256": "8b3a99361456bba218d0beb75f24ffbf346418f71ba53aa5db86fb805ca9fef5"
+      }
+    ],
+    "evidenceUrls": [
+      "https://docs.qbox.re/resources/qbx_core/exports/server",
+      "https://docs.qbox.re/resources/qbx_core/exports/client",
+      "https://docs.qbox.re/faq",
+      "https://github.com/Qbox-project/qbx_core/blob/c1c3ca16721cd14eb814cfb95e8f8631690d247d/server/player.lua",
+      "https://github.com/Qbox-project/qbx_core/blob/c1c3ca16721cd14eb814cfb95e8f8631690d247d/server/functions.lua",
+      "https://github.com/Qbox-project/qbx_core/blob/c1c3ca16721cd14eb814cfb95e8f8631690d247d/shared/functions.lua",
+      "https://github.com/Qbox-project/qbx_core/blob/c1c3ca16721cd14eb814cfb95e8f8631690d247d/client/functions.lua",
+      "https://github.com/Qbox-project/qbx_core/blob/c1c3ca16721cd14eb814cfb95e8f8631690d247d/client/events.lua"
+    ]
+  },
+  "surfaces": [
+    {
+      "name": "qbx.server.player_lookup",
+      "scope": "server",
+      "type": "export",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.qbx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-runtime.test.ts",
+        "tests/compatibility/bridge-cross-provider-mutations.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.server.money_read",
+      "scope": "server",
+      "type": "export",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.qbx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-runtime.test.ts",
+        "tests/compatibility/bridge-cross-provider-mutations.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.server.money_mutation",
+      "scope": "server",
+      "type": "export",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": "synex.accounts.transfer_v2/mint_v2/burn_v2@2",
+      "requiredCapability": "synex.compat.qbx.write",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-static.test.ts",
+        "tests/compatibility/bridge-runtime.test.ts",
+        "tests/compatibility/bridge-qbx-safe-remainders.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.server.groups_read",
+      "scope": "server",
+      "type": "export",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.qbx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-runtime.test.ts",
+        "tests/compatibility/bridge-cross-provider-mutations.test.ts",
+        "tests/compatibility/bridge-qbx-safe-remainders.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.client.player_data",
+      "scope": "client",
+      "type": "export",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.qbx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-static.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.player.metadata_mutation",
+      "scope": "server",
+      "type": "export",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": "synex_bridge.compatibility_metadata@1",
+      "requiredCapability": "synex.compat.qbx.write",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-provider-facades.test.ts",
+        "tests/compatibility/bridge-qbx-safe-remainders.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.server.metadata_read",
+      "scope": "server",
+      "type": "export",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": "synex_bridge.compatibility_metadata@1",
+      "requiredCapability": "synex.compat.qbx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-qbx-safe-remainders.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.shared.group_update_events",
+      "scope": "shared",
+      "type": "event",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.qbx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-lifecycle-parity.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.shared.duty_update_events",
+      "scope": "shared",
+      "type": "event",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.qbx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-lifecycle-parity.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.shared.money_update_events",
+      "scope": "shared",
+      "type": "event",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.qbx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-lifecycle-parity.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.server.callback_registration",
+      "scope": "server",
+      "type": "callback",
+      "status": "UNSUPPORTED",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": null,
+      "requiredAdapter": null,
+      "modes": [
+        "strict",
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-provider-facades.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.shared.lifecycle_events",
+      "scope": "shared",
+      "type": "event",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.qbx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-provider-facades.test.ts",
+        "tests/compatibility/bridge-lifecycle-parity.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.server.identifier_player_lookup",
+      "scope": "server",
+      "type": "export",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.qbx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-qbx-safe-remainders.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.server.offline_player_lookup",
+      "scope": "server",
+      "type": "export",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": "synex.compat.qbx.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-qbx-safe-remainders.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.server.group_mutation",
+      "scope": "server",
+      "type": "method",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": "synex.groups.compatibility.set_primary_grade@1",
+      "requiredCapability": "synex.compat.qbx.write",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-runtime.test.ts",
+        "tests/compatibility/bridge-qbx-safe-remainders.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.server.duty_mutation",
+      "scope": "server",
+      "type": "method",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": "synex.groups.duty@1",
+      "requiredCapability": "synex.compat.qbx.write",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-runtime.test.ts",
+        "tests/compatibility/bridge-cross-provider-mutations.test.ts",
+        "tests/compatibility/bridge-qbx-safe-remainders.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.server.primary_group_mutation",
+      "scope": "server",
+      "type": "export",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": "synex.groups.compatibility.set_primary_grade@1",
+      "requiredCapability": "synex.compat.qbx.write",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-qbx-safe-remainders.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.server.jobs_registry",
+      "scope": "server",
+      "type": "export",
+      "status": "UNSUPPORTED",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": null,
+      "requiredAdapter": null,
+      "modes": [
+        "strict",
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-surface-coverage.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.server.gangs_registry",
+      "scope": "server",
+      "type": "export",
+      "status": "UNSUPPORTED",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": null,
+      "requiredAdapter": null,
+      "modes": [
+        "strict",
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-surface-coverage.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.server.vehicles_registry",
+      "scope": "server",
+      "type": "export",
+      "status": "UNSUPPORTED",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": null,
+      "requiredAdapter": null,
+      "modes": [
+        "strict",
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-surface-coverage.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.server.routing_bucket_management",
+      "scope": "server",
+      "type": "export",
+      "status": "UNSUPPORTED",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": null,
+      "requiredAdapter": null,
+      "modes": [
+        "strict",
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-surface-coverage.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.compat.qb_core_object",
+      "scope": "shared",
+      "type": "object",
+      "status": "UNSUPPORTED",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": null,
+      "requiredAdapter": null,
+      "modes": [
+        "strict",
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-surface-coverage.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qbx.server.permission_admin",
+      "scope": "server",
+      "type": "export",
+      "status": "UNSUPPORTED",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": null,
+      "requiredAdapter": null,
+      "modes": [
+        "strict",
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-surface-coverage.test.ts"
+      ],
+      "adapterOperations": []
+    }
+  ]
+}

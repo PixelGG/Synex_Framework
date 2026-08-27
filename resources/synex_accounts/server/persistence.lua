@@ -6,6 +6,15 @@ local function createOxmysqlPort(deps)
     local jsonEncode = assert(deps.jsonEncode, 'oxmysql port requires jsonEncode')
     local jsonDecode = assert(deps.jsonDecode, 'oxmysql port requires jsonDecode')
     local random = assert(deps.random, 'oxmysql port requires random')
+    local domain = deps.domain
+    local metrics = type(deps.metrics) == 'table' and deps.metrics or nil
+    local errorSink = Foundation.isCallable(deps.errorSink) and deps.errorSink or nil
+    local wait = deps.wait or rawget(_G, 'Wait') or function() end
+
+    local function recordMetric(method, name, labels, value)
+        local writer = metrics and metrics[method] or nil
+        if Foundation.isCallable(writer) then pcall(writer, name, labels, value) end
+    end
 
     local function queryRows(sql, parameters)
         local rows = MySQL.query.await(sql, parameters or {})
@@ -23,15 +32,85 @@ local function createOxmysqlPort(deps)
         return queryRows(sql, parameters)
     end
 
+    local function update(sql, parameters)
+        local affected = MySQL.update.await(sql, parameters or {})
+        if type(affected) ~= 'number' or math.type(affected) ~= 'integer' or affected < 0 then
+            error('oxmysql update returned an invalid affected-row count', 0)
+        end
+        return affected
+    end
+
+    local function classifyTransactionFailure(value)
+        local detail
+        if type(value) == 'table' then
+            detail = tostring(value.code or value.message or ''):lower()
+        else
+            detail = tostring(value or ''):lower()
+        end
+        if detail:find('deadlock', 1, true) or detail:find('1213', 1, true)
+            or detail:find('40001', 1, true) then return 'deadlock' end
+        if detail:find('lock wait timeout', 1, true)
+            or detail:find('1205', 1, true) then return 'lock_timeout' end
+        return 'unclassified'
+    end
+
     local function withTransaction(handler)
-        if type(MySQL.startTransaction) ~= 'function' then
+        if not Foundation.isCallable(MySQL.startTransaction) then
             return nil, domainError('TRANSACTION_UNAVAILABLE', 'Interactive database transactions are unavailable.', true)
         end
-        local committed = MySQL.startTransaction(handler)
-        if committed ~= true then
-            return nil, domainError('WRITE_CONFLICT', 'The account transaction could not be committed.', true)
+        local invoked, committed = pcall(MySQL.startTransaction, handler)
+        if not invoked then
+            local failureKind = classifyTransactionFailure(committed)
+            if failureKind == 'deadlock' then
+                recordMetric('increment', 'synex_accounts_deadlocks_total', {})
+            elseif failureKind == 'lock_timeout' then
+                recordMetric('increment', 'synex_accounts_lock_timeouts_total', {})
+            end
+            return nil, domainError('WRITE_CONFLICT',
+                'The account transaction could not be committed.', true), failureKind
         end
-        return true, nil
+        if committed ~= true then
+            return nil, domainError('WRITE_CONFLICT',
+                'The account transaction could not be committed.', true), 'aborted'
+        end
+        return true, nil, nil
+    end
+
+    local function withRetriableTransaction(handler, options)
+        options = type(options) == 'table' and options or {}
+        local maximumAttempts = math.max(1, math.min(tonumber(options.maximumAttempts) or 3, 5))
+        for attempt = 1, maximumAttempts do
+            local committed, transactionError, failureKind = withTransaction(function(query)
+                return handler(query, attempt)
+            end)
+            if committed then return true, nil, attempt end
+            if errorSink and (failureKind == 'deadlock' or failureKind == 'lock_timeout') then
+                pcall(errorSink, {
+                    operation = 'database_transaction',
+                    code = failureKind == 'deadlock'
+                        and 'DATABASE_DEADLOCK' or 'DATABASE_LOCK_TIMEOUT',
+                    traceId = options.traceId or 'unavailable',
+                })
+            end
+            local retryable = failureKind == 'deadlock' or failureKind == 'lock_timeout'
+            if options.shouldRetry then
+                retryable = options.shouldRetry(
+                    attempt, transactionError, failureKind) == true
+            end
+            if not retryable then
+                return nil, transactionError, attempt
+            end
+            if attempt < maximumAttempts then
+                recordMetric('increment', 'synex_accounts_retries_total', {
+                    operation = 'database_transaction', cause = failureKind,
+                })
+                local delay = math.min(80, (2 ^ (attempt - 1)) * 10 + random(0, 10))
+                wait(delay)
+            else
+                return nil, transactionError, attempt
+            end
+        end
+        return nil, domainError('WRITE_CONFLICT', 'The account transaction retry budget was exhausted.', true)
     end
 
     local function replay(operationName, idempotencyKey, requestFingerprint)
@@ -39,6 +118,9 @@ local function createOxmysqlPort(deps)
             FROM `synex_account_operations` WHERE `idempotency_key` = ?]], { idempotencyKey })
         if not row then return nil, nil end
         if row.operation_name ~= operationName or row.request_fingerprint ~= requestFingerprint then
+            recordMetric('increment', 'synex_accounts_idempotency_conflicts_total', {
+                operation = operationName,
+            })
             return nil, domainError('IDEMPOTENCY_CONFLICT', 'The idempotency key was already used for a different request.')
         end
         if row.state ~= 'completed' or type(row.response_json) ~= 'string' then
@@ -48,6 +130,44 @@ local function createOxmysqlPort(deps)
         if type(response) ~= 'table' then
             return nil, domainError('DATABASE_ERROR', 'The stored idempotency response is invalid.')
         end
+        recordMetric('increment', 'synex_accounts_idempotency_replays_total', {
+            operation = operationName,
+        })
+        return response, nil
+    end
+
+    local function scopedReplay(authority, operationName, idempotencyKey, requestFingerprint)
+        if type(authority) ~= 'table' or type(authority.callerResource) ~= 'string' then
+            return nil, domainError('CALLER_CONTEXT_INVALID', 'The account operation caller is invalid.')
+        end
+        local row = one([[SELECT `request_fingerprint`, `state`, `response_json`
+            FROM `synex_account_operations`
+            WHERE `caller_resource` = ?
+                AND `caller_principal_kind` = ? AND `caller_principal_ref` = ?
+                AND `operation_name` = ? AND `idempotency_key` = ?]], {
+            authority.callerResource, authority.principalKind, authority.principalRef,
+            operationName, idempotencyKey
+        })
+        if not row then return nil, nil end
+        if row.request_fingerprint ~= requestFingerprint then
+            recordMetric('increment', 'synex_accounts_idempotency_conflicts_total', {
+                operation = operationName,
+            })
+            return nil, domainError('IDEMPOTENCY_CONFLICT',
+                'The scoped idempotency key was already used for a different request.')
+        end
+        if row.state ~= 'completed' or type(row.response_json) ~= 'string' then
+            return nil, domainError('OPERATION_IN_PROGRESS',
+                'The scoped idempotent operation has not completed.', true)
+        end
+        local decoded, response = pcall(jsonDecode, row.response_json)
+        if not decoded or type(response) ~= 'table' or not Foundation.jsonContainerKind(response) then
+            return nil, domainError('DATABASE_RESULT_INVALID',
+                'The stored idempotency response is invalid.')
+        end
+        recordMetric('increment', 'synex_accounts_idempotency_replays_total', {
+            operation = operationName,
+        })
         return response, nil
     end
 
@@ -153,15 +273,22 @@ local function createOxmysqlPort(deps)
     local port = {}
 
     local context = {
+        foundation = Foundation,
         jsonEncode = jsonEncode,
         jsonDecode = jsonDecode,
         random = random,
+        metrics = metrics,
+        recordMetric = recordMetric,
+        domain = domain,
         domainError = domainError,
         uuidV4 = uuidV4,
         one = one,
         many = many,
+        update = update,
         withTransaction = withTransaction,
+        withRetriableTransaction = withRetriableTransaction,
         replay = replay,
+        scopedReplay = scopedReplay,
         execute = execute,
         accountState = accountState,
         holdState = holdState,
@@ -169,11 +296,25 @@ local function createOxmysqlPort(deps)
         appendStatements = appendStatements
     }
 
+    if modules.engineShared then modules.engineShared(port, context) end
     modules.accounts(port, context)
     modules.ledger(port, context)
     modules.holds(port, context)
     modules.access(port, context)
     modules.integrity(port, context)
+    if modules.accountsV2 then modules.accountsV2(port, context) end
+    if modules.transactions then modules.transactions(port, context) end
+    if modules.transactionReads then modules.transactionReads(port, context) end
+    if modules.holdsV2 then modules.holdsV2(port, context) end
+    if modules.accessV2 then modules.accessV2(port, context) end
+    if modules.restrictionsV2 then modules.restrictionsV2(port, context) end
+    if modules.integrityBehavior then
+        context.integrityBehavior = modules.integrityBehavior(context)
+    end
+    if modules.engine then modules.engine(port, context) end
+    if modules.integrityControl then modules.integrityControl(port, context) end
+    if modules.observability then modules.observability(port, context) end
+    if modules.lifecycle then modules.lifecycle(port, context) end
     return port
 end
 

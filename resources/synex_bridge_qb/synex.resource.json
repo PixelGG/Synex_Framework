@@ -11,7 +11,14 @@
       "synex.identity.read",
       "synex.accounts.read",
       "synex.accounts.transfer",
-      "synex.groups.read"
+      "synex.accounts.mint",
+      "synex.accounts.burn",
+      "synex.groups.read",
+      "synex.groups.compatibility.set_primary_grade",
+      "synex.groups.duty",
+      "synex.permissions.read",
+      "synex.metrics.write",
+      "synex.tracing.write"
     ]
   },
   "services": {
@@ -21,11 +28,15 @@
   },
   "contracts": {
     "provide": [],
-    "consume": ["synex.accounts.transfer"]
+    "consume": [
+      "synex.accounts.transfer_v2",
+      "synex.accounts.mint_v2",
+      "synex.accounts.burn_v2"
+    ]
   },
   "events": {
     "publish": [],
-    "subscribe": []
+    "subscribe": ["synex.accounts.*", "synex.groups.*"]
   },
   "hooks": {
     "register": [],

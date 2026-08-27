@@ -23,6 +23,7 @@ function SynexEntityFoundation.create(options)
     local readLimiter = validation.newTokenBucket(80, 25)
     local ownerCycles = {}
     local mutationLocks = {}
+    local ownerInflight = {}
     local pendingSpawns = 0
     local pendingOwnerSpawns = {}
     local pendingBucketSpawns = {}
@@ -177,6 +178,41 @@ function SynexEntityFoundation.create(options)
         return value, operationError
     end
 
+    function foundation.withOwnerEpoch(caller, context, handler)
+        if not foundation.isResourceActive(caller) then
+            return foundation.failure(
+                'STALE_RESOURCE',
+                'The invoking resource is no longer started',
+                true,
+                context
+            )
+        end
+        local cycle = foundation.currentOwnerCycle(caller)
+        ownerInflight[caller] = (ownerInflight[caller] or 0) + 1
+        local ok, value, operationError = xpcall(handler, debug.traceback)
+        ownerInflight[caller] = math.max(0, (ownerInflight[caller] or 1) - 1)
+        if ownerInflight[caller] == 0 then ownerInflight[caller] = nil end
+        local staleOwner = foundation.currentOwnerCycle(caller) ~= cycle
+            or not foundation.isResourceActive(caller)
+        if staleOwner and cleanupOwner then
+            local cleanupOk, cleanupError = pcall(cleanupOwner, caller, cycle)
+            if not cleanupOk then
+                foundation.reportUnexpected('owner.epoch_cleanup', cleanupError, context)
+                foundation.setHealth('DEGRADED', 'A stale resource epoch could not be cleaned up')
+            end
+        end
+        if not ok then error(value, 0) end
+        if staleOwner then
+            return foundation.failure(
+                'STALE_RESOURCE',
+                'The invoking resource restarted during the operation',
+                true,
+                context
+            )
+        end
+        return value, operationError
+    end
+
     function foundation.withSpawnReservation(caller, bucketId, context, handler)
         local ownerPending = pendingOwnerSpawns[caller] or 0
         local bucketPending = pendingBucketSpawns[bucketId] or 0
@@ -219,6 +255,7 @@ function SynexEntityFoundation.create(options)
     function foundation.advanceOwnerCycle(owner)
         local stoppedCycle = foundation.currentOwnerCycle(owner)
         local mutationInFlight = mutationLocks[owner] ~= nil
+            or (ownerInflight[owner] or 0) > 0
         ownerCycles[owner] = stoppedCycle + 1
         mutationLimiter.clear(owner)
         readLimiter.clear(owner)

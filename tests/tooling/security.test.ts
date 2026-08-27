@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { scanLuaText, scanSecurity, scanTypeScriptText } from "../../tools/cli/src/cli.js";
+
+const groupsModuleLoaderPath = "resources/synex_groups/server/module_loader.lua";
 
 test("static scanner assigns severity and confidence without claiming safety", () => {
   const findings = scanLuaText("os.execute('whoami')", "server/main.lua");
@@ -35,6 +38,39 @@ test("ordinary outbound HTTP is not mislabeled as remote code execution", () => 
 test("ordinary object load methods are not mislabeled as dynamic Lua compilation", () => {
   const findings = scanLuaText("function sagas:load(publicId) return self.repository:load(publicId) end", "server/sagas.lua");
   assert.equal(findings.some((finding) => finding.rule === "lua-dynamic-code"), false);
+});
+
+test("reviewed manifest-bound Groups loader is not mislabeled as generic dynamic code", async () => {
+  const source = await readFile(groupsModuleLoaderPath, "utf8");
+  const findings = scanLuaText(source, groupsModuleLoaderPath);
+  assert.equal(findings.some((finding) => finding.rule === "lua-dynamic-code"), false);
+});
+
+test("manifest-bound loader approval fails closed for source, guard, and path mutations", async () => {
+  const source = await readFile(groupsModuleLoaderPath, "utf8");
+  const mutations = [
+    source.replace(
+      "local source = LoadResourceFile(RESOURCE_NAME, path)",
+      "local source = remotePayload",
+    ),
+    source.replace("        or name:find('..', 1, true) then\n", ""),
+    `${source}\nos.execute('whoami')\n`,
+  ];
+
+  for (const mutated of mutations) {
+    const findings = scanLuaText(mutated, groupsModuleLoaderPath);
+    assert.equal(
+      findings.some((finding) => finding.rule === "lua-dynamic-code"),
+      true,
+      "mutated loader must return to the generic dynamic-code review path",
+    );
+  }
+
+  const relocated = scanLuaText(source, "resources/other/server/module_loader.lua");
+  assert.equal(relocated.some((finding) => finding.rule === "lua-dynamic-code"), true);
+
+  const additionalRule = scanLuaText(mutations[2] ?? "", groupsModuleLoaderPath);
+  assert.equal(additionalRule.some((finding) => finding.rule === "lua-os-command"), true);
 });
 
 test("nearby HTTP retrieval and dynamic execution receives a review finding", () => {

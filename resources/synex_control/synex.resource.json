@@ -5,32 +5,81 @@
   "version": "0.1.0",
   "synex": "^1.0.0",
   "critical": false,
+  "controlProvider": {
+    "schemaVersion": 1,
+    "namespace": "control",
+    "label": "Control Plane",
+    "category": "operations",
+    "version": "1.0.0",
+    "operations": [
+      "summary",
+      "health",
+      "list",
+      "metrics",
+      "findings"
+    ],
+    "views": [
+      {
+        "id": "overview",
+        "label": "Overview",
+        "operation": "summary",
+        "presentation": "metrics",
+        "accessClass": "general",
+        "order": 5,
+        "description": "Bounded Control request, provider, payload, cache, and NUI summary."
+      },
+      {
+        "id": "health",
+        "label": "Meta Health",
+        "operation": "health",
+        "presentation": "metrics",
+        "accessClass": "general",
+        "order": 10,
+        "description": "Bounded Control request, provider, payload, and NUI health counters."
+      },
+      {
+        "id": "metrics",
+        "label": "Payload Metrics",
+        "operation": "metrics",
+        "presentation": "metrics",
+        "accessClass": "general",
+        "order": 20,
+        "description": "Bounded request rates, response sizes, cache behavior, and provider durations."
+      },
+      {
+        "id": "findings",
+        "label": "Findings",
+        "operation": "findings",
+        "presentation": "findings",
+        "accessClass": "general",
+        "order": 30,
+        "description": "Current sanitized Control degradation findings without operator mutations."
+      },
+      {
+        "id": "incident_window",
+        "label": "Incident Window",
+        "operation": "list",
+        "presentation": "timeline",
+        "accessClass": "general",
+        "order": 40,
+        "description": "Bounded temporal correlation of Control-observed provider and resource events."
+      }
+    ]
+  },
   "capabilities": {
     "request": [
-      "synex.accounts.integrity.read",
-      "synex.audit.summary",
-      "synex.entities.read",
-      "synex.groups.read",
-      "synex.metrics.read",
-      "synex.runtime.read"
+      "synex.control.provider.read",
+      "synex.control.provider.register"
     ]
   },
   "services": {
     "provide": [],
-    "require": [
-      "synex.runtime@1"
-    ],
-    "optional": [
-      "synex.accounts@1",
-      "synex.entities@1",
-      "synex.groups@1"
-    ]
+    "require": [],
+    "optional": []
   },
   "contracts": {
     "provide": [],
-    "consume": [
-      "synex.runtime.status"
-    ]
+    "consume": []
   },
   "events": {
     "publish": [],

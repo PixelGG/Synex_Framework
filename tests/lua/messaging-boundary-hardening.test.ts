@@ -442,6 +442,7 @@ test('service dependency health and cleanup are isolated by provider major', asy
       local registries = SynexCoreFactories.registries({ foundation = foundation })
       local owners = registries.owners
       local providerEpoch = owners:activate('synex_provider')
+      local largeProviderEpoch = owners:activate('synex_large_provider')
       owners:activate('synex_consumer_v1')
       owners:activate('synex_consumer_v2')
       local lifecycle = SynexCoreFactories.lifecycle({
@@ -491,8 +492,18 @@ test('service dependency health and cleanup are isolated by provider major', asy
       assert(staleToken == nil and staleError.code == 'STALE_RESOURCE')
       assert(lifecycle.dependencies:snapshot().providers['synex.fixture.stale'] == nil)
 
+      local groupsSizedMethods, groupsSizedCapabilities = {}, {}
+      for index = 1, 66 do
+        local method = 'method_' .. index
+        groupsSizedMethods[method] = function() return {} end
+        groupsSizedCapabilities[method] = 'synex.fixture.read'
+      end
+      assert(messaging.services:provide('synex_large_provider', largeProviderEpoch, {
+        name = 'synex.fixture.groups_sized', version = '1.0.0',
+        methods = groupsSizedMethods, capabilities = groupsSizedCapabilities
+      }))
       local oversizedMethods = {}
-      for index = 1, 65 do oversizedMethods['method_' .. index] = function() return {} end end
+      for index = 1, 129 do oversizedMethods['method_' .. index] = function() return {} end end
       local oversizedToken, oversizedError = messaging.services:provide('synex_provider', providerEpoch, {
         name = 'synex.fixture.oversized', version = '1.0.0', methods = oversizedMethods
       })

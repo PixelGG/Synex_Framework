@@ -5,6 +5,7 @@ on:
     branches: ["**"]
     paths:
       - "core/**"
+      - "compat/**"
       - "resources/**"
       - "libraries/**"
       - "packages/**"
@@ -27,6 +28,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - "core/**"
+      - "compat/**"
       - "resources/**"
       - "libraries/**"
       - "packages/**"
@@ -45,6 +47,12 @@ on:
       - ".luarc.json"
       - ".github/workflows/framework-ci.yml"
   workflow_dispatch:
+    inputs:
+      online_upstream_drift:
+        description: Compare official QB/QBX/ESX main-branch sources with reviewed pins
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -104,6 +112,13 @@ jobs:
 
       - name: Run compatibility analyzer
         run: node --experimental-strip-types tools/cli/src/bin.ts compat scan .
+
+      - name: Verify compatibility review lock offline
+        run: node --experimental-strip-types tools/cli/src/bin.ts compat drift
+
+      - name: Check official compatibility sources online
+        if: github.event_name == 'workflow_dispatch' && inputs.online_upstream_drift
+        run: node --experimental-strip-types tools/cli/src/bin.ts compat drift --online --timeout 10000
 
       - name: Validate documentation, links, and manifest file coverage
         run: node tools/test-runner.mjs documentation

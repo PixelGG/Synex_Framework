@@ -68,7 +68,8 @@
     { "id": "023_lease_authority_recovery", "path": "migrations/023_lease_authority_recovery.sql", "transactional": false },
     { "id": "024_session_control_capacity", "path": "migrations/024_session_control_capacity.sql", "transactional": false },
     { "id": "025_cluster_lease_capacity", "path": "migrations/025_cluster_lease_capacity.sql", "transactional": false },
-    { "id": "026_lease_authority_owner_index", "path": "migrations/026_lease_authority_owner_index.sql", "transactional": false }
+    { "id": "026_lease_authority_owner_index", "path": "migrations/026_lease_authority_owner_index.sql", "transactional": false },
+    { "id": "027_domain_primitives", "path": "migrations/027_domain_primitives.sql", "transactional": false }
   ],
   "dataOwnership": {
     "tables": [
@@ -107,7 +108,16 @@
       "synex_rbac_policy_revisions",
       "synex_legacy_imports",
       "synex_legacy_id_mappings",
-      "synex_audit_archive"
+      "synex_audit_archive",
+      "synex_domain_operation_receipts",
+      "synex_domain_receipt_capacity",
+      "synex_domain_receipt_owner_capacity",
+      "synex_domain_deletion_plan_capacity",
+      "synex_domain_deletion_plan_owner_capacity",
+      "synex_domain_deletion_domains",
+      "synex_domain_deletion_providers",
+      "synex_domain_deletion_plans",
+      "synex_domain_deletion_actions"
     ],
     "characterDelete": "anonymize"
   },

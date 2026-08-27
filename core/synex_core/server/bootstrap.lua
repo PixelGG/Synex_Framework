@@ -1,5 +1,4 @@
 local factories = assert(SynexCoreFactories, 'factories must be loaded first')
-
 factories.bootstrap = function(deps)
     local platform = assert(deps.platform, 'bootstrap requires platform')
     local coreResource = platform.currentResource()
@@ -51,12 +50,14 @@ factories.bootstrap = function(deps)
     if not effectiveConfig then error(effectiveConfigError) end
     defaultConfig = effectiveConfig
 
+    local manifests = {}
     local persistence = factories.persistence({
         platform = platform,
         foundation = foundation,
         config = defaultConfig.database,
         db = deps.db,
-        instanceId = defaultConfig.instanceId
+        instanceId = defaultConfig.instanceId,
+        manifestSnapshot = function() return manifests end
     })
     local runtimePersistence = factories.runtimePersistence({
         foundation = foundation,
@@ -156,7 +157,24 @@ factories.bootstrap = function(deps)
     if not auditConfigured then error(auditConfigurationError.message) end
 
     local runtime = {}
-    local manifests = {}
+    local controlProviders = assert(factories.controlProviders({
+        platform = platform,
+        foundation = foundation,
+        owners = registries.owners,
+        coreResource = coreResource,
+        manifestFor = function(resourceName) return manifests[resourceName] end
+    }), 'bootstrap requires control providers')
+    local dataPort = assert(factories.dataPort({
+        platform = platform, foundation = foundation, database = persistence.database,
+        owners = registries.owners, sha256 = persistence.sha256,
+        manifestFor = function(resourceName) return manifests[resourceName] end
+    }), 'bootstrap requires data port')
+    local domainDeletion = assert(factories.domainDeletion({
+        platform = platform, foundation = foundation, database = persistence.database,
+        owners = registries.owners, leases = persistence.leases,
+        instances = runtimePersistence.instances, sha256 = persistence.sha256,
+        instanceId = defaultConfig.instanceId
+    }), 'bootstrap requires domain deletion')
     local facadeCache = {}
     local reloadSnapshots = {}
     local runtimeGate = factories.runtimeGate({ foundation = foundation })
@@ -173,27 +191,19 @@ factories.bootstrap = function(deps)
         lifecycle = lifecycle,
         stateService = stateService,
         manifests = manifests,
+        controlProviders = controlProviders,
         runtimeGate = runtimeGate,
         ownerSnapshotMaximumBytes = ownerSnapshotMaximumBytes
     })
     local api = factories.bootstrapApi({
-        platform = platform,
-        foundation = foundation,
-        registries = registries,
-        security = security,
-        identity = identity,
-        contractSystem = contractSystem,
-        messaging = messaging,
-        coreResource = coreResource,
-        runtime = runtime,
-        stateService = stateService,
-        lifecycle = lifecycle,
-        reliability = reliability,
-        sagaRuntime = sagaRuntime,
-        defaultConfig = defaultConfig,
-        facadeCache = facadeCache,
-        runtimeGate = runtimeGate,
-        ensureOwner = discovery.ensureOwner
+        platform = platform, foundation = foundation, registries = registries,
+        security = security, identity = identity, contractSystem = contractSystem,
+        messaging = messaging, coreResource = coreResource, runtime = runtime,
+        stateService = stateService, lifecycle = lifecycle, reliability = reliability,
+        sagaRuntime = sagaRuntime, defaultConfig = defaultConfig, facadeCache = facadeCache,
+        runtimeGate = runtimeGate, ensureOwner = discovery.ensureOwner,
+        dataPort = dataPort, domainDeletion = domainDeletion,
+        controlProviders = controlProviders
     })
     factories.bootstrapDiagnostics({
         runtime = runtime,
@@ -209,41 +219,31 @@ factories.bootstrap = function(deps)
         contractSystem = contractSystem,
         security = security,
         identity = identity,
-        sagaRuntime = sagaRuntime
+        sagaRuntime = sagaRuntime,
+        reliability = reliability,
+        controlProviders = controlProviders,
+        coreResource = coreResource
     })
     factories.bootstrapLifecycle({
-        runtime = runtime,
-        platform = platform,
-        foundation = foundation,
-        coreResource = coreResource,
-        api = api,
-        messaging = messaging,
-        identity = identity,
-        discovery = discovery,
-        reloadSnapshots = reloadSnapshots,
-        registries = registries,
-        lifecycle = lifecycle,
-        ownerDrainTimeoutMs = ownerDrainTimeoutMs,
-        ownerDrainPollMs = ownerDrainPollMs,
-        ownerSnapshotMaximumBytes = ownerSnapshotMaximumBytes,
-        facadeCache = facadeCache,
-        defaultConfig = defaultConfig,
-        persistence = persistence,
-        manifests = manifests,
-        reliability = reliability,
-        sagaRuntime = sagaRuntime,
-        retention = retention,
-        security = security,
-        stateService = stateService,
-        runtimeGate = runtimeGate
+        runtime = runtime, platform = platform, foundation = foundation,
+        coreResource = coreResource, api = api, messaging = messaging,
+        identity = identity, discovery = discovery, reloadSnapshots = reloadSnapshots,
+        registries = registries, lifecycle = lifecycle,
+        ownerDrainTimeoutMs = ownerDrainTimeoutMs, ownerDrainPollMs = ownerDrainPollMs,
+        ownerSnapshotMaximumBytes = ownerSnapshotMaximumBytes, facadeCache = facadeCache,
+        defaultConfig = defaultConfig, persistence = persistence, manifests = manifests,
+        reliability = reliability, sagaRuntime = sagaRuntime, retention = retention,
+        security = security, stateService = stateService, runtimeGate = runtimeGate,
+        domainDeletion = domainDeletion, dataPort = dataPort
     })
-
     runtime.foundation, runtime.persistence = foundation, persistence
     runtime.registries, runtime.lifecycle = registries, lifecycle
     runtime.contracts, runtime.security = contractSystem, security
     runtime.messaging, runtime.identity = messaging, identity
     runtime.state, runtime.reliability = stateService, reliability
     runtime.sagas, runtime.retention = sagaRuntime, retention
+    runtime.dataPort, runtime.domainDeletion = dataPort, domainDeletion
+    runtime.controlProviders = controlProviders
     runtime.config = defaultConfig
     return runtime
 end

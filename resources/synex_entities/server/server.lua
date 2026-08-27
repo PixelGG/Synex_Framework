@@ -4,83 +4,15 @@ local CORE_RANGE = '^1.0.0'
 local SERVICE_NAME = 'synex.entities'
 local SERVICE_VERSION = '1.0.0'
 
-local config = {
-    bucketCleanupTimeoutMs = 5000,
-    bucketMin = math.max(1, math.min(GetConvarInt('synex_entities_bucket_min', 1000), 2147483647)),
-    deleteTimeoutMs = 1000,
-    driftIntervalMs = math.max(10000, math.min(
-        GetConvarInt('synex_entities_drift_interval_ms', 60000),
-        3600000
-    )),
-    driftScanLimit = math.max(16, math.min(
-        GetConvarInt('synex_entities_drift_scan_limit', 512),
-        5000
-    )),
-    maxBucketPlayers = math.max(1, math.min(GetConvarInt('synex_entities_max_bucket_players', 256), 2048)),
-    maxBuckets = math.max(1, math.min(GetConvarInt('synex_entities_max_buckets', 1024), 10000)),
-    maxEntities = math.max(1, math.min(GetConvarInt('synex_entities_max_entities', 4096), 20000)),
-    rehydrateLimit = math.max(1, math.min(GetConvarInt('synex_entities_rehydrate_limit', 512), 5000)),
-    spawnTimeoutMs = 2500,
-    waitStepMs = 25,
-}
-config.bucketMax = math.max(
-    config.bucketMin,
-    math.min(GetConvarInt('synex_entities_bucket_max', 999999), 2147483647)
-)
-config.maxOwnerEntities = math.max(
-    1,
-    math.min(GetConvarInt('synex_entities_max_owner_entities', 1024), config.maxEntities)
-)
-config.maxOwnerBuckets = math.max(
-    1,
-    math.min(GetConvarInt('synex_entities_max_owner_buckets', 128), config.maxBuckets)
-)
-config.maxBucketEntities = math.max(
-    1,
-    math.min(GetConvarInt('synex_entities_max_bucket_entities', 512), config.maxEntities)
-)
-
-local health = {
-    state = 'STARTING',
-    reason = 'Bootstrap pending',
-    onesync = GetConvar('onesync', 'off'),
-    persistence = 'UNKNOWN',
-    service = 'UNREGISTERED',
-}
-
-local ports = {
-    createObjectNoOffset = CreateObjectNoOffset,
-    createPed = CreatePed,
-    createThread = CreateThread,
-    createVehicleServerSetter = CreateVehicleServerSetter,
-    deleteEntity = DeleteEntity,
-    doesEntityExist = DoesEntityExist,
-    getCoreApi = function(versionRange)
-        return exports[CORE_RESOURCE]:GetAPI(versionRange)
-    end,
-    getEntityModel = GetEntityModel,
-    getEntityRoutingBucket = GetEntityRoutingBucket,
-    getEntityType = GetEntityType,
-    getGameTimer = GetGameTimer,
-    getPlayerName = GetPlayerName,
-    getPlayerRoutingBucket = GetPlayerRoutingBucket,
-    getResourceState = GetResourceState,
-    jsonDecode = json.decode,
-    loadResourceFile = LoadResourceFile,
-    networkGetEntityOwner = NetworkGetEntityOwner,
-    networkGetNetworkIdFromEntity = NetworkGetNetworkIdFromEntity,
-    setEntityOrphanMode = SetEntityOrphanMode,
-    setEntityRoutingBucket = SetEntityRoutingBucket,
-    setPlayerRoutingBucket = SetPlayerRoutingBucket,
-    setRoutingBucketEntityLockdownMode = SetRoutingBucketEntityLockdownMode,
-    setRoutingBucketPopulationEnabled = SetRoutingBucketPopulationEnabled,
-    wait = Wait,
-}
+local bootstrap = SynexEntityBootstrapConfig.create(CORE_RESOURCE)
+local config = bootstrap.config
+local health = bootstrap.health
+local ports = bootstrap.ports
 
 local state = SynexEntityRegistry.newState()
 local registry = state.entities
 local coreRef = {}
-local database = SynexEntityDatabase.createOxmysqlAdapter(MySQL)
+local database = SynexEntityDatabase.createCoreAdapter(coreRef)
 local foundation = SynexEntityFoundation.create({
     errorSink = function(event)
         print(json.encode({
@@ -104,10 +36,74 @@ local foundation = SynexEntityFoundation.create({
 })
 local repository = SynexEntityRepository.create({
     database = database,
+    config = config,
     foundation = foundation,
     health = health,
 })
+local authorityRepository = SynexEntityAuthorityRepository.create({
+    database = database,
+    foundation = foundation,
+    health = health,
+})
+local extensionRepository = SynexEntityExtensionRepository.create({
+    database = database,
+    foundation = foundation,
+    health = health,
+})
+local extensionRegistry = SynexEntityExtensionRegistry.create({})
+local jsonValues = SynexEntityJsonValues.create({ foundation = foundation, ports = ports })
+local archetypes = SynexEntityArchetypes.create({
+    extensionRegistry = extensionRegistry,
+    foundation = foundation,
+    jsonValues = jsonValues,
+    ports = ports,
+    validation = SynexEntityValidation,
+})
+local logicalOwner = SynexEntityLogicalOwner.create({
+    coreRef = coreRef, foundation = foundation,
+    validation = SynexEntityValidation,
+})
+local checkpointGuard = SynexEntityCheckpointGuard.create({
+    debounceMs = config.checkpointDebounceMs, getGameTimer = ports.getGameTimer,
+    maximumEntries = config.maxEntities,
+})
+local lanes = SynexEntityMutationLanes.create({
+    foundation = foundation, ports = ports,
+})
+local observability = SynexEntityObservability.create({
+    coreRef = coreRef, foundation = foundation, ports = ports,
+    resourceName = RESOURCE_NAME,
+})
+local cleanupQueue = SynexEntityCleanupQueue.create({
+    config = config, foundation = foundation, health = health, observability = observability, ports = ports,
+})
+local spawnAdmission = SynexEntitySpawnAdmission.create({
+    config = config,
+    observability = observability,
+    ports = ports,
+    registry = registry,
+    state = state,
+})
+local authorityOperations
+local extensionOperations = SynexEntityExtensions.create({
+    archetypes = archetypes,
+    coreRef = coreRef,
+    currentAuthority = function() return authorityOperations
+        and authorityOperations.currentAuthority() end,
+    extensionRegistry = extensionRegistry,
+    foundation = foundation,
+    jsonValues = jsonValues,
+    lanes = lanes,
+    observability = observability,
+    ports = ports,
+    repository = extensionRepository,
+    registry = registry,
+    resourceName = RESOURCE_NAME,
+    validation = SynexEntityValidation,
+})
 local entityRuntime = SynexEntityRuntime.create({
+    cleanupEntity = extensionOperations.cleanupEntity,
+    cleanupQueue = cleanupQueue,
     config = config,
     foundation = foundation,
     ports = ports,
@@ -116,50 +112,106 @@ local entityRuntime = SynexEntityRuntime.create({
     validation = SynexEntityValidation,
 })
 local entityOperations = SynexEntityOperations.create({
-    coreRef = coreRef,
-    entityRuntime = entityRuntime,
-    foundation = foundation,
-    registry = registry,
-    repository = repository,
+    coreRef = coreRef, entityRuntime = entityRuntime, foundation = foundation,
+    logicalOwner = logicalOwner, observability = observability,
+    registry = registry, repository = repository, spawnAdmission = spawnAdmission,
     validation = SynexEntityValidation,
 })
+authorityOperations = SynexEntityAuthorityService.create({
+    archetypes = archetypes,
+    authorityRepository = authorityRepository,
+    checkpointGuard = checkpointGuard,
+    config = config,
+    coreRef = coreRef,
+    entityRuntime = entityRuntime,
+    extensionRegistry = extensionRegistry,
+    extensionOperations = extensionOperations,
+    extensionRepository = extensionRepository,
+    foundation = foundation,
+    health = health,
+    lanes = lanes,
+    legacyOperations = entityOperations,
+    logicalOwner = logicalOwner,
+    observability = observability,
+    ports = ports,
+    registry = registry,
+    resourceName = RESOURCE_NAME,
+    spawnAdmission = spawnAdmission,
+    validation = SynexEntityValidation,
+})
+local bucketPolicy = SynexEntityBucketPolicy.create({ config = config, foundation = foundation })
 local bucketOperations = SynexEntityBucketOperations.create({
+    authorityRepository = authorityRepository,
     config = config,
     coreRef = coreRef,
     entityRuntime = entityRuntime,
     foundation = foundation,
+    getAuthority = authorityOperations.currentAuthority,
+    lanes = lanes,
+    observability = observability,
+    policy = bucketPolicy,
     ports = ports,
     registry = registry,
-    repository = repository,
     state = state,
     validation = SynexEntityValidation,
 })
+local queryOperations = SynexEntityQueryService.create({
+    authorityRepository = authorityRepository,
+    bucketPolicy = bucketPolicy,
+    config = config,
+    entityRuntime = entityRuntime,
+    extensionRegistry = extensionRegistry,
+    extensionRepository = extensionRepository,
+    foundation = foundation,
+    ports = ports,
+    registry = registry,
+    state = state,
+    validation = SynexEntityValidation,
+})
+local lifecyclePolicy = SynexEntityLifecyclePolicy.create({
+    authorityRepository = authorityRepository,
+    config = config,
+    entityRuntime = entityRuntime,
+    foundation = foundation,
+    observability = observability,
+    ports = ports,
+    registry = registry,
+    resourceName = RESOURCE_NAME,
+})
 local service = SynexEntityService.create({
+    authorityOperations = authorityOperations,
     bucketOperations = bucketOperations,
+    cleanupQueue = cleanupQueue,
     config = config,
     coreRef = coreRef,
     entityOperations = entityOperations,
     entityRuntime = entityRuntime,
+    extensionOperations = extensionOperations,
+    extensionRegistry = extensionRegistry,
     foundation = foundation,
     health = health,
     ports = ports,
+    publicErrors = SynexEntityPublicErrors,
+    lanes = lanes,
+    observability = observability,
+    queryOperations = queryOperations,
     registry = registry,
     repository = repository,
     resourceName = RESOURCE_NAME,
     state = state,
     validation = SynexEntityValidation,
 })
+local controlProvider = SynexEntityControlProvider.create({
+    authorityRepository = authorityRepository, bucketPolicy = bucketPolicy,
+    config = config, coreRef = coreRef, database = database, foundation = foundation,
+    queryOperations = queryOperations, registry = registry, service = service,
+    spawnAdmission = spawnAdmission, state = state,
+})
 local application = SynexEntityApplication.create({
-    coreRange = CORE_RANGE,
-    coreRef = coreRef,
-    coreResource = CORE_RESOURCE,
-    foundation = foundation,
-    health = health,
-    ports = ports,
-    resourceName = RESOURCE_NAME,
-    service = service,
-    serviceName = SERVICE_NAME,
-    serviceVersion = SERVICE_VERSION,
+    config = config, coreRange = CORE_RANGE, coreRef = coreRef, coreResource = CORE_RESOURCE,
+    controlProvider = controlProvider, foundation = foundation, health = health,
+    lifecyclePolicy = lifecyclePolicy, ports = ports, resourceName = RESOURCE_NAME,
+    service = service, serviceName = SERVICE_NAME, serviceVersion = SERVICE_VERSION,
 })
 
 foundation.setCleanupOwner(service.cleanupOwner)
@@ -181,4 +233,16 @@ end)
 
 AddEventHandler('onResourceStop', function(resourceName)
     application.resourceStopped(resourceName)
+end)
+
+AddEventHandler('entityRemoved', function(entityHandle)
+    application.entityRemoved(entityHandle)
+end)
+
+AddEventHandler('onEntityBucketChange', function(entityHandle, bucketId, oldBucketId)
+    application.entityBucketChanged(entityHandle, bucketId, oldBucketId)
+end)
+
+AddEventHandler('onPlayerBucketChange', function(playerSource, bucketId, oldBucketId)
+    application.playerBucketChanged(playerSource, bucketId, oldBucketId)
 end)

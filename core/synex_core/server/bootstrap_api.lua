@@ -1,5 +1,4 @@
 local factories = assert(SynexCoreFactories, 'factories must be loaded first')
-
 factories.bootstrapApi = function(deps)
     local platform = assert(deps.platform, 'bootstrap API requires platform')
     local foundation = assert(deps.foundation, 'bootstrap API requires foundation')
@@ -19,7 +18,14 @@ factories.bootstrapApi = function(deps)
     local runtimeGate = assert(deps.runtimeGate, 'bootstrap API requires runtime gate')
     local ensureOwner = assert(deps.ensureOwner, 'bootstrap API requires owner discovery')
     local defaultConfig = assert(deps.defaultConfig, 'bootstrap API requires effective configuration')
-
+    local controlProviders, dataPort, domainDeletion = deps.controlProviders, deps.dataPort, deps.domainDeletion
+    local validation = assert(factories.bootstrapApiValidation({
+        foundation = foundation,
+        defaultConfig = defaultConfig,
+        reliability = reliability
+    }), 'bootstrap API requires validation helpers')
+    local mutateAccess, permissionMutationOptions, publicSession, rpcCallOptions = validation.mutateAccess,
+        validation.permissionMutationOptions, validation.publicSession, validation.rpcCallOptions
     local function requireCaller()
         local caller = platform.invokingResource()
         if type(caller) ~= 'string' or caller == '' then
@@ -29,8 +35,7 @@ factories.bootstrapApi = function(deps)
         if not epoch then return nil, nil, err end
         return caller, epoch, nil
     end
-
-    local function ownerOperation(caller, epoch, operation, handler, traceId)
+    local function ownerOperation(caller, epoch, operation, handler, traceId, traceContext)
         local available, availabilityError = runtimeGate:requireAvailable()
         if not available then return nil, availabilityError end
         if not registries.owners:isCurrent(caller, epoch) then return nil, foundation.error('STALE_RESOURCE', 'The calling resource restarted.') end
@@ -41,7 +46,11 @@ factories.bootstrapApi = function(deps)
         end)
         if not token then return nil, operationError end
         local results = table.pack(foundation.safeCall(function()
-            return foundation.withContext({ traceId = traceId, caller = caller, contract = operation }, handler, traceId)
+            local context = traceContext or {}
+            context.traceId = traceId
+            context.caller = caller
+            context.contract = operation
+            return foundation.withContext(context, handler, traceId)
         end))
         local ok, value = results[1], results[2]
         registries.owners:finishOperation(caller, epoch, token)
@@ -63,7 +72,6 @@ factories.bootstrapApi = function(deps)
         end
         return table.unpack(results, 2, results.n)
     end
-
     local function guarded(caller, epoch, capability, operation, handler)
         local available, availabilityError = runtimeGate:requireAvailable()
         if not available then return nil, availabilityError end
@@ -73,104 +81,6 @@ factories.bootstrapApi = function(deps)
         if not allowed then return nil, err end
         return ownerOperation(caller, epoch, operation, handler, traceId)
     end
-
-    local function publicSession(session)
-        if not session then return nil end
-        return {
-            id = session.id,
-            userId = session.userId,
-            characterId = session.characterId,
-            source = session.source,
-            sourceGeneration = session.sourceGeneration,
-            state = session.state,
-            connectedAt = session.connectedAt,
-            version = session.version
-        }
-    end
-
-    local function rpcCallOptions(options)
-        options = options or {}
-        if type(options) ~= 'table' or getmetatable(options) ~= nil then
-            return nil, foundation.error('INVALID_RPC_OPTIONS',
-                'RPC call options must be a plain object.')
-        end
-        local allowed = { timeoutMs = true, traceId = true, idempotencyKey = true }
-        for key in pairs(options) do
-            if type(key) ~= 'string' or not allowed[key] then
-                return nil, foundation.error('INVALID_RPC_OPTIONS',
-                    'RPC call options contain an unknown property.')
-            end
-        end
-        local rpcConfig = defaultConfig.rpc or {}
-        local maximumTimeoutMs = math.max(100,
-            math.min(tonumber(rpcConfig.maximumTimeoutMs) or 15000, 15000))
-        local timeoutMs = options.timeoutMs == nil and (rpcConfig.timeoutMs or 5000)
-            or options.timeoutMs
-        if type(timeoutMs) ~= 'number' or math.type(timeoutMs) ~= 'integer'
-            or timeoutMs < 100 or timeoutMs > maximumTimeoutMs then
-            return nil, foundation.error('INVALID_RPC_OPTIONS',
-                'RPC timeoutMs is outside the configured range.')
-        end
-        if options.traceId ~= nil and (type(options.traceId) ~= 'string'
-            or #options.traceId < 8 or #options.traceId > 64
-            or not options.traceId:match('^[A-Za-z0-9_.:%-]+$')) then
-            return nil, foundation.error('INVALID_RPC_OPTIONS', 'RPC traceId is invalid.')
-        end
-        if options.idempotencyKey ~= nil and (type(options.idempotencyKey) ~= 'string'
-            or #options.idempotencyKey < 8 or #options.idempotencyKey > 128
-            or not options.idempotencyKey:match('^[A-Za-z0-9_.:%-]+$')) then
-            return nil, foundation.error('INVALID_RPC_OPTIONS',
-                'RPC idempotencyKey is invalid.')
-        end
-        return {
-            traceId = options.traceId,
-            idempotencyKey = options.idempotencyKey,
-            deadlineAt = foundation.monotonicMs() + timeoutMs
-        }, nil
-    end
-
-    local function mutateAccess(caller, operation, request, traceId, handler)
-        if type(request) ~= 'table' or getmetatable(request) ~= nil
-            or type(request.idempotencyKey) ~= 'string' then
-            return nil, foundation.error('INVALID_ACCESS_REQUEST',
-                'Access mutations require a plain request and idempotencyKey.', { traceId = traceId })
-        end
-        local candidate = foundation.copy(request)
-        local idempotencyKey = candidate.idempotencyKey
-        candidate.idempotencyKey = nil
-        return reliability.idempotency:run(caller, operation, idempotencyKey, candidate, function()
-            return handler(candidate, { actor = caller, actorType = 'resource', traceId = traceId })
-        end, { maximumRequestBytes = 4096, maximumResponseBytes = 4096 })
-    end
-
-    local function permissionMutationOptions(options, allowExpiry, traceId)
-        if type(options) ~= 'table' or getmetatable(options) ~= nil then
-            return nil, foundation.error('INVALID_AUDIT_CONTEXT',
-                'Permission mutations require a plain options object.', { traceId = traceId })
-        end
-        local allowed = { reason = true }
-        if allowExpiry then allowed.expiresAt = true end
-        for key in pairs(options) do
-            if type(key) ~= 'string' or not allowed[key] then
-                return nil, foundation.error('INVALID_AUDIT_CONTEXT',
-                    'Permission mutation options contain an unknown property.', { traceId = traceId })
-            end
-        end
-        if type(options.reason) ~= 'string' or #options.reason < 1 or #options.reason > 256
-            or options.reason:find('[%z\1-\31\127]') then
-            return nil, foundation.error('INVALID_AUDIT_CONTEXT',
-                'Permission mutations require a bounded printable reason.', { traceId = traceId })
-        end
-        if allowExpiry and options.expiresAt ~= nil
-            and (type(options.expiresAt) ~= 'string' or #options.expiresAt < 19
-                or #options.expiresAt > 32
-                or not options.expiresAt:match('^%d%d%d%d%-%d%d%-%d%d[T ]%d%d:%d%d:%d%d')) then
-            return nil, foundation.error('INVALID_EXPIRY',
-                'Permission assignment expiry must be an ISO-like timestamp.', { traceId = traceId })
-        end
-        return foundation.copy(options), nil
-    end
-
     local function registerCoreContracts()
         local handlers = {
             ['synex.runtime.status'] = function(_, context)
@@ -214,7 +124,6 @@ factories.bootstrapApi = function(deps)
         end
         return true, nil
     end
-
     local function registerCoreServices()
         local coreEpoch = registries.owners:epoch(coreResource)
         return messaging.services:provide(coreResource, coreEpoch, {
@@ -240,7 +149,6 @@ factories.bootstrapApi = function(deps)
             }
         })
     end
-
     local function buildFacade(caller, epoch)
         local facade = {
             version = SynexProtocol.api,
@@ -269,13 +177,44 @@ factories.bootstrapApi = function(deps)
                 end)
             end
         }
+        local metricPrefix = caller:gsub('[^A-Za-z0-9_]', '_') .. '_'
+        local function writeMetric(kind, name, labels, value)
+            return guarded(caller, epoch, 'synex.metrics.write',
+                'Metrics.' .. kind, function()
+                    if type(name) ~= 'string' or name:sub(1, #metricPrefix) ~= metricPrefix then
+                        return nil, foundation.error('METRIC_NAMESPACE_FORBIDDEN',
+                            'A resource may emit metrics only in its own namespace.')
+                    end
+                    local writer = foundation.metrics[kind]
+                    if type(writer) ~= 'function'
+                        or writer(foundation.metrics, name, labels, value) ~= true then
+                        return nil, foundation.error('INVALID_METRIC_SAMPLE',
+                            'The metric sample is invalid or the bounded series capacity is exhausted.')
+                    end
+                    return true, nil
+                end)
+        end
         facade.Metrics = {
             getSnapshot = function()
                 return guarded(caller, epoch, 'synex.metrics.read', 'Metrics.getSnapshot', function()
                     return foundation.metrics:snapshot(), nil
                 end)
+            end,
+            increment = function(name, labels, amount)
+                return writeMetric('increment', name, labels, amount)
+            end,
+            gauge = function(name, labels, value)
+                return writeMetric('gauge', name, labels, value)
+            end,
+            observe = function(name, labels, value)
+                return writeMetric('observe', name, labels, value)
             end
         }
+        facade.Tracing = factories.bootstrapApiTracing({
+            platform = platform, foundation = foundation, registries = registries,
+            security = security, runtimeGate = runtimeGate, ownerOperation = ownerOperation,
+            caller = caller, epoch = epoch, coreResource = coreResource
+        })
         facade.Ids = {
             next = function(namespace)
                 if type(namespace) ~= 'string' or #namespace < 2 or #namespace > 32
@@ -379,6 +318,59 @@ factories.bootstrapApi = function(deps)
                 end)
             end
         }
+        if dataPort then facade.Database = {
+            null = function()
+                return dataPort:null()
+            end,
+            read = function(request)
+                return guarded(caller, epoch, 'synex.database.read', 'Database.read', function()
+                    return dataPort:read(caller, epoch, request)
+                end)
+            end,
+            write = function(request)
+                return guarded(caller, epoch, 'synex.database.write', 'Database.write', function()
+                    return dataPort:write(caller, epoch, request)
+                end)
+            end,
+            transaction = function(request, handler)
+                return guarded(caller, epoch, 'synex.database.transaction',
+                    'Database.transaction', function()
+                        return dataPort:transaction(caller, epoch, request, handler)
+                    end)
+            end,
+            maintenance = function(request, handler)
+                return guarded(caller, epoch, 'synex.database.maintenance',
+                    'Database.maintenance', function()
+                        return dataPort:maintenance(caller, epoch, request, handler)
+                    end)
+            end
+        } end
+        if domainDeletion then facade.DomainDeletions = {
+            registerProvider = function(definition)
+                return guarded(caller, epoch, 'synex.deletions.provider',
+                    'DomainDeletions.registerProvider', function()
+                        return domainDeletion:registerProvider(caller, epoch, definition)
+                    end)
+            end,
+            plan = function(request)
+                return guarded(caller, epoch, 'synex.deletions.manage',
+                    'DomainDeletions.plan', function()
+                        return domainDeletion:plan(caller, epoch, request)
+                    end)
+            end,
+            get = function(planId)
+                return guarded(caller, epoch, 'synex.deletions.read',
+                    'DomainDeletions.get', function()
+                        return domainDeletion:get(caller, epoch, planId)
+                    end)
+            end,
+            process = function(planId)
+                return guarded(caller, epoch, 'synex.deletions.manage',
+                    'DomainDeletions.process', function()
+                        return domainDeletion:process(caller, epoch, planId)
+                    end)
+            end
+        } end
         facade.Permissions = {
             defineRole = function(name, permissions, options)
                 return guarded(caller, epoch, 'synex.permissions.manage', 'Permissions.defineRole', function(traceId)
@@ -414,6 +406,17 @@ factories.bootstrapApi = function(deps)
                 return guarded(caller, epoch, 'synex.permissions.read', 'Permissions.check', function()
                     return security.rbac:check(subject, permission, explicitDenies)
                 end)
+            end,
+            explain = function(subject, permission, explicitDenies)
+                return guarded(caller, epoch, 'synex.permissions.read', 'Permissions.explain', function()
+                    return security.rbac:explain(subject, permission, explicitDenies)
+                end)
+            end,
+            evaluateRules = function(permission, rules)
+                return guarded(caller, epoch, 'synex.permissions.read',
+                    'Permissions.evaluateRules', function()
+                        return security.rbac:evaluateRules(permission, rules)
+                    end)
             end
         }
         facade.Access = {
@@ -490,6 +493,33 @@ factories.bootstrapApi = function(deps)
             end,
             call = function(name, range, method, request, context) return messaging.services:call(caller, epoch, name, range, method, request, context) end
         }
+        if controlProviders then facade.ControlProviders = {
+            register = function(definition)
+                return guarded(caller, epoch, 'synex.control.provider.register',
+                    'ControlProviders.register', function()
+                        return controlProviders:register(caller, epoch, definition)
+                    end)
+            end,
+            describe = function(namespace)
+                return guarded(caller, epoch, 'synex.control.provider.read',
+                    'ControlProviders.describe', function()
+                        return controlProviders:describe(namespace)
+                    end)
+            end,
+            list = function(request)
+                return guarded(caller, epoch, 'synex.control.provider.read',
+                    'ControlProviders.list', function()
+                        return controlProviders:list(request)
+                    end)
+            end,
+            invoke = function(namespace, operation, request, options)
+                return guarded(caller, epoch, 'synex.control.provider.read',
+                    'ControlProviders.invoke', function(traceId)
+                        return controlProviders:invoke(caller, epoch, namespace,
+                            operation, request, options, traceId)
+                    end)
+            end
+        } end
         facade.States = {
             define = function(definition)
                 return ownerOperation(caller, epoch, 'States.define', function()
@@ -622,7 +652,6 @@ factories.bootstrapApi = function(deps)
         end
         return facade
     end
-
     local function getAPIForCaller(caller, versionRange)
         local available, availabilityError = runtimeGate:requireAvailable()
         if not available then return nil, availabilityError end
@@ -638,7 +667,6 @@ factories.bootstrapApi = function(deps)
         facadeCache[key] = facadeCache[key] or buildFacade(caller, epoch)
         return facadeCache[key], nil
     end
-
     local function invokeForCaller(caller, name, version, request, options)
         local available, availabilityError = runtimeGate:requireAvailable()
         if not available then return nil, availabilityError end
@@ -651,19 +679,16 @@ factories.bootstrapApi = function(deps)
         if not prepared then return nil, optionsError end
         return messaging.gateway:invoke(caller, epoch, name, version, request, prepared)
     end
-
     function runtime:getAPI(versionRange)
         local caller, _, callerError = requireCaller()
         if not caller then return nil, callerError end
         return getAPIForCaller(caller, versionRange)
     end
-
     function runtime:invoke(name, version, request, options)
         local caller, _, callerError = requireCaller()
         if not caller then return nil, callerError end
         return invokeForCaller(caller, name, version, request, options)
     end
-
     return {
         getAPIForCaller = getAPIForCaller,
         guarded = guarded,

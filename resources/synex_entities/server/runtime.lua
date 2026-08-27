@@ -12,11 +12,39 @@ function SynexEntityApplication.create(options)
     local coreRef = assert(options.coreRef, 'entity application coreRef is required')
     local ports = assert(options.ports, 'entity application ports are required')
     local health = assert(options.health, 'entity application health is required')
+    local config = assert(options.config, 'entity application config is required')
+    local lifecyclePolicy = assert(options.lifecyclePolicy,
+        'entity application lifecycle policy is required')
+    local controlProvider = assert(options.controlProvider,
+        'entity application control provider is required')
     local serviceToken
     local participantToken
+    local deletionProviderToken
+    local bucketExpiryScheduleToken
     local driftScheduleToken
+    local heartbeatScheduleToken
+    local recoveryScheduleToken
     local rpcTokens = {}
     local application = {}
+
+    local function registerControlProvider()
+        local api = coreRef.value
+        if type(api) ~= 'table' then
+            health.controlProvider = 'UNAVAILABLE'
+            return nil, { code = 'UNAVAILABLE', message = 'The Core API is unavailable', retryable = true }
+        end
+        local registered, metadata, registrationError = foundation.protect(
+            'core.control_provider.register',
+            function() return controlProvider.register(api) end
+        )
+        if not registered or not metadata then
+            health.controlProvider = 'UNAVAILABLE'
+            return nil, type(registrationError) == 'table' and registrationError
+                or { code = 'UNAVAILABLE', message = 'The entity control provider is unavailable', retryable = true }
+        end
+        health.controlProvider = 'REGISTERED'
+        return metadata
+    end
 
     local function acquireCoreApi()
         if ports.getResourceState(coreResource) ~= 'started' then
@@ -46,6 +74,15 @@ function SynexEntityApplication.create(options)
         if type(api.Services) ~= 'table' or not foundation.isCallable(api.Services.provide) then
             return foundation.failure('UNAVAILABLE', 'The Core service registry is unavailable', true)
         end
+        local function publicMethod(handler)
+            return function(request, context)
+                local value, operationError = handler(request, context)
+                if value == nil and operationError ~= nil then
+                    return nil, SynexEntityPublicErrors.sanitize(operationError)
+                end
+                return value
+            end
+        end
 
         local ok, tokenOrError, provideError = foundation.protect(
             'core.services.provide',
@@ -55,11 +92,21 @@ function SynexEntityApplication.create(options)
                         getHealth = function()
                             return service.healthSnapshot()
                         end,
-                        getControlSummary = service.getControlSummary,
+                        getControlSummary = publicMethod(service.getControlSummary),
+                        getDiagnosticSnapshot = publicMethod(service.getDiagnosticSnapshot),
+                        inspectEntity = publicMethod(service.inspectEntity),
+                        queryByBucket = publicMethod(service.queryByBucket),
+                        queryByOwner = publicMethod(service.queryByOwner),
+                        queryByResource = publicMethod(service.queryByResource),
                     },
                     capabilities = {
                         getControlSummary = 'synex.entities.read',
+                        getDiagnosticSnapshot = 'synex.entities.read',
                         getHealth = 'synex.entities.health',
+                        inspectEntity = 'synex.entities.read',
+                        queryByBucket = 'synex.entities.query',
+                        queryByOwner = 'synex.entities.query',
+                        queryByResource = 'synex.entities.query',
                     },
                     name = serviceName,
                     version = serviceVersion,
@@ -95,7 +142,7 @@ function SynexEntityApplication.create(options)
             )
         end
 
-        local handlers = service.handlers()
+        local handlers = service.handlers(collection.contracts)
         rpcTokens = {}
         for _, definition in ipairs(collection.contracts) do
             local handler = handlers[definition.name]
@@ -120,77 +167,26 @@ function SynexEntityApplication.create(options)
         return true
     end
 
-    local function validateCharacterId(value)
-        return type(value) == 'string' and #value >= 1 and #value <= 36
-            and value:match('^[A-Za-z0-9][A-Za-z0-9_.:%-]*$') ~= nil
-    end
-
     local function registerCoreIntegrations()
         local api = coreRef.value
         if not api or not api.Characters
             or not foundation.isCallable(api.Characters.registerLifecycleParticipant) then
             return foundation.failure('UNAVAILABLE', 'The Core character lifecycle is unavailable', true)
         end
-        local token, participantError = api.Characters.registerLifecycleParticipant({
-            name = resourceName,
-            priority = 60,
-            required = true,
-            prepare = function(context)
-                local characterId = context and context.character and context.character.id
-                if not validateCharacterId(characterId) then
-                    return foundation.failure('INVALID_CHARACTER', 'Character lifecycle context is invalid', false)
-                end
-                return service.getCharacterLifecycleSummary(characterId, context)
-            end,
-            rollback = function() return true end,
-            unload = function(context)
-                local characterId = context and (
-                    context.character and context.character.id
-                    or context.session and context.session.characterId
-                )
-                if not validateCharacterId(characterId) then
-                    return foundation.failure('INVALID_CHARACTER', 'Character unload context is invalid', false)
-                end
-                return service.unloadCharacter(characterId)
-            end,
-            deletePreflight = function(context)
-                local characterId = context and context.character and context.character.id
-                if not validateCharacterId(characterId) then
-                    return foundation.failure('INVALID_CHARACTER', 'Character deletion context is invalid', false)
-                end
-                local summary, summaryError = service.getCharacterLifecycleSummary(characterId, context)
-                if not summary then return nil, summaryError end
-                local retainedOwner, retainedError = api.Ids.next('retained')
-                if not retainedOwner then return nil, retainedError end
-                return {
-                    action = 'retain',
-                    metadata = {
-                        retainedOwner = retainedOwner,
-                        persistent = summary.persistent,
-                        temporary = summary.runtimeTemporary,
-                    },
-                }
-            end,
-            deleteCommit = function(context)
-                local plan = context and context.plan
-                if type(plan) ~= 'table' or not validateCharacterId(plan.characterId) then
-                    return foundation.failure('INVALID_DELETE_PLAN', 'Character deletion plan is invalid', false)
-                end
-                local metadata
-                for _, action in ipairs(plan.actions or {}) do
-                    if action.owner == resourceName and action.action == 'retain' then
-                        metadata = action.metadata
-                        break
-                    end
-                end
-                local retainedOwner = type(metadata) == 'table' and metadata.retainedOwner or nil
-                if type(retainedOwner) ~= 'string' or #retainedOwner < 1 or #retainedOwner > 64
-                    or retainedOwner:match('^[A-Za-z0-9][A-Za-z0-9_.:%-]*$') == nil then
-                    return foundation.failure('INVALID_DELETE_PLAN', 'Entity retention metadata is invalid', false)
-                end
-                return service.applyCharacterDeletion(plan.characterId, retainedOwner, context)
-            end,
-        })
+        if not api.DomainDeletions
+            or not foundation.isCallable(api.DomainDeletions.registerProvider) then
+            return foundation.failure('UNAVAILABLE',
+                'The Core domain deletion coordinator is unavailable', true)
+        end
+        local providerToken, providerError = api.DomainDeletions.registerProvider(
+            lifecyclePolicy.groupDeletionProvider()
+        )
+        if not providerToken then return nil, providerError end
+        deletionProviderToken = providerToken
+
+        local token, participantError = api.Characters.registerLifecycleParticipant(
+            lifecyclePolicy.characterParticipant()
+        )
         if not token then return nil, participantError end
         participantToken = token
 
@@ -209,6 +205,58 @@ function SynexEntityApplication.create(options)
         )
         if not scheduleToken then return nil, scheduleError end
         driftScheduleToken = scheduleToken
+
+        local heartbeatToken, heartbeatError = api.Scheduler.every(
+            math.max(1000, math.floor(config.authorityLeaseSeconds * 1000 / 3)),
+            function()
+                local _, renewError = service.heartbeatAuthority({
+                    caller = resourceName,
+                    callerEpoch = api.ownerEpoch,
+                    traceId = 'entity_heartbeat',
+                })
+                if renewError then
+                    foundation.setHealth('DEGRADED', 'CLUSTER_LEASE_CONFLICT')
+                end
+            end,
+            { name = 'synex_entities.authority_heartbeat' }
+        )
+        if not heartbeatToken then return nil, heartbeatError end
+        heartbeatScheduleToken = heartbeatToken
+
+        local recoveryToken, recoveryError = api.Scheduler.every(
+            config.recoveryIntervalMs,
+            function()
+                local _, workerError = service.runRecovery({
+                    caller = resourceName,
+                    callerEpoch = api.ownerEpoch,
+                    traceId = 'entity_recovery',
+                })
+                if workerError then
+                    foundation.setHealth('DEGRADED', workerError.code or 'RECOVERY_FAILED')
+                end
+            end,
+            { name = 'synex_entities.recovery' }
+        )
+        if not recoveryToken then return nil, recoveryError end
+        recoveryScheduleToken = recoveryToken
+
+        local expiryToken, expiryError = api.Scheduler.every(
+            config.bucketExpiryIntervalMs,
+            function()
+                local _, workerError = service.expireBuckets({
+                    caller = resourceName,
+                    callerEpoch = api.ownerEpoch,
+                    traceId = 'entity_bucket_expiry',
+                })
+                if workerError then
+                    foundation.setHealth('DEGRADED',
+                        workerError.code or 'BUCKET_EXPIRY_FAILED')
+                end
+            end,
+            { name = 'synex_entities.bucket_expiry' }
+        )
+        if not expiryToken then return nil, expiryError end
+        bucketExpiryScheduleToken = expiryToken
         return true
     end
 
@@ -230,9 +278,13 @@ function SynexEntityApplication.create(options)
             return
         end
 
-        local rehydrated, rehydrateError = service.rehydratePersistentEntities()
-        if not rehydrated then
-            foundation.setHealth('UNHEALTHY', rehydrateError.message)
+        local initialized, initializationError = service.initializeAuthority({
+            caller = resourceName,
+            callerEpoch = api.ownerEpoch,
+            traceId = 'entity_bootstrap',
+        })
+        if not initialized then
+            foundation.setHealth('UNHEALTHY', initializationError.message)
             return
         end
         local registered, registerError = registerService()
@@ -240,6 +292,7 @@ function SynexEntityApplication.create(options)
             foundation.setHealth('UNHEALTHY', registerError.message)
             return
         end
+        registerControlProvider()
         local integrated, integrationError = registerCoreIntegrations()
         if not integrated then
             foundation.setHealth('UNHEALTHY', integrationError.message)
@@ -255,7 +308,10 @@ function SynexEntityApplication.create(options)
     end
 
     function application.playerDropped(playerSource)
-        service.playerDropped(playerSource)
+        ports.createThread(function()
+            ports.wait(0)
+            service.playerDropped(playerSource)
+        end)
     end
 
     function application.resourceStarted(startedResource)
@@ -265,8 +321,13 @@ function SynexEntityApplication.create(options)
         coreRef.value = nil
         serviceToken = nil
         participantToken = nil
+        deletionProviderToken = nil
+        bucketExpiryScheduleToken = nil
         driftScheduleToken = nil
+        heartbeatScheduleToken = nil
+        recoveryScheduleToken = nil
         health.service = 'UNREGISTERED'
+        health.controlProvider = 'UNREGISTERED'
         ports.createThread(function()
             local completed = foundation.protect('core.restart_registration', function()
                 ports.wait(0)
@@ -278,6 +339,16 @@ function SynexEntityApplication.create(options)
                 local registered, registerError = registerService()
                 if not registered then
                     foundation.setHealth('DEGRADED', registerError.message)
+                    return
+                end
+                registerControlProvider()
+                local initialized, initializationError = service.initializeAuthority({
+                    caller = resourceName,
+                    callerEpoch = coreRef.value.ownerEpoch,
+                    traceId = 'entity_rebind',
+                })
+                if not initialized then
+                    foundation.setHealth('DEGRADED', initializationError.message)
                     return
                 end
                 local integrated, integrationError = registerCoreIntegrations()
@@ -302,9 +373,14 @@ function SynexEntityApplication.create(options)
             coreRef.value = nil
             serviceToken = nil
             participantToken = nil
+            deletionProviderToken = nil
+            bucketExpiryScheduleToken = nil
             driftScheduleToken = nil
+            heartbeatScheduleToken = nil
+            recoveryScheduleToken = nil
             rpcTokens = {}
             health.service = 'UNREGISTERED'
+            health.controlProvider = 'UNREGISTERED'
             foundation.setHealth('DEGRADED', 'synex_core stopped')
         end
 
@@ -323,6 +399,28 @@ function SynexEntityApplication.create(options)
                 foundation.setHealth('DEGRADED', 'A stopped resource could not be cleaned up')
             end
         end
+        service.cleanupExtensions(stoppedResource)
+    end
+
+    function application.entityRemoved(entityHandle)
+        local completed = foundation.protect('runtime.entity_removed', function()
+            return service.entityRemoved(entityHandle, {
+                caller = resourceName,
+                callerEpoch = coreRef.value and coreRef.value.ownerEpoch or 0,
+                traceId = 'entity_removed',
+            })
+        end)
+        if not completed then
+            foundation.setHealth('DEGRADED', 'ENTITY_REMOVAL_RECONCILIATION_FAILED')
+        end
+    end
+
+    function application.entityBucketChanged(entityHandle, bucketId, oldBucketId)
+        service.entityBucketChanged(entityHandle, bucketId, oldBucketId)
+    end
+
+    function application.playerBucketChanged(playerSource, bucketId, oldBucketId)
+        service.playerBucketChanged(playerSource, bucketId, oldBucketId)
     end
 
     return application

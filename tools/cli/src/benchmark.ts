@@ -1,17 +1,22 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
+import { spawnSync } from "node:child_process";
 import { performance } from "node:perf_hooks";
+import { fileURLToPath } from "node:url";
 
 import { CliError } from "./errors.ts";
 import { canonicalJson, compareText, isRecord } from "./filesystem.ts";
 import { scanLuaText } from "./security.ts";
 
-const SUITE_VERSION = 2;
+const SUITE_VERSION = 7;
 const SAMPLE_COUNT = 5;
 const REGRESSION_THRESHOLD = 0.25;
 const BENCHMARK_SEED = 0x5a17;
+const MINIMUM_ITERATIONS = 1;
+const MAXIMUM_ITERATIONS = 100_000;
 
 export interface BenchmarkMeasurement {
   workload: string;
+  execution: "node" | "synex_groups_lua" | "synex_accounts_lua" | "synex_entities_lua" | "synex_bridge_lua";
   medianMilliseconds: number;
   operationsPerSecond: number;
   samplesMilliseconds: number[];
@@ -25,6 +30,11 @@ export interface BenchmarkReport {
   iterations: number;
   samples: number;
   seed: number;
+  thresholds: {
+    minimumIterations: number;
+    maximumIterations: number;
+    regressionDecreasePercent: number;
+  };
   benchmarks: Record<string, BenchmarkMeasurement>;
   regressions: Array<{ benchmark: string; baselineOps: number; currentOps: number; decreasePercent: number }>;
   baseline: { compared: boolean; reason: string };
@@ -37,6 +47,292 @@ export interface BenchmarkReport {
 function median(values: number[]): number {
   const sorted = [...values].sort((left, right) => left - right);
   return sorted[Math.floor(sorted.length / 2)] ?? 0;
+}
+
+const GROUPS_LUA_WORKLOADS = {
+  groups_group_lookup:
+    "Actual server.persistence.organizations_read read-model lookup with a deterministic in-memory transaction adapter; excludes MariaDB I/O.",
+  groups_membership_lookup:
+    "Actual server.persistence.memberships_read read-model lookup with a deterministic in-memory transaction adapter; excludes MariaDB I/O.",
+  groups_effective_capability_lookup:
+    "Actual server.persistence.capability_access evaluateCharacter path and server.domain.capabilities composition with deterministic in-memory adapters.",
+  groups_online_members_lookup:
+    "Actual server.runtime_index online-member count over 2048 loaded membership fixtures.",
+  groups_on_duty_members_lookup:
+    "Actual server.runtime_index on-duty-member count over 2048 loaded duty fixtures.",
+  groups_policy_evaluation:
+    "Actual server.persistence.governance_policies evaluation of a cached bounded 16-rule policy with an in-memory transaction adapter.",
+} as const;
+
+const ACCOUNTS_LUA_WORKLOADS = {
+  accounts_balance_lookup:
+    "Actual synex_accounts service validation and authoritative balance-read path with a deterministic in-memory database port; excludes MariaDB I/O.",
+  accounts_available_balance_lookup:
+    "Actual synex_accounts service validation and available-balance read path with a deterministic in-memory database port; excludes MariaDB I/O.",
+  accounts_access_check:
+    "Actual synex_accounts access-check service path with authoritative principal validation and a deterministic in-memory database port.",
+  accounts_transfer:
+    "Actual synex_accounts transfer service validation, policy-hook, provenance, fingerprint, and multi-leg command construction; excludes MariaDB I/O.",
+  accounts_multileg_post:
+    "Actual synex_accounts bounded multi-leg validation, zero-sum check, policy-hook, provenance, and command construction; excludes MariaDB I/O.",
+  accounts_hold_create:
+    "Actual synex_accounts hold-create validation, provenance, fingerprint, and service dispatch with a deterministic in-memory database port.",
+  accounts_hold_capture:
+    "Actual synex_accounts hold-capture validation, policy-hook chain, provenance, fingerprint, and service dispatch with a deterministic in-memory database port.",
+  accounts_reconciliation_query:
+    "Actual synex_accounts reconciliation request validation, provenance, fingerprint, and service dispatch with a deterministic in-memory database port; excludes MariaDB I/O.",
+} as const;
+
+const ENTITIES_LUA_WORKLOADS = {
+  entities_entity_ref_lookup:
+    "Actual synex_entities registry EntityRef validation and generation-fenced lookup over 1024 in-memory entity fixtures.",
+  entities_net_id_resolve:
+    "Actual synex_entities registry NetID validation, reference-index resolution, and stale-generation check over 1024 in-memory entity fixtures.",
+  entities_binding_lookup:
+    "Actual synex_entities namespaced binding-index validation and resolution over 1024 in-memory entity fixtures.",
+  entities_owner_lookup:
+    "Actual synex_entities logical-owner index lookup and deterministic result ordering over 1024 in-memory entity fixtures.",
+  entities_spawn_validation:
+    "Actual synex_entities bounded spawn-request validation and normalization; excludes FiveM natives and entity creation.",
+  entities_state_lookup:
+    "Actual synex_entities extension-repository state lookup with a deterministic in-memory database port; excludes MariaDB I/O.",
+  entities_bucket_lookup:
+    "Actual synex_entities routing-bucket index lookup and deterministic result ordering over 1024 in-memory entity fixtures.",
+  entities_nearby_query:
+    "Actual synex_entities bounded spatial-index nearby query and registry resolution over 1024 in-memory entity fixtures.",
+} as const;
+
+const BRIDGE_LUA_WORKLOADS = {
+  bridge_projection_copy:
+    "Actual synex_bridge kernel DTO copy configured with the native compatibility projection bounds over a fixed detached player projection.",
+  bridge_callback_argument_validation:
+    "Actual synex_bridge kernel dense-array DTO validation configured with the native callback argument bounds.",
+  bridge_account_mapping_resolve:
+    "Actual synex_bridge indexed account-mapping resolution over 64 pre-registered reviewed-format mapping fixtures.",
+  bridge_surface_resolve:
+    "Actual synex_bridge consumer/profile/surface/adapter resolver path over a fixed compatibility policy fixture.",
+  bridge_telemetry_record:
+    "Actual synex_bridge bounded compatibility telemetry aggregation into one fixed owner/surface series.",
+} as const;
+
+function measureGroupsLua(iterations: number): { measurements: Record<string, BenchmarkMeasurement>; checksum: number } {
+  const runnerExtension = import.meta.url.endsWith(".ts") ? "ts" : "js";
+  const runner = fileURLToPath(new URL(`./groups-benchmark-runner.${runnerExtension}`, import.meta.url));
+  const child = spawnSync(process.execPath, [
+    "--no-warnings",
+    "--experimental-strip-types",
+    runner,
+    String(iterations),
+    String(SAMPLE_COUNT),
+    String(BENCHMARK_SEED),
+  ], {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 120_000,
+    maxBuffer: 1024 * 1024,
+  });
+  if (child.error || child.status !== 0) {
+    const reason = child.error?.message || child.stderr.trim() || "embedded Lua runner exited unsuccessfully";
+    throw new CliError(`Groups Lua benchmark failed: ${reason}`, 1);
+  }
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(child.stdout);
+  } catch {
+    throw new CliError("Groups Lua benchmark returned invalid JSON.", 1);
+  }
+  if (!isRecord(decoded) || !isRecord(decoded.measurements)
+    || typeof decoded.checksum !== "number" || !Number.isInteger(decoded.checksum)) {
+    throw new CliError("Groups Lua benchmark returned an invalid report.", 1);
+  }
+  const measurements: Record<string, BenchmarkMeasurement> = {};
+  for (const [name, workload] of Object.entries(GROUPS_LUA_WORKLOADS)) {
+    const raw = decoded.measurements[name];
+    if (!isRecord(raw) || !Array.isArray(raw.samplesMilliseconds)
+      || raw.samplesMilliseconds.length !== SAMPLE_COUNT
+      || typeof raw.checksum !== "number" || !Number.isInteger(raw.checksum)) {
+      throw new CliError(`Groups Lua benchmark omitted or corrupted ${name}.`, 1);
+    }
+    const samples = raw.samplesMilliseconds;
+    if (!samples.every((value): value is number =>
+      typeof value === "number" && Number.isFinite(value) && value >= 0)) {
+      throw new CliError(`Groups Lua benchmark returned invalid timings for ${name}.`, 1);
+    }
+    const medianMilliseconds = median(samples);
+    measurements[name] = {
+      workload,
+      execution: "synex_groups_lua",
+      medianMilliseconds: Number(medianMilliseconds.toFixed(3)),
+      operationsPerSecond: Math.round((iterations / Math.max(medianMilliseconds, 0.001)) * 1_000),
+      samplesMilliseconds: samples.map((value) => Number(value.toFixed(3))),
+    };
+  }
+  return { measurements, checksum: decoded.checksum >>> 0 };
+}
+
+function measureAccountsLua(iterations: number): { measurements: Record<string, BenchmarkMeasurement>; checksum: number } {
+  const runnerExtension = import.meta.url.endsWith(".ts") ? "ts" : "js";
+  const runner = fileURLToPath(new URL(`./accounts-benchmark-runner.${runnerExtension}`, import.meta.url));
+  const child = spawnSync(process.execPath, [
+    "--no-warnings",
+    "--experimental-strip-types",
+    runner,
+    String(iterations),
+    String(SAMPLE_COUNT),
+    String(BENCHMARK_SEED),
+  ], {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 120_000,
+    maxBuffer: 1024 * 1024,
+  });
+  if (child.error || child.status !== 0) {
+    const reason = child.error?.message || child.stderr.trim() || "embedded Lua runner exited unsuccessfully";
+    throw new CliError(`Accounts Lua benchmark failed: ${reason}`, 1);
+  }
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(child.stdout);
+  } catch {
+    throw new CliError("Accounts Lua benchmark returned invalid JSON.", 1);
+  }
+  if (!isRecord(decoded) || !isRecord(decoded.measurements)
+    || typeof decoded.checksum !== "number" || !Number.isInteger(decoded.checksum)) {
+    throw new CliError("Accounts Lua benchmark returned an invalid report.", 1);
+  }
+  const measurements: Record<string, BenchmarkMeasurement> = {};
+  for (const [name, workload] of Object.entries(ACCOUNTS_LUA_WORKLOADS)) {
+    const raw = decoded.measurements[name];
+    if (!isRecord(raw) || !Array.isArray(raw.samplesMilliseconds)
+      || raw.samplesMilliseconds.length !== SAMPLE_COUNT
+      || typeof raw.checksum !== "number" || !Number.isInteger(raw.checksum)) {
+      throw new CliError(`Accounts Lua benchmark omitted or corrupted ${name}.`, 1);
+    }
+    const samples = raw.samplesMilliseconds;
+    if (!samples.every((value): value is number =>
+      typeof value === "number" && Number.isFinite(value) && value >= 0)) {
+      throw new CliError(`Accounts Lua benchmark returned invalid timings for ${name}.`, 1);
+    }
+    const medianMilliseconds = median(samples);
+    measurements[name] = {
+      workload,
+      execution: "synex_accounts_lua",
+      medianMilliseconds: Number(medianMilliseconds.toFixed(3)),
+      operationsPerSecond: Math.round((iterations / Math.max(medianMilliseconds, 0.001)) * 1_000),
+      samplesMilliseconds: samples.map((value) => Number(value.toFixed(3))),
+    };
+  }
+  return { measurements, checksum: decoded.checksum >>> 0 };
+}
+
+function measureEntitiesLua(iterations: number): { measurements: Record<string, BenchmarkMeasurement>; checksum: number } {
+  const runnerExtension = import.meta.url.endsWith(".ts") ? "ts" : "js";
+  const runner = fileURLToPath(new URL(`./entities-benchmark-runner.${runnerExtension}`, import.meta.url));
+  const child = spawnSync(process.execPath, [
+    "--no-warnings",
+    "--experimental-strip-types",
+    runner,
+    String(iterations),
+    String(SAMPLE_COUNT),
+    String(BENCHMARK_SEED),
+  ], {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 120_000,
+    maxBuffer: 1024 * 1024,
+  });
+  if (child.error || child.status !== 0) {
+    const reason = child.error?.message || child.stderr.trim() || "embedded Lua runner exited unsuccessfully";
+    throw new CliError(`Entities Lua benchmark failed: ${reason}`, 1);
+  }
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(child.stdout);
+  } catch {
+    throw new CliError("Entities Lua benchmark returned invalid JSON.", 1);
+  }
+  if (!isRecord(decoded) || !isRecord(decoded.measurements)
+    || typeof decoded.checksum !== "number" || !Number.isInteger(decoded.checksum)) {
+    throw new CliError("Entities Lua benchmark returned an invalid report.", 1);
+  }
+  const measurements: Record<string, BenchmarkMeasurement> = {};
+  for (const [name, workload] of Object.entries(ENTITIES_LUA_WORKLOADS)) {
+    const raw = decoded.measurements[name];
+    if (!isRecord(raw) || !Array.isArray(raw.samplesMilliseconds)
+      || raw.samplesMilliseconds.length !== SAMPLE_COUNT
+      || typeof raw.checksum !== "number" || !Number.isInteger(raw.checksum)) {
+      throw new CliError(`Entities Lua benchmark omitted or corrupted ${name}.`, 1);
+    }
+    const samples = raw.samplesMilliseconds;
+    if (!samples.every((value): value is number =>
+      typeof value === "number" && Number.isFinite(value) && value >= 0)) {
+      throw new CliError(`Entities Lua benchmark returned invalid timings for ${name}.`, 1);
+    }
+    const medianMilliseconds = median(samples);
+    measurements[name] = {
+      workload,
+      execution: "synex_entities_lua",
+      medianMilliseconds: Number(medianMilliseconds.toFixed(3)),
+      operationsPerSecond: Math.round((iterations / Math.max(medianMilliseconds, 0.001)) * 1_000),
+      samplesMilliseconds: samples.map((value) => Number(value.toFixed(3))),
+    };
+  }
+  return { measurements, checksum: decoded.checksum >>> 0 };
+}
+
+function measureBridgeLua(iterations: number): { measurements: Record<string, BenchmarkMeasurement>; checksum: number } {
+  const runnerExtension = import.meta.url.endsWith(".ts") ? "ts" : "js";
+  const runner = fileURLToPath(new URL(`./bridge-benchmark-runner.${runnerExtension}`, import.meta.url));
+  const child = spawnSync(process.execPath, [
+    "--no-warnings",
+    "--experimental-strip-types",
+    runner,
+    String(iterations),
+    String(SAMPLE_COUNT),
+    String(BENCHMARK_SEED),
+  ], {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 120_000,
+    maxBuffer: 1024 * 1024,
+  });
+  if (child.error || child.status !== 0) {
+    const reason = child.error?.message || child.stderr.trim() || "embedded Lua runner exited unsuccessfully";
+    throw new CliError(`Bridge Lua benchmark failed: ${reason}`, 1);
+  }
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(child.stdout);
+  } catch {
+    throw new CliError("Bridge Lua benchmark returned invalid JSON.", 1);
+  }
+  if (!isRecord(decoded) || !isRecord(decoded.measurements)
+    || typeof decoded.checksum !== "number" || !Number.isInteger(decoded.checksum)) {
+    throw new CliError("Bridge Lua benchmark returned an invalid report.", 1);
+  }
+  const measurements: Record<string, BenchmarkMeasurement> = {};
+  for (const [name, workload] of Object.entries(BRIDGE_LUA_WORKLOADS)) {
+    const raw = decoded.measurements[name];
+    if (!isRecord(raw) || !Array.isArray(raw.samplesMilliseconds)
+      || raw.samplesMilliseconds.length !== SAMPLE_COUNT
+      || typeof raw.checksum !== "number" || !Number.isInteger(raw.checksum)) {
+      throw new CliError(`Bridge Lua benchmark omitted or corrupted ${name}.`, 1);
+    }
+    const samples = raw.samplesMilliseconds;
+    if (!samples.every((value): value is number =>
+      typeof value === "number" && Number.isFinite(value) && value >= 0)) {
+      throw new CliError(`Bridge Lua benchmark returned invalid timings for ${name}.`, 1);
+    }
+    const medianMilliseconds = median(samples);
+    measurements[name] = {
+      workload,
+      execution: "synex_bridge_lua",
+      medianMilliseconds: Number(medianMilliseconds.toFixed(3)),
+      operationsPerSecond: Math.round((iterations / Math.max(medianMilliseconds, 0.001)) * 1_000),
+      samplesMilliseconds: samples.map((value) => Number(value.toFixed(3))),
+    };
+  }
+  return { measurements, checksum: decoded.checksum >>> 0 };
 }
 
 function measure(
@@ -57,6 +353,7 @@ function measure(
   return {
     measurement: {
       workload,
+      execution: "node",
       medianMilliseconds: Number(medianMilliseconds.toFixed(3)),
       operationsPerSecond: Math.round((iterations / Math.max(medianMilliseconds, 0.001)) * 1_000),
       samplesMilliseconds: samples.map((value) => Number(value.toFixed(3))),
@@ -75,6 +372,10 @@ function parseBaseline(value: unknown): { suiteVersion: number; iterations: numb
       || !Array.isArray(raw.samplesMilliseconds)) return null;
     benchmarks[name] = {
       workload: raw.workload,
+      execution: raw.execution === "synex_groups_lua" || raw.execution === "synex_accounts_lua"
+        || raw.execution === "synex_entities_lua" || raw.execution === "synex_bridge_lua"
+        ? raw.execution
+        : "node",
       operationsPerSecond: raw.operationsPerSecond,
       medianMilliseconds: raw.medianMilliseconds,
       samplesMilliseconds: raw.samplesMilliseconds.filter((entry): entry is number => typeof entry === "number"),
@@ -89,12 +390,11 @@ function parseBaseline(value: unknown): { suiteVersion: number; iterations: numb
 }
 
 export function runDeterministicBenchmark(iterations = 5_000, rawBaseline?: unknown): BenchmarkReport {
-  if (!Number.isInteger(iterations) || iterations < 1 || iterations > 100_000) {
+  if (!Number.isInteger(iterations)
+    || iterations < MINIMUM_ITERATIONS || iterations > MAXIMUM_ITERATIONS) {
     throw new CliError("Benchmark iterations must be a whole number from 1 to 100000.", 2);
   }
   const registry = new Map(Array.from({ length: 1_024 }, (_, index) => [`resource_${index}`, index]));
-  const memberships = new Map(Array.from({ length: 2_048 }, (_, index) => [`character_${index}`, index % 32]));
-  const gradeCapabilities = new Map(Array.from({ length: 32 }, (_, index) => [index, new Set([`synex.groups.grade_${index}.read`])]));
   const states = new Map<string, { value: number; revision: number }>();
   const cache = new Map(Array.from({ length: 512 }, (_, index) => [`cache_${index}`, index]));
   const ledgerSlots: Array<{ debit: number; credit: number; sequence: number } | undefined> = Array.from({ length: 1_024 });
@@ -152,10 +452,26 @@ export function runDeterministicBenchmark(iterations = 5_000, rawBaseline?: unkn
     ledgerSlots[(index + BENCHMARK_SEED) & 1_023] = { debit, credit, sequence: index };
     return credit + (ledgerSlots[(index + BENCHMARK_SEED) & 1_023]?.sequence ?? 0);
   });
-  add("group_membership_query", "Membership-to-grade lookup plus grade capability membership check.", (index) => {
-    const grade = memberships.get(`character_${(index + BENCHMARK_SEED) & 2_047}`) ?? 0;
-    return gradeCapabilities.get(grade)?.has(`synex.groups.grade_${grade}.read`) ? grade + 1 : 0;
-  });
+  const groupsLua = measureGroupsLua(iterations);
+  for (const [name, measurement] of Object.entries(groupsLua.measurements)) {
+    measurements[name] = measurement;
+  }
+  checksum = (checksum + groupsLua.checksum) >>> 0;
+  const accountsLua = measureAccountsLua(iterations);
+  for (const [name, measurement] of Object.entries(accountsLua.measurements)) {
+    measurements[name] = measurement;
+  }
+  checksum = (checksum + accountsLua.checksum) >>> 0;
+  const entitiesLua = measureEntitiesLua(iterations);
+  for (const [name, measurement] of Object.entries(entitiesLua.measurements)) {
+    measurements[name] = measurement;
+  }
+  checksum = (checksum + entitiesLua.checksum) >>> 0;
+  const bridgeLua = measureBridgeLua(iterations);
+  for (const [name, measurement] of Object.entries(bridgeLua.measurements)) {
+    measurements[name] = measurement;
+  }
+  checksum = (checksum + bridgeLua.checksum) >>> 0;
   add("cache_lookup", "Bounded 512-entry Map cache with a deterministic mixed hit/miss workload.", (index) => {
     const key = index % 5 === 0 ? `miss_${(index + BENCHMARK_SEED) & 1_023}` : `cache_${(index + BENCHMARK_SEED) & 511}`;
     const cached = cache.get(key);
@@ -217,12 +533,17 @@ export function runDeterministicBenchmark(iterations = 5_000, rawBaseline?: unkn
     iterations,
     samples: SAMPLE_COUNT,
     seed: BENCHMARK_SEED,
+    thresholds: {
+      minimumIterations: MINIMUM_ITERATIONS,
+      maximumIterations: MAXIMUM_ITERATIONS,
+      regressionDecreasePercent: REGRESSION_THRESHOLD * 100,
+    },
     benchmarks: Object.fromEntries(Object.entries(measurements).sort(([left], [right]) => compareText(left, right))),
     regressions,
     baseline,
     canonicalJson: { milliseconds: canonical.medianMilliseconds, operationsPerSecond: canonical.operationsPerSecond },
     luaScan: { milliseconds: luaScan.medianMilliseconds, operationsPerSecond: luaScan.operationsPerSecond },
     checksum,
-    disclaimer: "Deterministic local headless microbenchmark only; results are not a FiveM runtime or production performance claim.",
+    disclaimer: "Deterministic local headless microbenchmark only. Groups, Accounts, and Entities measurements execute actual Synex Lua service, domain, validation, registry, repository, and spatial-index modules in an embedded Wasmoon VM with deterministic in-memory adapters. Bridge measurements execute its actual projection, validation, resolver, and telemetry kernel modules with deterministic in-memory fixtures. Groups, Accounts, and Bridge exclude FXServer, Cfx networking, and MariaDB I/O. Entity measurements exclude FXServer scheduling, FiveM natives, OneSync entity creation, Cfx networking, MariaDB I/O, and production concurrency. Results are not a FiveM runtime or production performance claim.",
   };
 }

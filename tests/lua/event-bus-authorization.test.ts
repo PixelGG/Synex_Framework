@@ -76,7 +76,13 @@ test('event and hook authority is manifest-declared, namespace-owned, and restar
       assert(security.capabilities:registerManifest('synex_core', {
         capabilities = { request = {} },
         events = { publish = {'synex.characters.created'}, subscribe = {} },
-        hooks = { register = {}, run = {'synex.characters.before_create'} }
+        hooks = {
+          register = {},
+          run = {
+            'synex.characters.before_create',
+            'synex.characters.policy_denial'
+          }
+        }
       }))
       assert(security.capabilities:registerManifest('synex_accounts', {
         capabilities = { request = {} },
@@ -103,7 +109,13 @@ test('event and hook authority is manifest-declared, namespace-owned, and restar
       assert(security.capabilities:registerManifest('synex_characters', {
         capabilities = { request = {} },
         events = { publish = {}, subscribe = {} },
-        hooks = { register = {'synex.characters.before_create'}, run = {} }
+        hooks = {
+          register = {
+            'synex.characters.before_create',
+            'synex.characters.policy_denial'
+          },
+          run = {}
+        }
       }))
 
       local deliveries = 0
@@ -192,6 +204,45 @@ test('event and hook authority is manifest-declared, namespace-owned, and restar
         'synex_core', coreEpoch, 'synex.characters.before_create', { requestDeny = true }))
       assert(foreignDenied.requestDeny == true and hookCalls == 2)
 
+      assert(messaging.hooks:register(
+        'synex_characters', charactersEpoch, 'synex.characters.policy_denial', function()
+          return {
+            action = 'deny', code = 'CHARACTER_POLICY_DENIED',
+            message = 'The character policy rejected this operation.'
+          }
+        end, { required = true }))
+      local policyValue, policyError = messaging.hooks:run(
+        'synex_core', coreEpoch, 'synex.characters.policy_denial', {})
+      assert(policyValue == nil and policyError.code == 'CHARACTER_POLICY_DENIED')
+
+      local beforeCreateSnapshot, policySnapshot = nil, nil
+      for _, hook in ipairs(messaging.hooks:snapshot()) do
+        if hook.name == 'synex.characters.before_create' then beforeCreateSnapshot = hook end
+        if hook.name == 'synex.characters.policy_denial' then policySnapshot = hook end
+      end
+      assert(beforeCreateSnapshot and beforeCreateSnapshot.calls == 6
+        and beforeCreateSnapshot.successes == 4
+        and beforeCreateSnapshot.failures == 2
+        and beforeCreateSnapshot.timeouts == 0
+        and beforeCreateSnapshot.denials == 0)
+      local foreignHandler = nil
+      for _, handler in ipairs(beforeCreateSnapshot.handlerDetails) do
+        if handler.owner == 'synex_observer' then foreignHandler = handler break end
+      end
+      assert(foreignHandler and foreignHandler.calls == 2
+        and foreignHandler.successes == 2 and foreignHandler.denials == 0)
+      assert(policySnapshot and policySnapshot.calls == 1
+        and policySnapshot.successes == 1 and policySnapshot.failures == 0
+        and policySnapshot.timeouts == 0 and policySnapshot.denials == 1
+        and policySnapshot.handlerDetails[1].denials == 1)
+      local denialMetric = 0
+      for key, value in pairs(foundation.metrics:snapshot().values) do
+        if key:find('synex_hook_denials_total:', 1, true) then
+          denialMetric = denialMetric + value
+        end
+      end
+      assert(denialMetric == 1)
+
       local function containsPrivateValue(value)
         if type(value) == 'string' then return value:find('private%-payload') ~= nil end
         if type(value) ~= 'table' then return false end
@@ -252,12 +303,12 @@ test('event and hook authority is manifest-declared, namespace-owned, and restar
 
       return table.concat({ deliveries, hookCalls, foreignRequiredError.code, subscriptionLimitError.code,
         hookLimitError.code, afterHookRevocationError.code, staleError.code,
-        currentError.code, tooLongIdError.code }, ':')
+        currentError.code, tooLongIdError.code, policyError.code }, ':')
     `);
     assert.equal(
       result,
       '1:2:HOOK_POLICY_FORBIDDEN:SUBSCRIPTION_LIMIT_REACHED:HOOK_LIMIT_REACHED:REQUIRED_HOOK_FAILED:STALE_RESOURCE:'
-        + 'EVENT_SUBSCRIBE_UNDECLARED:INVALID_OUTBOX_EVENT',
+        + 'EVENT_SUBSCRIBE_UNDECLARED:INVALID_OUTBOX_EVENT:CHARACTER_POLICY_DENIED',
     );
   } finally {
     engine.global.close();

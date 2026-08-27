@@ -10,7 +10,7 @@
       "job": { "name": "ambulance", "grade": { "level": 1 } },
       "gang": { "name": "none", "grade": { "level": 0 } },
       "vehicles": [],
-      "metadata": {}
+      "metadata": { "hunger": 62 }
     }
   ]
 }

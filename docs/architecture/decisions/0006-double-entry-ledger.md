@@ -2,12 +2,12 @@
 
 Status: Accepted
 
-Scope: design direction for the `synex_accounts` rework snapshot. This ADR does not place that resource, its schema, or its APIs inside `synex_core` Production-Beta acceptance.
+Scope: design direction implemented by the server-only `synex_accounts` Experimental Alpha. This ADR does not place that resource, its schema, or its APIs inside `synex_core` Production-Beta acceptance.
 
 ## Decision
 
-Keep the future accounts design based on integer minor units and balanced debit/credit entries for committed value movement. Mint, burn, holds, releases, captures, and reversals remain explicit operations with idempotency keys and audit records in the current design snapshot.
+Keep Accounts based on integer minor units and balanced signed multi-leg entries for committed value movement. A transaction contains 2–16 unique-account entries in one currency and sums to zero. Mint, burn, holds, partial release/capture, reversal, and refund remain explicit operations with principal-scoped idempotency keys and transactional domain audit/outbox evidence.
 
 ## Consequences
 
-The snapshot treats balances as projections of an append-only ledger rather than freely mutable fields, and its reconciliation model flags invariant violations. These properties require fresh implementation, security, database, concurrency, and operational acceptance after rework. Gameplay banking remains a separate concern.
+Accounts treats balances as projections of an append-only ledger rather than freely mutable fields, and its reconciliation model records severity-bearing invariant findings without automatic repair. The automated implementation remains Experimental Alpha until the exact candidate completes real database, FXServer, concurrency, restart/recovery, upgrade, security, and operational acceptance. Gameplay banking and UI remain separate `synex_banking` concerns.

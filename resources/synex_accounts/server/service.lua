@@ -4,6 +4,7 @@ local ACCOUNT_ACCESS_PERMISSIONS = Foundation.ACCOUNT_ACCESS_PERMISSIONS
 local domainError = Foundation.domainError
 local isUuid = Foundation.isUuid
 local isSubjectId = Foundation.isSubjectId
+local isPublicId = Foundation.isPublicId
 local characterLength = Foundation.characterLength
 local validateShape = Foundation.validateShape
 local createCanonicalEncoder = Foundation.createCanonicalEncoder
@@ -66,8 +67,8 @@ local function createService(deps)
             if type(value) ~= 'string' or #value < 2 or #value > 64 or not value:match('^[a-z][a-z0-9_]+$') then
                 return nil, domainError('VALIDATION_FAILED', 'Resource principal_ref must be a bounded lowercase resource name.')
             end
-        elseif kind == 'group' and not isUuid(value) then
-            return nil, domainError('VALIDATION_FAILED', 'Group principal_ref must be a lowercase UUID.')
+        elseif kind == 'group' and not isPublicId(value) then
+            return nil, domainError('VALIDATION_FAILED', 'Group principal_ref must be a bounded public identifier.')
         elseif kind ~= 'group' and not isSubjectId(value) then
             return nil, domainError('VALIDATION_FAILED', 'User and character principal_ref must be a bounded opaque identifier.')
         end
@@ -141,8 +142,8 @@ local function createService(deps)
                 or not request.owner_ref:match('^[a-z][a-z0-9_%.%-]+$') then
                 return nil, domainError('VALIDATION_FAILED', 'System owner_ref must be a bounded lowercase key.')
             end
-        elseif request.owner_kind == 'group' and not isUuid(request.owner_ref) then
-            return nil, domainError('VALIDATION_FAILED', 'Group owner_ref must be a lowercase UUID.')
+        elseif request.owner_kind == 'group' and not isPublicId(request.owner_ref) then
+            return nil, domainError('VALIDATION_FAILED', 'Group owner_ref must be a bounded public identifier.')
         elseif request.owner_kind ~= 'group' and not isSubjectId(request.owner_ref) then
             return nil, domainError('VALIDATION_FAILED', 'User and character owner_ref must be a bounded opaque identifier.')
         end
@@ -195,8 +196,8 @@ local function createService(deps)
                 return nil, domainError('VALIDATION_FAILED', 'System owner_ref is invalid.')
             end
         elseif request.owner_kind == 'group' then
-            if not isUuid(request.owner_ref) then
-                return nil, domainError('VALIDATION_FAILED', 'Group owner_ref must be a lowercase UUID.')
+            if not isPublicId(request.owner_ref) then
+                return nil, domainError('VALIDATION_FAILED', 'Group owner_ref must be a bounded public identifier.')
             end
         elseif not isSubjectId(request.owner_ref) then
             return nil, domainError('VALIDATION_FAILED', 'User or character owner_ref is invalid.')

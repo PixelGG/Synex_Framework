@@ -32,8 +32,13 @@ local function isUuid(value)
 end
 
 local function isSubjectId(value)
-    return type(value) == 'string' and #value >= 1 and #value <= 36
-        and value:match('^[a-z0-9][a-z0-9_%-]*$') ~= nil
+    return type(value) == 'string' and #value >= 3 and #value <= 48
+        and value:match('^[A-Za-z0-9][A-Za-z0-9_.:%-]*$') ~= nil
+end
+
+local function isPublicId(value)
+    return type(value) == 'string' and #value >= 8 and #value <= 48
+        and value:match('^[A-Za-z0-9][A-Za-z0-9_.:%-]*$') ~= nil
 end
 
 local function isCallable(value)
@@ -51,8 +56,93 @@ local function isCallable(value)
 end
 
 local function characterLength(value)
+    if type(value) ~= 'string' then return -1 end
     local length = utf8.len(value)
     return length or -1
+end
+
+local function jsonContainerDescriptor(value)
+    if type(value) ~= 'table' then return nil, nil end
+    local metatable = getmetatable(value)
+    if metatable == nil then return 'plain', nil end
+    if type(metatable) ~= 'table'
+        and type(debug) == 'table' and type(debug.getmetatable) == 'function' then
+        local readable, rawMetatable = pcall(debug.getmetatable, value)
+        if readable then metatable = rawMetatable end
+    end
+    if type(metatable) ~= 'table' then return nil, nil end
+    local kind = rawget(metatable, '__jsontype')
+    if kind ~= 'object' and kind ~= 'array' then return nil, nil end
+    -- Cfx's dkjson containers carry only this inert marker. Refuse executable
+    -- or otherwise decorated marker lookalikes before preserving the identity.
+    for key in next, metatable do
+        if key ~= '__jsontype' then return nil, nil end
+    end
+    return kind, metatable
+end
+
+local function jsonContainerKind(value)
+    local kind = jsonContainerDescriptor(value)
+    return kind
+end
+
+local function copyPlain(value, limits)
+    limits = limits or {}
+    local maximumDepth = limits.maximumDepth or 12
+    local maximumKeys = limits.maximumKeys or 512
+    local maximumStringBytes = limits.maximumStringBytes or 16384
+    local preserveContainerKind = limits.preserveContainerKind == true
+    local active, keys = {}, 0
+    local function copy(candidate, depth)
+        local candidateType = type(candidate)
+        if candidateType == 'nil' or candidateType == 'boolean' then return candidate end
+        if candidateType == 'number' then
+            if candidate ~= candidate or candidate == math.huge or candidate == -math.huge then
+                error('JSON numbers must be finite', 0)
+            end
+            return candidate
+        end
+        if candidateType == 'string' then
+            if #candidate > maximumStringBytes then error('JSON strings exceed the configured bound', 0) end
+            return candidate
+        end
+        local containerKind, containerMetatable = jsonContainerDescriptor(candidate)
+        if candidateType ~= 'table' or not containerKind
+            or depth > maximumDepth or active[candidate] then
+            error('JSON values must be bounded acyclic containers', 0)
+        end
+        active[candidate] = true
+        local result, count, maximumIndex, keyType = {}, 0, 0, nil
+        for key, child in next, candidate do
+            keys = keys + 1
+            if keys > maximumKeys then active[candidate] = nil error('JSON values contain too many keys', 0) end
+            local currentType = type(key)
+            if currentType == 'number' and math.type(key) == 'integer' and key >= 1 then
+                maximumIndex = math.max(maximumIndex, key)
+            elseif currentType ~= 'string' or #key == 0 or #key > 128 then
+                active[candidate] = nil
+                error('JSON object keys are invalid', 0)
+            end
+            if keyType and keyType ~= currentType then
+                active[candidate] = nil
+                error('JSON containers cannot mix array and object keys', 0)
+            end
+            keyType = currentType
+            count = count + 1
+            result[key] = copy(child, depth + 1)
+        end
+        active[candidate] = nil
+        if keyType == 'number' and maximumIndex ~= count
+            or containerKind == 'object' and keyType == 'number'
+            or containerKind == 'array' and keyType == 'string' then
+            error('JSON container shape does not match its declared kind', 0)
+        end
+        if preserveContainerKind and containerMetatable ~= nil then
+            setmetatable(result, containerMetatable)
+        end
+        return result
+    end
+    return copy(value, 1)
 end
 
 local function evaluateCapabilityRules(rules, capability)
@@ -100,9 +190,12 @@ local function createCanonicalEncoder(jsonEncode)
             if value ~= value or value == math.huge or value == -math.huge then error('metadata number must be finite') end
             return jsonEncode(value)
         end
-        if valueType ~= 'table' or getmetatable(value) ~= nil then error('metadata contains an unsupported value') end
+        if valueType ~= 'table' or not jsonContainerKind(value) then
+            error('metadata contains an unsupported value')
+        end
 
-        local count, maximum, array = 0, 0, true
+        local containerKind = jsonContainerKind(value)
+        local count, maximum, array = 0, 0, containerKind ~= 'object'
         for key in pairs(value) do
             count = count + 1
             if count > 64 then error('metadata contains too many properties') end
@@ -112,7 +205,13 @@ local function createCanonicalEncoder(jsonEncode)
                 maximum = math.max(maximum, key)
             end
         end
-        if array and count > 0 then
+        if containerKind == 'array' and not array then
+            error('metadata array contains object properties')
+        end
+        if containerKind == 'object' and maximum > 0 then
+            error('metadata object contains array indexes')
+        end
+        if array and (count > 0 or containerKind == 'array') then
             if maximum ~= count then error('metadata arrays must be contiguous') end
             local items = {}
             for index = 1, count do items[index] = encode(value[index], depth) end
@@ -134,17 +233,34 @@ local function createCanonicalEncoder(jsonEncode)
     return encode
 end
 
-local function redactedErrorEvent(operation, context)
+local function firstKnownId(request, names, validator)
+    if type(request) ~= 'table' then return nil end
+    for _, name in ipairs(names) do
+        local value = rawget(request, name)
+        if validator(value) then return value end
+    end
+    return nil
+end
+
+local function redactedErrorEvent(operation, context, request)
     local traceId = type(context) == 'table' and rawget(context, 'traceId') or nil
-    if type(traceId) ~= 'string' or #traceId < 1 or #traceId > 128
+    if type(traceId) ~= 'string' or #traceId < 8 or #traceId > 64
         or traceId:match('^[%w%._:%-]+$') == nil then
         traceId = 'unavailable'
     end
-    return { operation = operation, traceId = traceId }
+    local event = { operation = operation, traceId = traceId }
+    event.groupId = firstKnownId(request,
+        { 'group_id', 'source_group_id', 'target_group_id' }, isPublicId)
+    event.membershipId = firstKnownId(request, {
+        'membership_id', 'target_membership_id', 'grantee_membership_id'
+    }, isPublicId)
+    event.characterId = firstKnownId(request,
+        { 'character_id', 'actor_character_id' }, isSubjectId)
+    return event
 end
 
-local function reportUnexpectedError(errorSink, resourceName, operation, context)
-    local event = redactedErrorEvent(operation, context)
+local function reportUnexpectedError(errorSink, resourceName, operation, context, request)
+    local event = redactedErrorEvent(operation, context, request)
     local sinkOk = pcall(errorSink, event)
     if not sinkOk then
         print(('[%s] error_sink_failed operation=%s traceId=%s'):format(
@@ -159,8 +275,11 @@ return {
     uuidV4 = uuidV4,
     isUuid = isUuid,
     isSubjectId = isSubjectId,
+    isPublicId = isPublicId,
     isCallable = isCallable,
     characterLength = characterLength,
+    jsonContainerKind = jsonContainerKind,
+    copyPlain = copyPlain,
     evaluateCapabilityRules = evaluateCapabilityRules,
     validateShape = validateShape,
     createCanonicalEncoder = createCanonicalEncoder,

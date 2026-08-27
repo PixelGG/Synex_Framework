@@ -1,0 +1,6 @@
+{
+  "$schema": "./schemas/profiles.schema.json",
+  "schema": 1,
+  "kind": "synex-compatibility-profiles",
+  "profiles": []
+}

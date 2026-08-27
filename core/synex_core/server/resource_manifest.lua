@@ -47,6 +47,47 @@ factories.resourceManifest = function(deps)
             and value:match('[%._%-][%._%-]') == nil
     end
 
+    local controlProviderOperations = {
+        summary = true,
+        health = true,
+        list = true,
+        inspect = true,
+        search = true,
+        metrics = true,
+        findings = true,
+        simulate = true
+    }
+    local controlProviderPresentations = {
+        metrics = true,
+        ['key-value'] = true,
+        ['table'] = true,
+        detail = true,
+        timeline = true,
+        graph = true,
+        findings = true
+    }
+    local controlProviderInputFormats = {
+        identifier = true,
+        lookup = true,
+        uuid = true,
+        resource = true,
+        capability = true,
+        action = true,
+        integer = true,
+        text = true
+    }
+    local function validControlIdentifier(value, maximum)
+        return type(value) == 'string' and #value >= 2 and #value <= maximum
+            and value:match('^[a-z][a-z0-9_%-]*$') ~= nil
+            and value:sub(-1) ~= '_' and value:sub(-1) ~= '-'
+            and not value:find('__', 1, true) and not value:find('--', 1, true)
+            and not value:find('_-', 1, true) and not value:find('-_', 1, true)
+    end
+    local function validControlText(value, maximum)
+        return type(value) == 'string' and #value >= 1 and #value <= maximum
+            and not value:find('[%z\1-\31\127]')
+    end
+
     local function validService(value)
         if type(value) ~= 'string' or #value > 128 then return false end
         local name, major = value:match('^(synex%.[a-z][a-z0-9%._%-]*)@([1-9]%d*)$')
@@ -89,6 +130,63 @@ factories.resourceManifest = function(deps)
         return true, nil
     end
 
+    local function validControlInput(input, operation)
+        local valid = exactObject(input, '$.controlProvider.views[].input', { 'fields' })
+        if valid ~= true then return false end
+        local seen, idFields = {}, 0
+        local fieldsValid = validateArray(input.fields,
+            '$.controlProvider.views[].input.fields', function(field)
+                local fieldValid = exactObject(field,
+                    '$.controlProvider.views[].input.fields[]', {
+                        'key', 'label', 'source', 'type', 'format', 'required'
+                    }, { 'minLength', 'maxLength', 'minimum', 'maximum' })
+                if fieldValid ~= true or type(field.key) ~= 'string' or #field.key < 1
+                    or #field.key > 48 or not field.key:match('^[a-z][a-z0-9_]*$')
+                    or seen[field.key] or not validControlText(field.label, 64)
+                    or field.source ~= 'id' and field.source ~= 'filter'
+                    or field.type ~= 'string' and field.type ~= 'integer'
+                        and field.type ~= 'boolean'
+                    or not controlProviderInputFormats[field.format]
+                    or type(field.required) ~= 'boolean' then return false end
+                if field.source == 'id' then
+                    idFields = idFields + 1
+                    if operation ~= 'inspect' or field.key ~= 'id'
+                        or field.required ~= true or idFields > 1 then return false end
+                end
+                if field.type == 'integer' then
+                    if field.format ~= 'integer' or field.minLength ~= nil
+                        or field.maxLength ~= nil then return false end
+                elseif field.type == 'string' then
+                    if field.format == 'integer' or field.minimum ~= nil
+                        or field.maximum ~= nil then return false end
+                elseif field.minLength ~= nil or field.maxLength ~= nil
+                    or field.minimum ~= nil or field.maximum ~= nil then return false end
+                if field.minLength ~= nil and (type(field.minLength) ~= 'number'
+                    or math.type(field.minLength) ~= 'integer' or field.minLength < 1
+                    or field.minLength > 128) then return false end
+                if field.maxLength ~= nil and (type(field.maxLength) ~= 'number'
+                    or math.type(field.maxLength) ~= 'integer' or field.maxLength < 1
+                    or field.maxLength > 128) then return false end
+                if field.minLength ~= nil and field.maxLength ~= nil
+                    and field.minLength > field.maxLength then return false end
+                if field.minimum ~= nil and (type(field.minimum) ~= 'number'
+                    or math.type(field.minimum) ~= 'integer'
+                    or field.minimum < -2147483648 or field.minimum > 2147483647) then
+                    return false
+                end
+                if field.maximum ~= nil and (type(field.maximum) ~= 'number'
+                    or math.type(field.maximum) ~= 'integer'
+                    or field.maximum < -2147483648 or field.maximum > 2147483647) then
+                    return false
+                end
+                if field.minimum ~= nil and field.maximum ~= nil
+                    and field.minimum > field.maximum then return false end
+                seen[field.key] = true
+                return true
+            end, function(field) return field.key end, 8)
+        return fieldsValid == true and #input.fields >= 1
+    end
+
     local validator = {}
 
     function validator:validateDependencyVersion(dependency, actualVersion, duplicateVersion)
@@ -125,7 +223,7 @@ factories.resourceManifest = function(deps)
         local ok, err = exactObject(manifest, '$', {
             'schema', 'name', 'version', 'synex', 'critical', 'capabilities', 'services',
             'contracts', 'events', 'hooks', 'dependencies', 'migrations', 'dataOwnership', 'stateSnapshot'
-        }, { '$schema' })
+        }, { '$schema', 'controlProvider' })
         if not ok then return nil, err end
         if manifest['$schema'] ~= nil and (type(manifest['$schema']) ~= 'string' or #manifest['$schema'] > 256) then
             return invalid('$.$schema', 'Schema reference must be a bounded string.')
@@ -146,6 +244,59 @@ factories.resourceManifest = function(deps)
         if not ok then return nil, err end
         ok, err = validateArray(manifest.capabilities.request, '$.capabilities.request', validCapability)
         if not ok then return nil, err end
+
+        if manifest.controlProvider ~= nil then
+            local provider = manifest.controlProvider
+            ok, err = exactObject(provider, '$.controlProvider', {
+                'schemaVersion', 'namespace', 'label', 'category', 'version',
+                'operations', 'views'
+            })
+            if not ok then return nil, err end
+            if provider.schemaVersion ~= 1
+                or not validControlIdentifier(provider.namespace, 32)
+                or not validControlText(provider.label, 64)
+                or not validControlIdentifier(provider.category, 32)
+                or not validSemver(provider.version) then
+                return invalid('$.controlProvider',
+                    'Control provider identity must use the bounded schemaVersion 1 shape.')
+            end
+            local operationSet = {}
+            ok, err = validateArray(provider.operations, '$.controlProvider.operations',
+                function(operation) return controlProviderOperations[operation] == true end,
+                nil, 8)
+            if not ok then return nil, err end
+            if #provider.operations < 1 then
+                return invalid('$.controlProvider.operations',
+                    'Control providers require at least one read-only operation.')
+            end
+            for _, operation in ipairs(provider.operations) do operationSet[operation] = true end
+            local viewIds = {}
+            local function validControlView(view)
+                local valid = exactObject(view, '$.controlProvider.views[]', {
+                    'id', 'label', 'operation', 'presentation'
+                }, { 'order', 'description', 'input' })
+                if valid ~= true or not validControlIdentifier(view.id, 48)
+                    or viewIds[view.id] or not validControlText(view.label, 64)
+                    or not operationSet[view.operation]
+                    or not controlProviderPresentations[view.presentation]
+                    or (view.order ~= nil and (type(view.order) ~= 'number'
+                        or math.type(view.order) ~= 'integer'
+                        or view.order < 0 or view.order > 1000))
+                    or (view.description ~= nil
+                        and not validControlText(view.description, 160))
+                    or (view.input ~= nil
+                        and not validControlInput(view.input, view.operation)) then return false end
+                viewIds[view.id] = true
+                return true
+            end
+            ok, err = validateArray(provider.views, '$.controlProvider.views',
+                validControlView, function(view) return view.id end, 32)
+            if not ok then return nil, err end
+            if #provider.views < 1 then
+                return invalid('$.controlProvider.views',
+                    'Control providers require at least one declared view.')
+            end
+        end
 
         ok, err = exactObject(manifest.services, '$.services', { 'provide', 'require', 'optional' })
         if not ok then return nil, err end

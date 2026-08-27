@@ -6,8 +6,20 @@ export interface ParsedArguments {
   options: Map<string, string | boolean>;
 }
 
-const BOOLEAN_OPTIONS = new Set(["bundle", "check", "force", "help", "json"]);
-const VALUE_OPTIONS = new Set(["adapter", "against", "baseline", "iterations", "output", "path", "probe", "root", "timeout"]);
+const BOOLEAN_OPTIONS = new Set(["bundle", "check", "force", "help", "json", "online"]);
+const VALUE_OPTIONS = new Set([
+  "adapter",
+  "against",
+  "baseline",
+  "execution-evidence",
+  "iterations",
+  "output",
+  "path",
+  "probe",
+  "root",
+  "runtime-evidence",
+  "timeout",
+]);
 
 export function parseArguments(argumentsList: string[]): ParsedArguments {
   const positionals: string[] = [];

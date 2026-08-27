@@ -157,6 +157,10 @@ test('cluster RBAC revisions revoke stale grants and fail closed across refresh 
       local instanceA, instanceB = runtime(storeA), runtime(storeB)
       assert(instanceA:hydrate() and instanceB:hydrate())
       assert(instanceB:check('user:fixture', 'fixture.write'))
+      local initialExplanation = assert(instanceB:explain('user:fixture', 'fixture.write'))
+      assert(initialExplanation.allowed and initialExplanation.matched.role == 'operator'
+        and initialExplanation.matched.effect == 'allow'
+        and initialExplanation.matched.pattern == 'fixture.write')
 
       local context = {
         actor = 'synex_control', actorType = 'resource', reason = 'cluster policy update',
@@ -165,6 +169,8 @@ test('cluster RBAC revisions revoke stale grants and fail closed across refresh 
       assert(instanceA:defineRole('operator', {{ permission = 'fixture.read', effect = 'allow' }}, context))
       assert(not instanceB:check('user:fixture', 'fixture.write'),
         'another instance must stop honoring a removed permission')
+      local removedExplanation = assert(instanceB:explain('user:fixture', 'fixture.write'))
+      assert(not removedExplanation.allowed and removedExplanation.matched == nil)
 
       assert(instanceB:defineRole('auditor', {{ permission = 'audit.current', effect = 'allow' }}, context))
       assert(instanceA:defineRole('operator', {{ permission = 'fixture.read', effect = 'allow' }}, context))
@@ -175,6 +181,8 @@ test('cluster RBAC revisions revoke stale grants and fail closed across refresh 
       storeB.failRevision = true
       local authorized, revisionError = instanceB:check('user:fixture', 'fixture.read')
       assert(not authorized and revisionError.code == 'REVISION_READ_FAILED')
+      local unavailableExplanation, explanationError = instanceB:explain('user:fixture', 'fixture.read')
+      assert(unavailableExplanation == nil and explanationError.code == 'REVISION_READ_FAILED')
       local writesBeforeFailure = shared.assignmentWrites
       local assigned, assignError = instanceB:assign('user:other', 'operator', context)
       assert(assigned == nil and assignError.code == 'REVISION_READ_FAILED')

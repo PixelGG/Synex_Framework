@@ -7,9 +7,11 @@
     "firstName": "firstname",
     "lastName": "lastname",
     "money": { "cash": "accounts.money", "bank": "accounts.bank" },
-    "job": { "name": "job.name", "grade": "job.grade" },
-    "group": { "name": "permission", "grade": "permission_grade" },
     "vehicles": "vehicles",
     "metadata": "metadata"
+  },
+  "compatibilityMetadata": {
+    "catalogDigest": "aa5f22fa8d8471295e58349cd220520c7bd39140c55736e81b48946272edfb71",
+    "mappingIds": ["esx.hunger"]
   }
 }

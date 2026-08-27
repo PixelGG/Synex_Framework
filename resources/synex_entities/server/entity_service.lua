@@ -8,7 +8,59 @@ function SynexEntityOperations.create(options)
     local registry = assert(options.registry, 'entity operations registry is required')
     local entityRuntime = assert(options.entityRuntime, 'entity operations runtime is required')
     local coreRef = assert(options.coreRef, 'entity operations coreRef is required')
+    local spawnAdmission = assert(options.spawnAdmission,
+        'entity spawn admission is required')
+    local logicalOwner = assert(options.logicalOwner,
+        'entity logical owner validator is required')
+    local observability = assert(options.observability,
+        'entity observability is required')
     local operations = {}
+
+    local function idempotent(operation, request, context, handler)
+        if request.idempotencyKey == nil then return handler() end
+        local api = coreRef.value
+        if not api or type(api.Idempotency) ~= 'table'
+            or not foundation.isCallable(api.Idempotency.run) then
+            return foundation.failure('CORE_UNAVAILABLE',
+                'The Core idempotency service is unavailable', true, context)
+        end
+        return api.Idempotency.run(operation, request.idempotencyKey, {
+            caller = context.caller,
+            request = request,
+        }, handler, {
+            lockSeconds = 30,
+            maximumRequestBytes = 49152,
+            maximumResponseBytes = 32768,
+            ttlSeconds = 86400,
+        })
+    end
+
+    local function requireCapability(caller, capability, operation, context)
+        local api = coreRef.value
+        if not api or type(api.Capabilities) ~= 'table'
+            or not foundation.isCallable(api.Capabilities.checkResource) then
+            return foundation.failure(
+                'CORE_UNAVAILABLE',
+                'The delegated capability gateway is unavailable',
+                true,
+                context
+            )
+        end
+        local invoked, allowed, capabilityError = foundation.protect(
+            'core.capabilities.' .. operation,
+            function() return api.Capabilities.checkResource(caller, capability, operation) end,
+            context
+        )
+        if not invoked or allowed ~= true then
+            return nil, type(capabilityError) == 'table' and capabilityError or {
+                code = 'FORBIDDEN',
+                message = 'The resource lacks the required entity capability',
+                retryable = false,
+                traceId = type(context) == 'table' and context.traceId or nil,
+            }
+        end
+        return true
+    end
 
     function operations.spawn(request, context)
         local caller, callerError = foundation.getCaller(context)
@@ -26,17 +78,41 @@ function SynexEntityOperations.create(options)
                 validationError.traceId = context.traceId
                 return nil, validationError
             end
-            return foundation.withSpawnReservation(caller, normalized.bucket, context, function()
-                local bucket, bucketError = entityRuntime.resolveBucket(
-                    normalized.bucket,
-                    normalized.bucketGeneration,
+            local typed, typedError = requireCapability(
+                caller,
+                'synex.entities.spawn.' .. normalized.entityType,
+                'entities.spawn.' .. normalized.entityType,
+                context
+            )
+            if not typed then return nil, typedError end
+            if not normalized.archetype then
+                local rawAllowed, rawError = requireCapability(
                     caller,
-                    true
+                    'synex.entities.spawn.raw',
+                    'entities.spawn.raw',
+                    context
                 )
-                if not bucket then
-                    bucketError.traceId = context.traceId
-                    return nil, bucketError
-                end
+                if not rawAllowed then return nil, rawError end
+            end
+            local owner, ownerError = logicalOwner.validate(normalized.owner, caller, context)
+            if not owner then return nil, ownerError end
+            normalized.owner = owner
+            local hookValue, hookError = observability.before(
+                'synex.entities.before_entity_spawn',
+                { caller = caller, request = request }, context)
+            if not hookValue then return nil, hookError end
+            return idempotent('entity.spawn', request, context, function()
+            local bucket, bucketError = entityRuntime.resolveBucket(
+                normalized.bucket,
+                normalized.bucketGeneration,
+                caller,
+                true
+            )
+            if not bucket then
+                bucketError.traceId = context.traceId
+                return nil, bucketError
+            end
+            return spawnAdmission.withReservation(caller, normalized, context, function()
 
                 if normalized.persistent then
                     local existing, queryError = repository.findPersistentByKey(
@@ -115,7 +191,29 @@ function SynexEntityOperations.create(options)
                         )
                     end
                 end
-                return entityRuntime.snapshot(record, inspectionOrError)
+                local snapshot = entityRuntime.snapshot(record, inspectionOrError)
+                local event = { entityId = record.entityId,
+                    generation = record.generation, resourceOwner = caller }
+                observability.event('synex.entities.created', event, context)
+                observability.event('synex.entities.materialized', event, context)
+                observability.audit('entities.created', 'entity', record.entityId,
+                    { generation = record.generation,
+                        persistencePolicy = record.persistencePolicy,
+                        resourceOwner = caller }, context)
+                observability.audit('entities.materialized', 'entity', record.entityId,
+                    { generation = record.generation, resourceOwner = caller }, context)
+                observability.audit('entities.spawned', 'entity', record.entityId,
+                    { entityType = record.entityType, generation = record.generation,
+                        resourceOwner = caller }, context)
+                if record.binding then
+                    observability.audit('entities.binding_changed', 'entity', record.entityId,
+                        { binding = record.binding, generation = record.generation }, context)
+                end
+                observability.increment('entity_spawn_total',
+                    { entityType = record.entityType }, 1)
+                observability.gauge('entity_live_total', {}, registry.count())
+                return snapshot
+            end, normalized.persistent)
             end)
         end)
     end
@@ -232,8 +330,19 @@ function SynexEntityOperations.create(options)
             if not record then
                 return nil, inspectionOrError
             end
+            local hookValue, hookError = observability.before(
+                'synex.entities.before_entity_delete',
+                { entity = request, reasonCode = 'synex.entities.deleted' }, context)
+            if not hookValue then return nil, hookError end
 
             if record.persistent then
+                local destructive, destructiveError = requireCapability(
+                    caller,
+                    'synex.entities.delete_persistent',
+                    'entities.delete_persistent',
+                    context
+                )
+                if not destructive then return nil, destructiveError end
                 local updated, persistenceError = repository.beginDelete(
                     record.entityId,
                     record.version,
@@ -254,6 +363,8 @@ function SynexEntityOperations.create(options)
 
             local deleted, deleteError = entityRuntime.delete(record)
             if not deleted then
+                observability.increment('entity_delete_failures', {}, 1)
+                observability.increment('entity_delete_failures_total', {}, 1)
                 if record.persistent then
                     local reverted = repository.revertDelete(record.entityId, context)
                     if reverted == 1 then
@@ -284,6 +395,14 @@ function SynexEntityOperations.create(options)
                     )
                 end
             end
+            local event = { entityId = record.entityId, generation = record.generation,
+                resourceOwner = caller }
+            observability.event('synex.entities.deleted', event, context)
+            observability.audit('entities.deleted', 'entity', record.entityId, {
+                generation = record.generation, resourceOwner = caller,
+            }, context)
+            observability.increment('entity_delete_total', {}, 1)
+            observability.gauge('entity_live_total', {}, registry.count())
             return { deleted = true, entityId = record.entityId }
         end)
     end

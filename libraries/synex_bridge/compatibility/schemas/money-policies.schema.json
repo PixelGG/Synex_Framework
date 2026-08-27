@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:synex:compatibility:money-policies:schema:1",
+  "title": "Synex bridge reviewed money policies",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "schema", "kind", "policies"],
+  "properties": {
+    "$schema": { "type": "string", "const": "./schemas/money-policies.schema.json" },
+    "schema": { "type": "integer", "const": 1 },
+    "kind": { "type": "string", "const": "synex-compatibility-money-policies" },
+    "policies": {
+      "type": "array",
+      "maxItems": 512,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id", "version", "provider", "consumer", "moneyAlias",
+          "direction", "legacyReason", "action",
+          "nativeReasonCode", "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string", "minLength": 1, "maxLength": 96,
+            "pattern": "^[a-z][a-z0-9_.:-]{0,95}$"
+          },
+          "version": {
+            "type": "string", "minLength": 5, "maxLength": 32,
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+          },
+          "provider": { "type": "string", "enum": ["qb", "qbx", "esx"] },
+          "consumer": {
+            "type": "string", "minLength": 2, "maxLength": 64,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{1,63}$"
+          },
+          "moneyAlias": {
+            "type": "string", "minLength": 1, "maxLength": 32,
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "direction": { "type": "string", "enum": ["add", "remove"] },
+          "legacyReason": {
+            "type": "string", "minLength": 1, "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+          },
+          "action": { "type": "string", "enum": ["transfer", "mint", "burn"] },
+          "accountId": {
+            "type": "string", "minLength": 36, "maxLength": 36,
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "nativeReasonCode": {
+            "type": "string", "minLength": 3, "maxLength": 96,
+            "pattern": "^[a-z][a-z0-9_.:-]*$"
+          },
+          "status": { "type": "string", "enum": ["ACTIVE", "DISABLED"] }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "action": { "const": "transfer" } } },
+            "then": {
+              "required": ["accountId"],
+              "properties": { "accountId": {} }
+            }
+          },
+          {
+            "if": { "properties": { "action": { "const": "mint" } } },
+            "then": {
+              "properties": {
+                "direction": { "const": "add" },
+                "accountId": false
+              }
+            }
+          },
+          {
+            "if": { "properties": { "action": { "const": "burn" } } },
+            "then": {
+              "properties": {
+                "direction": { "const": "remove" },
+                "accountId": false
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

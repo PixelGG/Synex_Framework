@@ -7,7 +7,378 @@
   "critical": true,
   "capabilities": {
     "request": [
-      "synex.audit.append"
+      "synex.audit.append",
+      "synex.capabilities.delegate",
+      "synex.database.maintenance",
+      "synex.database.read",
+      "synex.database.transaction",
+      "synex.database.write",
+      "synex.deletions.provider",
+      "synex.groups.read",
+      "synex.identity.read",
+      "synex.metrics.write",
+      "synex.runtime.read",
+      "synex.control.provider.register"
+    ]
+  },
+  "controlProvider": {
+    "schemaVersion": 1,
+    "namespace": "entities",
+    "label": "Entities",
+    "category": "domain",
+    "version": "1.0.0",
+    "operations": ["summary", "health", "list", "inspect", "search", "metrics", "findings"],
+    "views": [
+      {
+        "id": "overview",
+        "label": "Entities overview",
+        "operation": "summary",
+        "presentation": "key-value",
+        "order": 10,
+        "description": "Bounded entity authority and runtime totals.",
+        "accessClass": "general"
+      },
+      {
+        "id": "health",
+        "label": "Entities health",
+        "operation": "health",
+        "presentation": "key-value",
+        "order": 20,
+        "description": "Current authority, persistence, drift, and cleanup state.",
+        "accessClass": "general"
+      },
+      {
+        "id": "runtime",
+        "label": "Runtime",
+        "operation": "list",
+        "presentation": "table",
+        "order": 30,
+        "description": "Cursor-based in-memory entity authority state.",
+        "accessClass": "general"
+      },
+      {
+        "id": "persistent",
+        "label": "Persistent",
+        "operation": "list",
+        "presentation": "table",
+        "order": 40,
+        "description": "Cursor-based durable entity definitions.",
+        "accessClass": "general"
+      },
+      {
+        "id": "bindings",
+        "label": "Bindings",
+        "operation": "list",
+        "presentation": "table",
+        "order": 50,
+        "description": "Cursor-based active binding metadata.",
+        "accessClass": "general"
+      },
+      {
+        "id": "owners",
+        "label": "Logical owners",
+        "operation": "list",
+        "presentation": "table",
+        "order": 60,
+        "description": "Cursor-based logical-owner aggregates.",
+        "accessClass": "general"
+      },
+      {
+        "id": "resources",
+        "label": "Resource owners",
+        "operation": "list",
+        "presentation": "table",
+        "order": 70,
+        "description": "Cursor-based resource-owner aggregates.",
+        "accessClass": "general"
+      },
+      {
+        "id": "buckets",
+        "label": "Buckets",
+        "operation": "list",
+        "presentation": "table",
+        "order": 80,
+        "description": "Cursor-based managed routing buckets.",
+        "accessClass": "general"
+      },
+      {
+        "id": "components",
+        "label": "Components",
+        "operation": "list",
+        "presentation": "table",
+        "order": 90,
+        "description": "Cursor-based component metadata without payloads.",
+        "accessClass": "general"
+      },
+      {
+        "id": "state",
+        "label": "State",
+        "operation": "list",
+        "presentation": "table",
+        "order": 100,
+        "description": "Cursor-based state metadata without values.",
+        "accessClass": "general"
+      },
+      {
+        "id": "recovery_log",
+        "label": "Recovery",
+        "operation": "list",
+        "presentation": "timeline",
+        "order": 110,
+        "description": "Cursor-based cluster recovery history.",
+        "accessClass": "general"
+      },
+      {
+        "id": "cluster_authority",
+        "label": "Cluster authority",
+        "operation": "summary",
+        "presentation": "key-value",
+        "order": 120,
+        "description": "Current authority lease and server scope.",
+        "accessClass": "general"
+      },
+      {
+        "id": "drift",
+        "label": "Drift",
+        "operation": "findings",
+        "presentation": "findings",
+        "order": 130,
+        "description": "Current persistence and runtime drift findings.",
+        "accessClass": "general"
+      },
+      {
+        "id": "quotas",
+        "label": "Quotas",
+        "operation": "summary",
+        "presentation": "key-value",
+        "order": 140,
+        "description": "Live usage, pending reservations, and entity authority bounds.",
+        "accessClass": "general"
+      },
+      {
+        "id": "entities",
+        "label": "Entities",
+        "operation": "list",
+        "presentation": "table",
+        "order": 150,
+        "description": "Cursor-based durable entity definitions.",
+        "accessClass": "general"
+      },
+      {
+        "id": "bucket_entities",
+        "label": "Bucket entities",
+        "operation": "list",
+        "presentation": "table",
+        "order": 160,
+        "description": "Cursor-based entities in a routing bucket.",
+        "input": {
+          "fields": [
+            {
+              "key": "bucket",
+              "label": "Bucket",
+              "source": "filter",
+              "type": "integer",
+              "format": "integer",
+              "required": true,
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            {
+              "key": "generation",
+              "label": "Generation",
+              "source": "filter",
+              "type": "integer",
+              "format": "integer",
+              "required": true,
+              "minimum": 0,
+              "maximum": 2147483647
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "entity",
+        "label": "Entity inspector",
+        "operation": "inspect",
+        "presentation": "detail",
+        "order": 170,
+        "description": "Inspect one entity authority and runtime read model.",
+        "input": {
+          "fields": [
+            {
+              "key": "id",
+              "label": "Entity ID",
+              "source": "id",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "binding",
+        "label": "Binding inspector",
+        "operation": "inspect",
+        "presentation": "detail",
+        "order": 180,
+        "description": "Inspect one entity binding by entity identifier.",
+        "input": {
+          "fields": [
+            {
+              "key": "id",
+              "label": "Entity ID",
+              "source": "id",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "component",
+        "label": "Component inspector",
+        "operation": "inspect",
+        "presentation": "detail",
+        "order": 190,
+        "description": "Inspect one component metadata record without its payload.",
+        "input": {
+          "fields": [
+            {
+              "key": "id",
+              "label": "Entity ID",
+              "source": "id",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            },
+            {
+              "key": "namespace",
+              "label": "Namespace",
+              "source": "filter",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "recovery",
+        "label": "Recovery inspector",
+        "operation": "inspect",
+        "presentation": "detail",
+        "order": 200,
+        "description": "Inspect one entity recovery circuit and bounded history.",
+        "input": {
+          "fields": [
+            {
+              "key": "id",
+              "label": "Entity ID",
+              "source": "id",
+              "type": "string",
+              "format": "identifier",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 64
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "bucket",
+        "label": "Bucket inspector",
+        "operation": "inspect",
+        "presentation": "detail",
+        "order": 210,
+        "description": "Inspect one managed routing bucket.",
+        "input": {
+          "fields": [
+            {
+              "key": "id",
+              "label": "Bucket",
+              "source": "id",
+              "type": "string",
+              "format": "numeric-string",
+              "required": true,
+              "minLength": 1,
+              "maxLength": 10
+            },
+            {
+              "key": "generation",
+              "label": "Generation",
+              "source": "filter",
+              "type": "integer",
+              "format": "integer",
+              "required": true,
+              "minimum": 0,
+              "maximum": 2147483647
+            }
+          ]
+        },
+        "accessClass": "general"
+      },
+      {
+        "id": "search",
+        "label": "Find entity",
+        "operation": "search",
+        "presentation": "table",
+        "order": 220,
+        "description": "Exact lookup by entity identifier.",
+        "accessClass": "general",
+        "search": {
+          "kinds": [
+            {
+              "id": "entity",
+              "modes": [
+                "exact"
+              ],
+              "accessClass": "general"
+            }
+          ]
+        }
+      },
+      {
+        "id": "metrics",
+        "label": "Metrics",
+        "operation": "metrics",
+        "presentation": "metrics",
+        "order": 230,
+        "description": "Measured entity runtime metrics.",
+        "accessClass": "general"
+      },
+      {
+        "id": "findings",
+        "label": "Findings",
+        "operation": "findings",
+        "presentation": "findings",
+        "order": 240,
+        "description": "Bounded diagnostic and recovery findings.",
+        "accessClass": "general"
+      },
+      {
+        "id": "character_relations",
+        "label": "Character relations",
+        "operation": "inspect",
+        "presentation": "detail",
+        "order": 250,
+        "description": "Bounded persistent-entity links for one exact character identifier.",
+        "accessClass": "general"
+      }
     ]
   },
   "services": {
@@ -17,7 +388,9 @@
     "require": [
       "synex.runtime@1"
     ],
-    "optional": []
+    "optional": [
+      "synex.groups@1"
+    ]
   },
   "contracts": {
     "provide": [
@@ -25,21 +398,60 @@
       "synex.entities.bucket.destroy",
       "synex.entities.bucket.move_entity",
       "synex.entities.bucket.move_player",
+      "synex.entities.bucket.get",
+      "synex.entities.context.validate",
       "synex.entities.delete",
+      "synex.entities.dematerialize",
       "synex.entities.get",
       "synex.entities.health",
+      "synex.entities.materialize",
       "synex.entities.resolve_persistent",
-      "synex.entities.spawn"
+      "synex.entities.spawn",
+      "synex.entities.checkpoint",
+      "synex.entities.binding.get",
+      "synex.entities.owner.set",
+      "synex.entities.archetype.register",
+      "synex.entities.component.schema.register",
+      "synex.entities.component.get",
+      "synex.entities.component.set",
+      "synex.entities.component.remove",
+      "synex.entities.state.schema.register",
+      "synex.entities.state.get",
+      "synex.entities.state.set",
+      "synex.entities.tags.add",
+      "synex.entities.tags.remove",
+      "synex.entities.query.by_net_id",
+      "synex.entities.query.by_owner",
+      "synex.entities.query.by_resource",
+      "synex.entities.query.by_binding",
+      "synex.entities.query.by_bucket",
+      "synex.entities.query.nearby"
     ],
     "consume": []
   },
   "events": {
-    "publish": [],
+    "publish": [
+      "synex.entities.created",
+      "synex.entities.materialized",
+      "synex.entities.dematerialized",
+      "synex.entities.orphaned",
+      "synex.entities.recovered",
+      "synex.entities.owner.changed",
+      "synex.entities.bucket.changed",
+      "synex.entities.deleted"
+    ],
     "subscribe": []
   },
   "hooks": {
     "register": [],
-    "run": []
+    "run": [
+      "synex.entities.before_entity_spawn",
+      "synex.entities.before_entity_delete",
+      "synex.entities.before_entity_checkpoint",
+      "synex.entities.before_entity_owner_change",
+      "synex.entities.before_entity_bucket_move",
+      "synex.entities.before_entity_recovery"
+    ]
   },
   "dependencies": {
     "required": [
@@ -60,13 +472,35 @@
       "id": "001_entities",
       "path": "migrations/001_entities.sql",
       "transactional": false
+    },
+    {
+      "id": "002_entity_lifecycle_authority",
+      "path": "migrations/002_entity_lifecycle_authority.sql",
+      "transactional": false
+    },
+    {
+      "id": "003_entity_extensions",
+      "path": "migrations/003_entity_extensions.sql",
+      "transactional": false
+    },
+    {
+      "id": "004_entity_cluster_recovery",
+      "path": "migrations/004_entity_cluster_recovery.sql",
+      "transactional": false
     }
   ],
   "dataOwnership": {
     "tables": [
-      "synex_entities"
+      "synex_entities",
+      "synex_entity_bindings",
+      "synex_entity_components",
+      "synex_entity_states",
+      "synex_entity_tags",
+      "synex_entity_checkpoints",
+      "synex_entity_authority_leases",
+      "synex_entity_recovery_history"
     ],
-    "characterDelete": "retain"
+    "characterDelete": "block"
   },
   "stateSnapshot": {
     "supported": false,

@@ -1,0 +1,295 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:synex:compatibility:runtime-evidence:schema:1",
+  "title": "Synex bridge operator runtime evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "kind",
+    "source",
+    "complete",
+    "expectedProviders",
+    "providers",
+    "consumers",
+    "mappings",
+    "certifications"
+  ],
+  "properties": {
+    "schema": { "type": "integer", "const": 1 },
+    "kind": { "type": "string", "const": "synex-compatibility-runtime-evidence" },
+    "source": { "type": "string", "const": "operator" },
+    "complete": { "type": "boolean" },
+    "expectedProviders": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/provider" }
+    },
+    "providers": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/providerEvidence" }
+    },
+    "consumers": {
+      "type": "array",
+      "maxItems": 512,
+      "items": { "$ref": "#/$defs/consumer" }
+    },
+    "mappings": { "$ref": "#/$defs/mappingEvidence" },
+    "certifications": {
+      "type": "array",
+      "maxItems": 128,
+      "items": { "$ref": "#/$defs/certification" }
+    }
+  },
+  "$defs": {
+    "provider": {
+      "type": "string",
+      "enum": ["qb", "qbx", "esx"]
+    },
+    "boundedName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+    },
+    "resource": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 64,
+      "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 64,
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
+    },
+    "safeInteger": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "reasons"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["READY", "DEGRADED", "FAILED", "UNAVAILABLE"]
+        },
+        "reasons": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+          }
+        },
+        "callbackPending": { "$ref": "#/$defs/safeInteger" },
+        "callbackCapacity": { "$ref": "#/$defs/safeInteger" },
+        "callbackRegistrations": { "$ref": "#/$defs/safeInteger" },
+        "callbackRegistrationCapacity": { "$ref": "#/$defs/safeInteger" }
+      }
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "required", "granted"],
+      "properties": {
+        "name": { "$ref": "#/$defs/boundedName" },
+        "required": { "type": "boolean" },
+        "granted": { "type": "boolean" }
+      }
+    },
+    "conflict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "active"],
+      "properties": {
+        "code": { "$ref": "#/$defs/boundedName" },
+        "active": { "type": "boolean" }
+      }
+    },
+    "outcomes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "success",
+        "denied",
+        "unsupported",
+        "error",
+        "timeout",
+        "rateLimited",
+        "deprecated"
+      ],
+      "properties": {
+        "success": { "$ref": "#/$defs/safeInteger" },
+        "denied": { "$ref": "#/$defs/safeInteger" },
+        "unsupported": { "$ref": "#/$defs/safeInteger" },
+        "error": { "$ref": "#/$defs/safeInteger" },
+        "timeout": { "$ref": "#/$defs/safeInteger" },
+        "rateLimited": { "$ref": "#/$defs/safeInteger" },
+        "deprecated": { "$ref": "#/$defs/safeInteger" }
+      }
+    },
+    "latency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["samples", "totalMs", "maximumMs"],
+      "properties": {
+        "samples": { "$ref": "#/$defs/safeInteger" },
+        "totalMs": { "$ref": "#/$defs/safeInteger" },
+        "maximumMs": { "$ref": "#/$defs/safeInteger" }
+      }
+    },
+    "telemetryEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["consumer", "operation", "calls", "outcomes", "latency"],
+      "properties": {
+        "consumer": { "$ref": "#/$defs/resource" },
+        "operation": { "$ref": "#/$defs/boundedName" },
+        "calls": { "$ref": "#/$defs/safeInteger" },
+        "outcomes": { "$ref": "#/$defs/outcomes" },
+        "latency": { "$ref": "#/$defs/latency" }
+      }
+    },
+    "telemetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["truncated", "entries"],
+      "properties": {
+        "truncated": { "type": "boolean" },
+        "entries": {
+          "type": "array",
+          "maxItems": 512,
+          "items": { "$ref": "#/$defs/telemetryEntry" }
+        }
+      }
+    },
+    "providerEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "resource",
+        "version",
+        "state",
+        "health",
+        "capabilities",
+        "conflicts",
+        "telemetry"
+      ],
+      "properties": {
+        "provider": { "$ref": "#/$defs/provider" },
+        "resource": { "$ref": "#/$defs/resource" },
+        "version": { "$ref": "#/$defs/version" },
+        "state": {
+          "type": "string",
+          "enum": ["started", "starting", "stopped", "missing", "unknown"]
+        },
+        "health": { "$ref": "#/$defs/health" },
+        "capabilities": {
+          "type": "array",
+          "maxItems": 128,
+          "items": { "$ref": "#/$defs/capability" }
+        },
+        "conflicts": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/conflict" }
+        },
+        "telemetry": { "$ref": "#/$defs/telemetry" }
+      }
+    },
+    "consumer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["consumer", "provider", "active"],
+      "properties": {
+        "consumer": { "$ref": "#/$defs/resource" },
+        "provider": { "$ref": "#/$defs/provider" },
+        "active": { "type": "boolean" }
+      }
+    },
+    "mappingEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ambiguous", "missing", "forbidden"],
+      "properties": {
+        "ambiguous": { "$ref": "#/$defs/safeInteger" },
+        "missing": { "$ref": "#/$defs/safeInteger" },
+        "forbidden": { "$ref": "#/$defs/safeInteger" }
+      }
+    },
+    "testEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "status"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_./-]{0,255}$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["PASS", "FAIL", "SKIP"]
+        }
+      }
+    },
+    "certification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profileId",
+        "profileVersion",
+        "provider",
+        "providerVersion",
+        "targetFrameworkApiRange",
+        "script",
+        "tests"
+      ],
+      "properties": {
+        "profileId": { "$ref": "#/$defs/boundedName" },
+        "profileVersion": { "$ref": "#/$defs/version" },
+        "provider": { "$ref": "#/$defs/provider" },
+        "providerVersion": { "$ref": "#/$defs/version" },
+        "targetFrameworkApiRange": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 64,
+          "pattern": "^[0-9A-Za-z*<>=~^| .+-]+$"
+        },
+        "script": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version"],
+          "properties": {
+            "name": { "$ref": "#/$defs/boundedName" },
+            "version": { "$ref": "#/$defs/version" }
+          }
+        },
+        "tests": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/testEvidence" }
+        }
+      }
+    }
+  }
+}

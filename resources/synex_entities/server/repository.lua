@@ -18,11 +18,15 @@ local SELECT_PERSISTENT_FOR_REHYDRATE = [[
 ]]
 
 local SELECT_PERSISTENT_FOR_DRIFT = [[
-    SELECT entity_id, generation, persistent_key, owner_type, owner_id,
-           resource_owner, bucket_id, status, version
-    FROM synex_entities
-    WHERE deleted_at IS NULL AND status IN ('active', 'orphaned') AND entity_id > ?
-    ORDER BY entity_id
+    SELECT e.entity_id, e.generation, e.persistent_key, e.entity_type, e.model,
+           e.owner_type, e.owner_id, e.resource_owner, e.bucket_id, e.status,
+           e.version, b.binding_namespace, b.binding_ref
+    FROM synex_entities e
+    LEFT JOIN synex_entity_bindings b
+        ON b.entity_id = e.entity_id AND b.released_at IS NULL
+    WHERE e.deleted_at IS NULL AND e.status IN ('active', 'orphaned')
+        AND e.entity_id > ?
+    ORDER BY e.entity_id
     LIMIT ?
 ]]
 
@@ -74,8 +78,7 @@ local REVERT_DELETE = [[
 
 local RECONCILE_DELETING = [[
     UPDATE synex_entities
-    SET status = 'deleted', deleted_at = UTC_TIMESTAMP(3), version = version + 1,
-        updated_at = UTC_TIMESTAMP(3)
+    SET updated_at = updated_at
     WHERE status = 'deleting' AND deleted_at IS NULL
 ]]
 
@@ -188,10 +191,15 @@ function SynexEntityRepository.create(options)
         for index = 1, #entityIds do placeholders[index] = '?' end
         -- Only the number of placeholders is assembled. Every identifier remains
         -- a positional value and the caller bounds each batch.
-        local statement = [[SELECT entity_id, generation, persistent_key, owner_type, owner_id,
-                resource_owner, bucket_id, status, version
-            FROM synex_entities
-            WHERE deleted_at IS NULL AND entity_id IN (]] .. table.concat(placeholders, ',') .. ')'
+        local statement = [[SELECT e.entity_id, e.generation, e.persistent_key,
+                e.entity_type, e.model, e.owner_type, e.owner_id,
+                e.resource_owner, e.bucket_id, e.status, e.version,
+                b.binding_namespace, b.binding_ref
+            FROM synex_entities e
+            LEFT JOIN synex_entity_bindings b
+                ON b.entity_id = e.entity_id AND b.released_at IS NULL
+            WHERE e.deleted_at IS NULL AND e.entity_id IN (]]
+            .. table.concat(placeholders, ',') .. ')'
         return queryRows('repository.find_drift_ids', statement, entityIds, context)
     end
 

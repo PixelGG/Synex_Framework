@@ -7,24 +7,117 @@ import { repositoryRoot } from './harness.js';
 
 const luaModules = {
   synex_groups: [
+    'server/cache.lua',
+    'server/validation.lua',
+    'server/domain/constants.lua',
+    'server/domain/lifecycle.lua',
+    'server/domain/graph.lua',
+    'server/domain/capabilities.lua',
+    'server/domain/policy.lua',
+    'server/domain/registry.lua',
+    'server/extension_registries.lua',
+    'server/group_creation_approvals.lua',
+    'server/group_deletions.lua',
+    'server/scheduler.lua',
+    'server/runtime_error.lua',
+    'server/json_runtime.lua',
+    'server/core_bootstrap.lua',
+    'server/domain/application_schema.lua',
     'server/foundation.lua',
+    'server/database_adapter.lua',
+    'server/runtime_index.lua',
     'server/outbox.lua',
     'server/service.lua',
+    'server/persistence/effects.lua',
+    'server/persistence/approved_operations.lua',
+    'server/persistence/definition_cache.lua',
+    'server/persistence/capability_access.lua',
+    'server/persistence/runtime_context.lua',
     'server/persistence.lua',
+    'server/persistence/organizations_shared.lua',
+    'server/persistence/organizations_read.lua',
+    'server/persistence/organizations_creation.lua',
+    'server/persistence/organizations_lifecycle.lua',
+    'server/persistence/organizations_creation_approvals.lua',
+    'server/persistence/organizations_deletion.lua',
+    'server/persistence/organizations_types.lua',
+    'server/persistence/extension_registries.lua',
+    'server/persistence/organizations_structure.lua',
+    'server/persistence/organizations.lua',
+    'server/persistence/memberships_shared.lua',
+    'server/persistence/memberships_read.lua',
+    'server/persistence/memberships_invitations.lua',
+    'server/persistence/memberships_lifecycle.lua',
+    'server/persistence/membership_transition_policies.lua',
+    'server/persistence/memberships_access.lua',
+    'server/persistence/memberships_reporting.lua',
+    'server/persistence/memberships.lua',
+    'server/persistence/governance_shared.lua',
+    'server/persistence/governance_capabilities.lua',
+    'server/persistence/governance_capability_rules.lua',
+    'server/persistence/governance_policies.lua',
+    'server/persistence/governance_attribute_values.lua',
+    'server/persistence/governance_attributes.lua',
+    'server/persistence/governance_attribute_activation.lua',
+    'server/persistence/governance_definitions_capabilities.lua',
+    'server/persistence/governance_definitions_group_normalization.lua',
+    'server/persistence/governance_definitions_hierarchy.lua',
+    'server/persistence/governance_definitions_groups.lua',
+    'server/persistence/governance_definitions.lua',
+    'server/persistence/governance.lua',
+    'server/persistence/workflows_shared.lua',
+    'server/persistence/workflows_duty.lua',
+    'server/persistence/workflows_assignments.lua',
+    'server/persistence/workflow_reads.lua',
+    'server/persistence/workflows_applications.lua',
+    'server/persistence/workflows_proposals.lua',
+    'server/persistence/workflows.lua',
+    'server/persistence/diagnostics.lua',
+    'server/persistence/workers.lua',
+    'server/persistence/deletions.lua',
     'server/persistence/observability.lua',
+    'server/control_provider.lua',
     'server/contracts.lua',
   ],
   synex_accounts: [
     'server/foundation.lua',
+    'server/json_runtime.lua',
+    'server/domain.lua',
+    'server/core_bootstrap.lua',
+    'server/operator_adapter.lua',
     'server/outbox.lua',
     'server/retention.lua',
     'server/service.lua',
+    'server/service_v2/runtime.lua',
+    'server/service_v2/catalog_accounts.lua',
+    'server/service_v2/transactions_holds.lua',
+    'server/service_v2/access_policy.lua',
+    'server/service_v2/integrity.lua',
+    'server/service_v2/guard.lua',
+    'server/service_v2.lua',
+    'server/lifecycle.lua',
     'server/persistence.lua',
+    'server/persistence/engine_shared.lua',
+    'server/persistence/accounts_v2.lua',
+    'server/persistence/transactions.lua',
+    'server/persistence/transaction_reads.lua',
+    'server/persistence/holds_v2.lua',
+    'server/persistence/access_v2.lua',
+    'server/persistence/restrictions_v2.lua',
+    'server/persistence/integrity_behavior.lua',
+    'server/persistence/integrity_v2.lua',
+    'server/persistence/integrity_control.lua',
+    'server/persistence/observability_control.lua',
+    'server/persistence/observability_inspect.lua',
+    'server/persistence/observability.lua',
+    'server/persistence/lifecycle_groups.lua',
+    'server/persistence/lifecycle.lua',
     'server/persistence/accounts.lua',
     'server/persistence/ledger.lua',
     'server/persistence/holds.lua',
     'server/persistence/access.lua',
     'server/persistence/integrity.lua',
+    'server/control_provider.lua',
     'server/contracts.lua',
   ],
 } as const;
@@ -48,9 +141,151 @@ async function luaBootstrap(resource: FoundationResource): Promise<string> {
   return `${registrations.join('\n')}\nlocal module = assert(load(${JSON.stringify(main)}))()\n`;
 }
 
+test('Groups Cfx module loader is manifest-bound and starts before composition', async () => {
+  const [loader, manifest, runtimeRegistration] = await Promise.all([
+    readFile(path.join(
+      repositoryRoot,
+      'resources/synex_groups/server/module_loader.lua',
+    ), 'utf8'),
+    readFile(path.join(
+      repositoryRoot,
+      'resources/synex_groups/fxmanifest.lua',
+    ), 'utf8'),
+    readFile(path.join(
+      repositoryRoot,
+      'resources/synex_groups/server/runtime_registration.lua',
+    ), 'utf8'),
+  ]);
+  assert.match(loader, /GetNumResourceMetadata\(RESOURCE_NAME, 'file'\)/u);
+  assert.ok(loader.includes("path:match('^server/[a-z0-9_/]+%.lua$')"));
+  assert.match(loader, /modulePaths\[name\]/u);
+  assert.match(loader, /LoadResourceFile\(RESOURCE_NAME, path\)/u);
+  assert.match(loader, /source, '@' \.\. RESOURCE_NAME \.\. '\/' \.\. path, 't', _ENV/u);
+  assert.doesNotMatch(loader, /PerformHttpRequest|SaveResourceFile|GetConvar/u);
+  assert.match(
+    manifest,
+    /server_scripts\s*\{\s*'server\/module_loader\.lua',\s*'server\/runtime_registration\.lua',\s*'server\/main\.lua'\s*\}/u,
+  );
+  const main = await readFile(path.join(
+    repositoryRoot,
+    'resources/synex_groups/server/main.lua',
+  ), 'utf8');
+  assert.doesNotMatch(main, /\bload\s*\(|\bdofile\s*\(/u);
+  assert.doesNotMatch(runtimeRegistration, /\bload\s*\(|\bdofile\s*\(/u);
+  assert.match(main, /local function bootstrapRuntime\(\)/u);
+  assert.match(main, /CoreBootstrap\.runWhenReady\(\{/u);
+  assert.match(runtimeRegistration, /CoreBootstrap\.createRegistration\(\{/u);
+  const descriptor = JSON.parse(await readFile(path.join(
+    repositoryRoot,
+    'resources/synex_groups/synex.resource.json',
+  ), 'utf8')) as { critical?: unknown };
+  assert.equal(descriptor.critical, false);
+});
+
+function persistenceDependencies(resource: FoundationResource): string {
+  if (resource !== 'synex_groups') {
+    return `{ jsonEncode = function() return '{}' end, jsonDecode = function() return {} end,
+      random = function() return 1 end, domain = module.Domain }`;
+  }
+  return `(function()
+    local evaluator = module.Capabilities.create({
+      evaluateRules = function(permission, rules)
+        local matches, allows, denies = {}, 0, 0
+        for index, rule in ipairs(rules) do
+          local pattern = rule.permission
+          local matched = pattern == permission
+          if not matched and pattern:sub(-2) == '.*' then
+            local prefix = pattern:sub(1, -3)
+            matched = permission:sub(1, #prefix + 1) == prefix .. '.'
+          end
+          if matched then
+            matches[#matches + 1] = {
+              index = index, permission = pattern, effect = rule.effect
+            }
+            if rule.effect == 'deny' then denies = denies + 1 else allows = allows + 1 end
+          end
+        end
+        return {
+          matches = matches, denied = denies > 0,
+          allowed = allows > 0 and denies == 0
+        }, nil
+      end
+    })
+    local database = CoreDatabaseFixture or {
+      null = function() return { __synexDatabaseNull = true } end,
+      read = function() return {}, nil end,
+      write = function() return { affectedRows = 0 }, nil end,
+      transaction = function(_, handler)
+        local tx = {
+          query = function() return { affectedRows = 1 } end,
+          many = function() return {} end,
+          one = function() return nil end,
+          affected = function() return 1 end,
+          insert = function() return { affectedRows = 1, insertId = 1 } end
+        }
+        local value, err = handler(tx)
+        return value, err, { replayed = false }
+      end,
+      maintenance = function(_, handler)
+        local tx = {
+          query = function() return { affectedRows = 1 } end,
+          many = function() return {} end,
+          one = function() return nil end,
+          affected = function() return 1 end,
+          insert = function() return { affectedRows = 1, insertId = 1 } end
+        }
+        return handler(tx)
+      end
+    }
+    return {
+      dataPort = module.createDatabaseAdapter(database),
+      jsonEncode = function() return '{}' end,
+      jsonDecode = function() return {} end,
+      nextId = function(namespace) return namespace .. '_test_identifier' end,
+      cache = module.createCache({ maximum = 32, ttlMs = 5000 }),
+      registries = {
+        groupTypes = module.Registry.create(), relationTypes = module.Registry.create(),
+        attributeSchemas = module.Registry.create(), dutyStates = module.Registry.create()
+      },
+      capabilityEvaluator = evaluator,
+      policyEngine = module.Policy.create({ capabilities = evaluator }),
+      applicationSchemas = module.ApplicationSchemas,
+      validateOperation = module.Validation.operation,
+      runtimeIndex = module.createRuntimeIndex({ maximumCharacters = 32,
+        maximumMemberships = 128, maximumMembershipsPerCharacter = 16 }),
+      checkCorePermission = function() return true, nil end
+    }
+  end)()`;
+}
+
+function serviceDependencies(
+  resource: FoundationResource,
+  repository: string,
+  errorSink = 'function() end',
+): string {
+  if (resource !== 'synex_groups') {
+    return `{ db = ${repository}, jsonEncode = function() return '{}' end, jsonDecode = function() return {} end, errorSink = ${errorSink} }`;
+  }
+  return `{
+    repository = ${repository},
+    characters = { get = function(characterId) return { id = characterId } end },
+    hooks = { run = function(_, value) return value end },
+    audit = { append = function() return { eventId = 'audit_test_identifier' } end },
+    runtimeEffects = { apply = function() return true end },
+    cache = module.createCache({ maximum = 32, ttlMs = 5000 }),
+    jsonEncode = function() return '{}' end,
+    errorSink = ${errorSink}
+  }`;
+}
+
+function serviceContext(resource: FoundationResource, traceId: string): string {
+  if (resource !== 'synex_groups') return `{ traceId = ${JSON.stringify(traceId)} }`;
+  return `{ traceId = ${JSON.stringify(traceId)}, caller = 'synex_test', callerEpoch = 1 }`;
+}
+
 for (const [resource, expectedFactories] of [
-  ['synex_groups', 5],
-  ['synex_accounts', 5],
+  ['synex_groups', 13],
+  ['synex_accounts', 9],
 ] as const) {
   test(`${resource} composition uses fixed manifest-listed modules and exposes injectable factories`, async () => {
     const engine = await new LuaFactory().createEngine();
@@ -124,6 +359,9 @@ for (const [resource, eventType] of [
           query = function(sql, parameters)
             assert(sql:find("\`locked_by\` = ?", 1, true))
             assert(parameters[1] == 'claim_worker_0001')
+            ${resource === 'synex_groups'
+              ? `assert(sql:find('LEFT JOIN \`synex_group_domain_history\`', 1, true))`
+              : ''}
             return {{
               id = 7,
               event_id = '11111111-1111-4111-8111-111111111111',
@@ -132,6 +370,9 @@ for (const [resource, eventType] of [
               schema_version = 1,
               payload_json = '{"value":7}',
               attempts = 1
+              ${resource === 'synex_groups'
+                ? `, correlation_id = 'trace_original_0001'`
+                : ''}
             }}
           end,
           jsonDecode = function(value)
@@ -144,7 +385,10 @@ for (const [resource, eventType] of [
           assert(payload.value == 7)
           assert(options.eventId == '11111111-1111-4111-8111-111111111111')
           assert(options.aggregateId == '22222222-2222-4222-8222-222222222222')
-          assert(options.schemaVersion == 1 and options.traceId == options.eventId)
+          assert(options.schemaVersion == 1)
+          assert(options.traceId == ${resource === 'synex_groups'
+            ? `'trace_original_0001'`
+            : `options.eventId`})
           return { delivered = 1, failed = 0 }, nil
         end, { maximum = 1 })
         assert(report and err == nil)
@@ -313,40 +557,110 @@ for (const [resource, eventType] of [
   });
 }
 
-for (const [resource, expectedMethods] of [
+test('Groups outbox preserves bounded history traces and safely falls back for legacy events', async () => {
+  const engine = await new LuaFactory().createEngine();
+  try {
+    await engine.doString('SYNEX_TEST_MODE = true');
+    const result = await engine.doString(`
+      ${await luaBootstrap('synex_groups')}
+      local rows = {
+        {
+          id = 1,
+          event_id = '11111111-1111-4111-8111-111111111111',
+          aggregate_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          event_type = 'synex.groups.membership.visibility_changed',
+          schema_version = 1, payload_json = '{"value":1}', attempts = 1,
+          correlation_id = 'trace_history_0001',
+          context_json = '{"traceId":"must_not_override_0001"}'
+        },
+        {
+          id = 2,
+          event_id = '22222222-2222-4222-8222-222222222222',
+          aggregate_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          event_type = 'synex.groups.membership.visibility_changed',
+          schema_version = 1, payload_json = '{"value":2}', attempts = 1,
+          correlation_id = 'bad\\ntrace',
+          context_json = '{"traceId":"trace_context_0002","password":"never-log"}'
+        },
+        {
+          id = 3,
+          event_id = '33333333-3333-4333-8333-333333333333',
+          aggregate_id = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+          event_type = 'synex.groups.membership.visibility_changed',
+          schema_version = 1, payload_json = '{"value":3}', attempts = 1,
+          correlation_id = 'bad trace', context_json = nil
+        }
+      }
+      local dispatcher = module.createOutboxDispatcher({
+        update = function() return 1 end,
+        query = function() return rows end,
+        jsonDecode = function(value)
+          if value:find('trace_context_0002', 1, true) then
+            return { traceId = 'trace_context_0002', password = 'never-log' }
+          end
+          local number = tonumber(value:match('"value":(%d+)'))
+          assert(number ~= nil)
+          return { value = number }
+        end
+      })
+      local traces, payloads = {}, {}
+      local report, err = dispatcher:dispatchBatch('claim_trace_0001', function(_, payload, options)
+        traces[#traces + 1] = options.traceId
+        payloads[#payloads + 1] = payload.value
+        assert(options.password == nil)
+        return { delivered = 1, failed = 0 }, nil
+      end, { maximum = 3 })
+      assert(report and err == nil and report.published == 3)
+      assert(traces[1] == 'trace_history_0001')
+      assert(traces[2] == 'trace_context_0002')
+      assert(traces[3] == '33333333-3333-4333-8333-333333333333')
+      assert(payloads[1] == 1 and payloads[2] == 2 and payloads[3] == 3)
+      return true
+    `);
+    assert.equal(result, true);
+  } finally {
+    engine.global.close();
+  }
+});
+
+for (const [resource, expectedMethods, expectedPortCount] of [
   ['synex_groups', [
-    'createGroup', 'getGroup', 'addMembership', 'changeMembership', 'removeMembership',
-    'createGrade', 'setGradeCapability', 'setPrimaryMembership', 'getReadModel', 'checkCapability',
+    'read', 'preflight', 'execute', 'markAuditDelivered', 'dispatchAuditBatch', 'maintain',
+    'getGroupDeletion', 'getGroupDeletionPlanRequest', 'listGroupDeletions',
+    'preflightGroupDeletion', 'applyGroupDeletionPlan',
     'listSubjectMemberships', 'getCharacterLifecycleSummary', 'applyCharacterDeletion',
-    'getControlSummary',
-  ]],
+    'getControlSummary', 'invalidateDefinitionCache', 'clearDefinitionCache',
+    'definitionCacheSnapshot',
+  ], 18],
   ['synex_accounts', [
     'registerCurrency', 'createAccount', 'getSnapshot', 'post', 'createHold', 'getHold',
     'captureHold', 'releaseHold', 'reverse', 'createAccessRole', 'grantAccess', 'revokeAccess',
     'getAccess', 'runReconciliation', 'getIntegrity',
     'listOwnerAccounts', 'getCharacterLifecycleSummary', 'applyCharacterDeletion',
     'getControlSummary',
-  ]],
+    'registerCurrencyV2', 'createAccountV2', 'postTransaction', 'captureHoldV2',
+    'checkAccess', 'getIntegrityV2', 'applyGroupDeletion', 'doctorAccounts',
+    'inspectTransaction', 'inspectAccount', 'getOperationalMetrics',
+  ], 72],
 ] as const) {
   test(`${resource} persistence composition preserves its complete private port`, async () => {
     const engine = await new LuaFactory().createEngine();
     try {
       await engine.doString('SYNEX_TEST_MODE = true');
       const luaMethodNames = `{ ${expectedMethods.map((name) => JSON.stringify(name)).join(', ')} }`;
+      const persistenceFactory = resource === 'synex_groups'
+        ? 'createDataPortPersistence'
+        : 'createOxmysqlPort';
       const methodCount = await engine.doString(`
         ${await luaBootstrap(resource)}
-        local port = module.createOxmysqlPort({
-          jsonEncode = function() return '{}' end,
-          jsonDecode = function() return {} end,
-          random = function() return 1 end
-        })
+        local port = module.${persistenceFactory}(${persistenceDependencies(resource)})
         local expected = ${luaMethodNames}
         for _, name in ipairs(expected) do assert(type(port[name]) == 'function', name) end
         local count = 0
         for _ in pairs(port) do count = count + 1 end
         return count
       `);
-      assert.equal(methodCount, expectedMethods.length);
+      assert.equal(methodCount, expectedPortCount);
     } finally {
       engine.global.close();
     }
@@ -359,12 +673,12 @@ test('group grade capability evaluation gives matching denies precedence over al
     await engine.doString('SYNEX_TEST_MODE = true');
     const result = await engine.doString(`
       ${await luaBootstrap('synex_groups')}
-      local allowed, denied, matched = module.evaluateCapabilityRules({
+      local allowed, denied, matched = module.Foundation.evaluateCapabilityRules({
         { capability = 'synex.accounts.*', effect = 'allow' },
         { capability = 'synex.accounts.transfer', effect = 'deny' }
       }, 'synex.accounts.transfer')
       assert(allowed == false and denied == true and #matched == 2)
-      local boundaryAllowed, boundaryDenied = module.evaluateCapabilityRules({
+      local boundaryAllowed, boundaryDenied = module.Foundation.evaluateCapabilityRules({
         { capability = 'synex.accounts.*', effect = 'allow' }
       }, 'synex.accountsx.transfer')
       assert(boundaryAllowed == false and boundaryDenied == false)
@@ -478,26 +792,36 @@ for (const [resource, operation, method, request] of [
             return function() error('database_password=do-not-log') end
           end
         })
-        local service = module.createService({
-          db = db,
-          jsonEncode = function() return '{}' end,
-          jsonDecode = function() return {} end,
-          errorSink = function(event) captured = event end
-        })
-        local value, err = service[${JSON.stringify(method)}](${request}, { traceId = 'trace-safe_123' })
+        local service = module.createService(${serviceDependencies(
+          resource,
+          'db',
+          'function(event) captured = event end',
+        )})
+        local value, err = service[${JSON.stringify(method)}](${request}, ${serviceContext(resource, 'trace-safe_123')})
         assert(value == nil and err.code == 'DATABASE_ERROR' and err.retryable == true)
         assert(captured.operation == ${JSON.stringify(operation)})
         assert(captured.traceId == 'trace-safe_123')
         local count = 0
         for key, item in pairs(captured) do
-          assert(key == 'operation' or key == 'traceId')
+          assert(key == 'operation' or key == 'traceId'
+            ${resource === 'synex_groups' ? `or key == 'groupId'` : ''})
           assert(tostring(item):find('do%-not%-log') == nil)
           count = count + 1
         end
-        assert(count == 2)
+        assert(count == ${resource === 'synex_groups' ? 3 : 2})
+        ${resource === 'synex_groups'
+          ? `assert(captured.groupId == '11111111-1111-4111-8111-111111111111')`
+          : ''}
+        ${resource === 'synex_groups' ? `
+        local invalidValue, invalidError = service[${JSON.stringify(method)}](${request},
+          { traceId = 'bad trace\\nsecret', caller = 'synex_test', callerEpoch = 1 })
+        assert(invalidValue == nil and invalidError.code == 'VALIDATION_FAILED')
+        assert(captured.traceId == 'trace-safe_123')
+        ` : `
         service[${JSON.stringify(method)}](${request}, { traceId = 'bad trace\\nsecret' })
         assert(captured.operation == ${JSON.stringify(operation)})
         assert(captured.traceId == 'unavailable')
+        `}
         return 'redacted'
       `);
       assert.equal(result, 'redacted');
@@ -507,6 +831,99 @@ for (const [resource, operation, method, request] of [
   });
 }
 
+test('Groups structured runtime errors copy only bounded known identifiers and reject smuggled fields', async () => {
+  const engine = await new LuaFactory().createEngine();
+  try {
+    await engine.doString('SYNEX_TEST_MODE = true');
+    const result = await engine.doString(`
+      ${await luaBootstrap('synex_groups')}
+      local captured
+      module.Foundation.reportUnexpectedError(function(event)
+        captured = event
+      end, 'synex_groups', 'members_set_visibility', {
+        traceId = 'trace_safe_0001'
+      }, {
+        group_id = 'group_0001',
+        membership_id = 'membership_0001',
+        actor_character_id = 'character_0001',
+        groupId = 'smuggled_group_0001',
+        payload = { password = 'never-log' },
+        metadata = { token = 'never-log' },
+        password = 'never-log'
+      })
+      assert(captured.operation == 'members_set_visibility')
+      assert(captured.traceId == 'trace_safe_0001')
+      assert(captured.groupId == 'group_0001')
+      assert(captured.membershipId == 'membership_0001')
+      assert(captured.characterId == 'character_0001')
+      assert(captured.payload == nil and captured.metadata == nil and captured.password == nil)
+      local capturedCount = 0
+      for key in pairs(captured) do
+        assert(key == 'operation' or key == 'traceId' or key == 'groupId'
+          or key == 'membershipId' or key == 'characterId')
+        capturedCount = capturedCount + 1
+      end
+      assert(capturedCount == 5)
+
+      local sanitized = module.sanitizeRuntimeErrorEvent({
+        operation = 'runtime_index_refresh', traceId = 'trace_safe_0002',
+        code = 'RUNTIME_INDEX_REFRESH_FAILED',
+        groupId = 'group_0002', membershipId = 'membership_0002',
+        characterId = 'character_0002', payload = { secret = 'never-log' },
+        metadata = 'never-log', arbitrary = 'never-log'
+      })
+      assert(sanitized.level == 'error')
+      assert(sanitized.event == 'groups_operation_failed')
+      assert(sanitized.resource == 'synex_groups')
+      assert(sanitized.operation == 'runtime_index_refresh')
+      assert(sanitized.traceId == 'trace_safe_0002')
+      assert(sanitized.code == 'RUNTIME_INDEX_REFRESH_FAILED')
+      assert(sanitized.groupId == 'group_0002')
+      assert(sanitized.membershipId == 'membership_0002')
+      assert(sanitized.characterId == 'character_0002')
+      assert(sanitized.payload == nil and sanitized.metadata == nil
+        and sanitized.arbitrary == nil)
+      local sanitizedCount = 0
+      for key in pairs(sanitized) do
+        assert(key == 'level' or key == 'event' or key == 'resource'
+          or key == 'operation' or key == 'traceId' or key == 'code'
+          or key == 'groupId' or key == 'membershipId' or key == 'characterId')
+        sanitizedCount = sanitizedCount + 1
+      end
+      assert(sanitizedCount == 9)
+
+      local hostile
+      module.Foundation.reportUnexpectedError(function(event)
+        hostile = event
+      end, 'synex_groups', 'members_set_visibility', {
+        traceId = 'bad\\ntrace'
+      }, {
+        group_id = 'group_0003\\nsecret',
+        membership_id = 'membership_0003\\rsecret',
+        actor_character_id = 'character_0003\\tsecret',
+        payload = 'never-log'
+      })
+      assert(hostile.traceId == 'unavailable')
+      assert(hostile.groupId == nil and hostile.membershipId == nil
+        and hostile.characterId == nil and hostile.payload == nil)
+      local hostileSanitized = module.sanitizeRuntimeErrorEvent({
+        operation = 'bad\\noperation', traceId = 'bad\\ntrace', code = 'bad code',
+        groupId = 'group_0003\\nsecret', membershipId = 'membership_0003\\rsecret',
+        characterId = 'character_0003\\tsecret', payload = 'never-log'
+      })
+      assert(hostileSanitized.operation == 'unavailable')
+      assert(hostileSanitized.traceId == 'unavailable')
+      assert(hostileSanitized.code == 'UNEXPECTED_ERROR')
+      assert(hostileSanitized.groupId == nil and hostileSanitized.membershipId == nil
+        and hostileSanitized.characterId == nil and hostileSanitized.payload == nil)
+      return true
+    `);
+    assert.equal(result, true);
+  } finally {
+    engine.global.close();
+  }
+});
+
 for (const [resource, operation, method, request, validFirstRows, expectedQueries] of [
   [
     'synex_groups',
@@ -515,14 +932,6 @@ for (const [resource, operation, method, request, validFirstRows, expectedQuerie
     "{ group_id = '11111111-1111-4111-8111-111111111111' }",
     'nil',
     1,
-  ],
-  [
-    'synex_groups',
-    'get_read_model',
-    'get_read_model',
-    "{ group_id = '11111111-1111-4111-8111-111111111111', subject_kind = 'user', subject_id = '22222222-2222-4222-8222-222222222222' }",
-    "{ { grade_public_id = '33333333-3333-4333-8333-333333333333' } }",
-    2,
   ],
   [
     'synex_accounts',
@@ -537,11 +946,13 @@ for (const [resource, operation, method, request, validFirstRows, expectedQuerie
     'get_access',
     'get_access',
     "{ account_id = '11111111-1111-4111-8111-111111111111', principal_kind = 'resource', principal_ref = 'synex_test' }",
-    '{ { id = 1 } }',
+    `{ { id = 1, public_id = '11111111-1111-4111-8111-111111111111',
+      status = 'active', owner_kind = 'system', owner_ref = 'synex_accounts',
+      booked_minor = 0, reserved_minor = 0 } }`,
     2,
   ],
 ] as const) {
-  test(`${resource} ${method} fails closed for nil and non-table oxmysql query results`, async () => {
+  test(`${resource} ${method} fails closed for nil and non-table database query results`, async () => {
     const engine = await new LuaFactory().createEngine();
     try {
       await engine.doString('SYNEX_TEST_MODE = true');
@@ -553,6 +964,19 @@ for (const [resource, operation, method, request, validFirstRows, expectedQuerie
         }
         for _, invalid in ipairs(invalidResults) do
           local queryCount = 0
+          ${resource === 'synex_groups' ? `
+          CoreDatabaseFixture = {
+            null = function() return { __synexDatabaseNull = true } end,
+            read = function()
+              queryCount = queryCount + 1
+              if queryCount < ${expectedQueries} then return ${validFirstRows} end
+              return invalid.produce()
+            end,
+            write = function() return { affectedRows = 0 } end,
+            transaction = function() error('unexpected transaction') end,
+            maintenance = function() error('unexpected maintenance') end
+          }
+          ` : `
           MySQL = {
             query = {
               await = function()
@@ -563,23 +987,25 @@ for (const [resource, operation, method, request, validFirstRows, expectedQuerie
             },
             transaction = { await = function() return true end }
           }
+          `}
           local captured
-          local port = module.createOxmysqlPort({
-            jsonEncode = function() return '{}' end,
-            jsonDecode = function() return {} end,
-            random = function() return 1 end
-          })
-          local service = module.createService({
-            db = port,
-            jsonEncode = function() return '{}' end,
-            jsonDecode = function() return {} end,
-            errorSink = function(event) captured = event end
-          })
-          local value, err = service[${JSON.stringify(method)}](${request}, { traceId = 'query-result-test' })
+          local port = module.${resource === 'synex_groups'
+            ? 'createDataPortPersistence'
+            : 'createOxmysqlPort'}(${persistenceDependencies(resource)})
+          local service = module.createService(${serviceDependencies(
+            resource,
+            'port',
+            'function(event) captured = event end',
+          )})
+          local value, err = service[${JSON.stringify(method)}](${request}, ${serviceContext(resource, 'query-result-test')})
           assert(value == nil and err.code == 'DATABASE_ERROR' and err.retryable == true, invalid.label)
           assert(queryCount == ${expectedQueries}, invalid.label)
-          assert(captured.operation == ${JSON.stringify(operation)}, invalid.label)
-          assert(captured.traceId == 'query-result-test', invalid.label)
+          if ${JSON.stringify(resource)} == 'synex_groups' then
+            assert(captured == nil, invalid.label)
+          else
+            assert(captured.operation == ${JSON.stringify(operation)}, invalid.label)
+            assert(captured.traceId == 'query-result-test', invalid.label)
+          end
         end
         return 'fail-closed'
       `);

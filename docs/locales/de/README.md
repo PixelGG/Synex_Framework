@@ -37,7 +37,7 @@
 
 ## Aktueller Prüfstand
 
-`synex_core` hat die eingefrorene Production-Beta-Ziellinie am **25.08.2026** für das exakte Profil unten bestanden. Die Entscheidung gilt ausschließlich für Core-Commit `7ad4b72ee9bcd0a2a0481cfacfe5f807eb1b3ec5` und Core-Tree `9f0960f1e27fe43195ae4602cb2ef447cbc0509b`.
+`synex_core` hat die eingefrorene Production-Beta-Ziellinie am **25.08.2026** für das exakte Profil unten bestanden. Die Entscheidung gilt ausschließlich für Core-Commit `7ad4b72ee9bcd0a2a0481cfacfe5f807eb1b3ec5` und Core-Tree `9f0960f1e27fe43195ae4602cb2ef447cbc0509b`. Die aktuellen Core-Erweiterungen für Domain-Persistenz und koordinierte Löschung sind spätere Kandidatenarbeit und übernehmen diese Abnahme nicht.
 
 | Abschlussarbeit | Aktueller Stand |
 | --- | --- |
@@ -51,7 +51,9 @@
 - **LIVE-CLIENT VERIFIZIERT.** Der Join durchlief alle neun Verbindungsstufen in der vorgesehenen Reihenfolge; anschließend folgten ein sauberer Disconnect und ein erfolgreicher Reconnect. Doctor meldete `PASS`, alle 26 Migrationen waren angewendet und das finale Cleanup hinterließ 3 geschlossene Sessions, 0 offene Sessions sowie 0 aktive Session- oder Admission-Leases.
 - **BEGRENZTER REIFEGRAD.** Diese Abnahme macht Synex nicht zu Stable/1.0, zertifiziert nicht das gesamte Framework und ändert die öffentlichen Core-Contracts nicht von `experimental`.
 - **NICHT ZERTIFIZIERT.** MySQL und Multi-Instance-Betrieb einschließlich `kick_old` gehören nicht zum abgenommenen Production-Beta-Profil.
-- **AUSSERHALB DES SCOPES.** Jede Resource, Library, Bridge und jedes Beispiel hinter `synex_core` ist ein experimenteller Rework-Snapshot oder Scaffold und gehört nicht zur Core-Zertifizierung.
+- **AUSSERHALB DES SCOPES.** `synex_groups` und `synex_accounts` sind eigenständige Experimental-Alpha-Engines. `synex_entities` ist eine server-only Entity Authority Engine im Status Development / Experimental Alpha; ihre Repository-Implementierung ist vorhanden, die reale MariaDB-, FXServer-/OneSync-, Neustart-/Recovery-, Cluster-, Client-/Control- und exakte Kandidatenabnahme bleibt offen. Die read-only Entity-Projektion in `synex_control` ist experimentell. `synex_bridge` ist als fail-closed Experimental-Alpha Compatibility Platform implementiert, aber noch nicht live abgenommen. Die übrigen Resources, Libraries und Beispiele sind Rework-Snapshots oder Scaffolds. Keine dieser Komponenten gehört zur eingefrorenen Core-Zertifizierung.
+
+Das optionale read-only `synex_control` ist als Development-/Experimental-Alpha-Operationsfläche mit automatisierten Provider-, Transport-, Sanitizer- und NUI-Quellprüfungen implementiert. Die reale FXServer-Provider-Lifecycle- sowie CEF-/Client-Smoke-Abnahme bleibt offen; die automatisierten Prüfungen sind keine Reifegrad-Hochstufung.
 
 <details>
 <summary>Post-Beta-Hardening — ausdrücklich kein Teil dieses Abnahme-Gates</summary>
@@ -92,9 +94,9 @@ Die Production-Beta-Entscheidung gilt nur innerhalb dieser Grenzen. Andere Platt
 
 Nur `core/synex_core` ist für das exakte Profil oben als Production-Beta-ready abgenommen. Die öffentliche Core-API bleibt experimentell.
 
-### Downstream-Rework-Grenze
+### Downstream-Reifegrenze
 
-`synex_groups`, `synex_accounts`, `synex_entities`, `synex_control`, alle späteren oder sonstigen separaten Verzeichnisse unter `resources/`, sämtliche Libraries und Bridges unter `libraries/` (einschließlich `synex_bridge`) sowie die ausführbaren Beispiele stehen vor einem **Rework**; ihre aktuellen Inhalte sind experimentelle Snapshots oder Scaffolds. Sie sind vollständig aus der Core-Beta ausgeschlossen und dürfen nicht als zertifizierte Komponenten gestartet, gebündelt oder beworben werden. OneSync-abhängiges Downstream-Verhalten liegt ebenfalls außerhalb dieses Core-only-Profils.
+`synex_groups` ist die Experimental-Alpha-Organizations-Engine. Der aktuelle Quellkatalog enthält 71 Groups-Contracts und 31 Migrationen: 70 Contracts sind serverlokal, nur `synex.groups.self.snapshot` ist eine begrenzte, sitzungsgebundene Client-Projektion. Die frühere Live-Evidenz liegt vor Migration `032`; aktuelle Client-/Kandidaten-/Reifeprüfungen bleiben offen. `synex_accounts` ist nun eine server-only Experimental-Alpha Financial Engine mit 59 lokalen Contracts und 17 Migrationen. Die automatisierte Implementierung ist weitgehend vollständig; reale MariaDB-, FXServer-, Neustart-/Recovery-, Upgrade- und exakte Kandidatenabnahme bleiben bewusst verschoben. Accounts besitzt weder Client- noch NUI-Schnittstellen; Gameplay und UI gehören später zu `synex_banking`. `synex_entities` ist eine server-only Development-/Experimental-Alpha Entity Authority Engine mit 33 versionierten Contract-Definitionen über 32 Namen und vier eigenen Migrationen. Implementierung und Repository-Regressionen sind vorhanden; reale MariaDB-, FXServer-/OneSync-, Neustart-/Recovery-, Cluster-, Client-/Control- und exakte Kandidatenabnahme bleiben offen. Die read-only Entity-Projektion in `synex_control` ist implementiert, aber experimentell. `synex_bridge` besitzt getrennte QB-/QBX-/ESX-Provider, bleibt jedoch Experimental Alpha und ohne exakte FXServer-/Client-Abnahme. Alle späteren Ressourcen, übrigen Libraries und ausführbaren Beispiele bleiben Rework-Snapshots oder Scaffolds. Keine dieser Downstream-Komponenten gehört zur Core-Beta.
 
 Das gilt auch für `synex_character`, `synex_identity`, `synex_inventory`, `synex_banking`, `synex_phone`, `synex_radio`, `synex_jobs`, `synex_shops`, `synex_vehicles`, `synex_garages` und `synex_ui`. Ein Verzeichnisname belegt kein fertiges Feature. Der vorhandene Character-/Session-Lifecycle gehört zu `synex_core`.
 

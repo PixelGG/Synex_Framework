@@ -29,6 +29,44 @@ export interface ResourceManifest {
   version: string;
   synex: string;
   critical: boolean;
+  controlProvider?: {
+    schemaVersion: 1;
+    namespace: string;
+    label: string;
+    category: string;
+    version: string;
+    operations: Array<"summary" | "health" | "list" | "inspect" | "search" | "metrics" | "findings" | "simulate">;
+    views: Array<{
+      id: string;
+      label: string;
+      operation: "summary" | "health" | "list" | "inspect" | "search" | "metrics" | "findings" | "simulate";
+      presentation: "metrics" | "key-value" | "table" | "detail" | "timeline" | "graph" | "findings";
+      accessClass: "general" | "audit" | "security" | "financial" | "identifiers";
+      order?: number;
+      description?: string;
+      search?: {
+        kinds: Array<{
+          id: string;
+          modes: Array<"exact" | "prefix">;
+          accessClass: "general" | "audit" | "security" | "financial" | "identifiers";
+        }>;
+      };
+      input?: {
+        fields: Array<{
+          key: string;
+          label: string;
+          source: "id" | "filter";
+          type: "string" | "integer" | "boolean";
+          format: "identifier" | "lookup" | "uuid" | "resource" | "capability" | "action" | "integer" | "numeric-string" | "boolean" | "text";
+          required: boolean;
+          minLength?: number;
+          maxLength?: number;
+          minimum?: number;
+          maximum?: number;
+        }>;
+      };
+    }>;
+  };
   capabilities: { request: string[] };
   services: { provide: string[]; require: string[]; optional: string[] };
   contracts: { provide: string[]; consume: string[] };
@@ -291,6 +329,25 @@ export async function validateRepository(
   const knownResources = new Map(
     globalResources.manifests.map((resource) => [resource.manifest.name, resource]),
   );
+  const controlProviderNamespaces = new Map<string, LoadedResourceManifest>();
+  for (const loaded of globalResources.manifests) {
+    const provider = loaded.manifest.controlProvider;
+    if (!provider) continue;
+    const previous = controlProviderNamespaces.get(provider.namespace);
+    if (previous) {
+      if (resources.manifests.some((candidate) => candidate.file === loaded.file
+        || candidate.file === previous.file)) {
+        diagnostics.push({
+          level: "error",
+          rule: "control-provider-namespace-unique",
+          file: displayPath(repositoryRoot, loaded.file),
+          message: `Control provider namespace ${provider.namespace} is already declared by ${previous.manifest.name}.`,
+        });
+      }
+    } else {
+      controlProviderNamespaces.set(provider.namespace, loaded);
+    }
+  }
   const fxmanifestResources = await loadFxmanifestResourceMetadata(repositoryRoot);
 
   const contractSources = await loadContractSources(repositoryRoot, schemas, selectedTarget);
@@ -354,6 +411,54 @@ export async function validateRepository(
   }
 
   for (const loaded of resources.manifests) {
+    const controlProvider = loaded.manifest.controlProvider;
+    if (controlProvider) {
+      const declaredOperations = new Set(controlProvider.operations);
+      for (const view of controlProvider.views) {
+        if (!declaredOperations.has(view.operation)) {
+          diagnostics.push({
+            level: "error",
+            rule: "control-provider-view-operation",
+            file: displayPath(repositoryRoot, loaded.file),
+            message: `Control provider view ${view.id} uses undeclared operation ${view.operation}.`,
+          });
+        }
+      }
+      for (const requiredOperation of ["summary", "health"] as const) {
+        if (!declaredOperations.has(requiredOperation)
+          || !controlProvider.views.some((view) => view.operation === requiredOperation)) {
+          diagnostics.push({
+            level: "error",
+            rule: "control-provider-health-contract",
+            file: displayPath(repositoryRoot, loaded.file),
+            message: `A Control provider must declare ${requiredOperation} and expose a matching bounded view.`,
+          });
+        }
+      }
+      if (!loaded.manifest.capabilities.request.includes("synex.control.provider.register")) {
+        diagnostics.push({
+          level: "error",
+          rule: "control-provider-registration-capability",
+          file: displayPath(repositoryRoot, loaded.file),
+          message: "A declared Control provider must request synex.control.provider.register.",
+        });
+      }
+      if (loaded.manifest.name !== "synex_control") {
+        const dependsOnControl = [
+          ...loaded.manifest.dependencies.required,
+          ...loaded.manifest.dependencies.optional,
+          ...loaded.manifest.dependencies.development,
+        ].some((dependency) => dependency.name === "synex_control");
+        if (dependsOnControl) {
+          diagnostics.push({
+            level: "error",
+            rule: "control-provider-dependency-direction",
+            file: displayPath(repositoryRoot, loaded.file),
+            message: "A Control provider must not depend on the optional synex_control resource.",
+          });
+        }
+      }
+    }
     const fxmanifest = join(loaded.directory, "fxmanifest.lua");
     if (!(await pathExists(fxmanifest))) {
       diagnostics.push({

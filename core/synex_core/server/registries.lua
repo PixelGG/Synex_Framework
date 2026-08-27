@@ -7,6 +7,7 @@ factories.registries = function(deps)
     local resources = {}
     local resourceEpochs = {}
     local sessions = {}
+    local sessionIds = {}
     local activeSessionCount = 0
     local pending = {}
     local bySource = {}
@@ -17,6 +18,7 @@ factories.registries = function(deps)
     local sourceGenerationFloor = 0
     local sourceGenerationSeeded = false
     local maximumPendingDiagnosticAgeMs = 600000
+    local maximumSessionDiagnosticScan = 2048
     local function authorityCurrent(value)
         if type(value) ~= 'table' then return false end
         for _, field in ipairs({ 'clusterLease', 'admissionGateLease' }) do
@@ -31,6 +33,19 @@ factories.registries = function(deps)
         if type(value) ~= 'number' or math.type(value) ~= 'integer'
             or value < 1 or value > maximum then return fallback end
         return value
+    end
+    local function sessionIndex(id, exclusive)
+        local low, high = 1, #sessionIds + 1
+        while low < high do
+            local middle = math.floor((low + high) / 2)
+            local current = sessionIds[middle]
+            if current < id or exclusive == true and current == id then
+                low = middle + 1
+            else
+                high = middle
+            end
+        end
+        return low
     end
     local maximumArtifactsPerOwner = boundedCapacity(
         deps.maximumArtifactsPerOwner, 8192, 32768)
@@ -367,6 +382,7 @@ factories.registries = function(deps)
         stored.source = finalSource
         stored.sourceGeneration = generation
         sessions[stored.id] = stored
+        table.insert(sessionIds, sessionIndex(stored.id, false), stored.id)
         bySource[finalSource] = { sessionId = stored.id, generation = generation }
         sourceEpoch[finalSource] = generation
         if stored.userId then
@@ -430,6 +446,13 @@ factories.registries = function(deps)
             return nil, foundation.error('SESSION_UPDATE_FAILED', 'The session update failed.', {
                 details = { cause = foundation.failureCode(err, 'SESSION_MUTATOR_EXCEPTION') }
             })
+        end
+        if candidate.id ~= session.id or candidate.userId ~= session.userId
+            or candidate.source ~= session.source
+            or candidate.sourceGeneration ~= session.sourceGeneration
+            or candidate.characterId ~= session.characterId then
+            return nil, foundation.error('SESSION_IDENTITY_CHANGED',
+                'Session identity fields may not be changed by a state update.')
         end
         sessions[sessionId] = candidate
         return foundation.copy(candidate), nil
@@ -498,8 +521,134 @@ factories.registries = function(deps)
         end
         if session.characterId and byCharacter[session.characterId] == sessionId then byCharacter[session.characterId] = nil end
         sessions[sessionId] = nil
+        local sessionPosition = sessionIndex(sessionId, false)
+        if sessionIds[sessionPosition] == sessionId then table.remove(sessionIds, sessionPosition) end
         activeSessionCount = math.max(0, activeSessionCount - 1)
         return foundation.copy(session)
+    end
+    function playerRegistry:listSessions(options)
+        options = options or {}
+        if type(options) ~= 'table' then
+            return nil, foundation.error('INVALID_ARGUMENT',
+                'Session diagnostics require a bounded options object.')
+        end
+        for key in pairs(options) do
+            if key ~= 'cursor' and key ~= 'limit' then
+                return nil, foundation.error('INVALID_ARGUMENT',
+                    'Session diagnostics contain an unknown option.')
+            end
+        end
+        local cursor = options.cursor
+        local limit = options.limit or 25
+        if type(limit) ~= 'number' or math.type(limit) ~= 'integer'
+            or limit < 1 or limit > 50 then
+            return nil, foundation.error('INVALID_LIMIT',
+                'Session diagnostics limit must be an integer from 1 through 50.')
+        end
+        if cursor ~= nil and (type(cursor) ~= 'string' or #cursor < 1
+            or #cursor > 128 or cursor:find('[%z\1-\31\127]')) then
+            return nil, foundation.error('INVALID_CURSOR',
+                'Session diagnostics cursor is invalid.')
+        end
+        local first = cursor and sessionIndex(cursor, true) or 1
+        local last = math.min(#sessionIds, first + limit - 1)
+        local items = {}
+        for index = first, last do
+            items[#items + 1] = foundation.copy(sessions[sessionIds[index]])
+        end
+        local hasMore = last < #sessionIds
+        return {
+            items = items,
+            limit = limit,
+            nextCursor = hasMore and sessionIds[last] or nil,
+            hasMore = hasMore,
+            truncated = hasMore,
+            total = activeSessionCount
+        }, nil
+    end
+    function playerRegistry:staleSessions(options)
+        options = options or {}
+        if type(options) ~= 'table' then
+            return nil, foundation.error('INVALID_ARGUMENT',
+                'Stale-session diagnostics require a bounded options object.')
+        end
+        for key in pairs(options) do
+            if key ~= 'cursor' and key ~= 'limit' and key ~= 'scanLimit' then
+                return nil, foundation.error('INVALID_ARGUMENT',
+                    'Stale-session diagnostics contain an unknown option.')
+            end
+        end
+        local cursor = options.cursor
+        local limit = options.limit or 25
+        local scanLimit = options.scanLimit or 512
+        if type(limit) ~= 'number' or math.type(limit) ~= 'integer'
+            or limit < 1 or limit > 50
+            or type(scanLimit) ~= 'number' or math.type(scanLimit) ~= 'integer'
+            or scanLimit < 1 or scanLimit > maximumSessionDiagnosticScan then
+            return nil, foundation.error('INVALID_LIMIT',
+                'Stale-session diagnostics limits are invalid.')
+        end
+        if cursor ~= nil and (type(cursor) ~= 'string' or #cursor < 1
+            or #cursor > 128 or cursor:find('[%z\1-\31\127]')) then
+            return nil, foundation.error('INVALID_CURSOR',
+                'Stale-session diagnostics cursor is invalid.')
+        end
+        local now = foundation.monotonicMs()
+        local first = cursor and sessionIndex(cursor, true) or 1
+        local scanLast = math.min(#sessionIds, first + scanLimit - 1)
+        local items, matched = {}, 0
+        for index = first, scanLast do
+            local sessionId = sessionIds[index]
+            local session = sessions[sessionId]
+            local reasons = {}
+            if type(session.clusterLease) ~= 'nil' and type(session.clusterLease) ~= 'table'
+                or type(session.admissionGateLease) ~= 'nil'
+                    and type(session.admissionGateLease) ~= 'table' then
+                reasons[#reasons + 1] = 'INVALID_AUTHORITY_LEASE'
+            elseif session.clusterLease ~= nil or session.admissionGateLease ~= nil then
+                if type(session.authorityDeadlineAt) ~= 'number' then
+                    reasons[#reasons + 1] = 'AUTHORITY_DEADLINE_MISSING'
+                elseif session.authorityDeadlineAt <= now then
+                    reasons[#reasons + 1] = 'AUTHORITY_EXPIRED'
+                end
+            end
+            if session.source ~= nil then
+                local sourceBinding = bySource[session.source]
+                if not sourceBinding or sourceBinding.sessionId ~= sessionId
+                    or sourceBinding.generation ~= session.sourceGeneration then
+                    reasons[#reasons + 1] = 'SOURCE_BINDING_STALE'
+                end
+            end
+            if session.characterId ~= nil and byCharacter[session.characterId] ~= sessionId then
+                reasons[#reasons + 1] = 'CHARACTER_BINDING_STALE'
+            end
+            if #reasons > 0 then
+                matched = matched + 1
+                if #items < limit then
+                    items[#items + 1] = {
+                        sessionId = sessionId,
+                        state = session.state,
+                        serverInstanceId = session.serverInstanceId,
+                        sourceGeneration = session.sourceGeneration,
+                        authorityDeadlineAt = session.authorityDeadlineAt,
+                        reasons = reasons
+                    }
+                end
+            end
+        end
+        local scanTruncated = scanLast < #sessionIds
+        return {
+            status = 'AVAILABLE',
+            items = items,
+            matched = matched,
+            scanned = math.max(0, scanLast - first + 1),
+            scanLimit = scanLimit,
+            complete = not scanTruncated,
+            nextCursor = scanTruncated and sessionIds[scanLast] or nil,
+            hasMore = scanTruncated or matched > #items,
+            truncated = scanTruncated or matched > #items,
+            rawIdentifiersExposed = false
+        }, nil
     end
     function playerRegistry:snapshot()
         local output = { sessions = {}, pending = 0 }

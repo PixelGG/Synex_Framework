@@ -10,6 +10,21 @@ function SynexEntityService.create(options)
     local entityRuntime = assert(options.entityRuntime, 'entity service runtime is required')
     local entityOperations = assert(options.entityOperations, 'entity operations are required')
     local bucketOperations = assert(options.bucketOperations, 'bucket operations are required')
+    local authorityOperations = assert(options.authorityOperations,
+        'entity authority operations are required')
+    local extensionOperations = assert(options.extensionOperations,
+        'entity extension operations are required')
+    local extensionRegistry = assert(options.extensionRegistry,
+        'entity extension registry is required')
+    local queryOperations = assert(options.queryOperations,
+        'entity query operations are required')
+    local lanes = assert(options.lanes, 'entity mutation lanes are required')
+    local observability = assert(options.observability,
+        'entity observability is required')
+    local publicErrors = assert(options.publicErrors,
+        'entity public error boundary is required')
+    local cleanupQueue = assert(options.cleanupQueue,
+        'entity cleanup queue is required')
     local state = assert(options.state, 'entity service state is required')
     local ports = assert(options.ports, 'entity service ports are required')
     local config = assert(options.config, 'entity service config is required')
@@ -23,17 +38,54 @@ function SynexEntityService.create(options)
         state = 'not_run',
     }
     local driftPersistenceCursor = ''
-
+    local driftRuntimeCursor = ''
+    local function emitRuntimeGauges(componentCount)
+        local bucketEntities, bucketPlayers = 0, 0
+        for _, bucket in pairs(buckets) do
+            bucketEntities = bucketEntities + foundation.tableCount(bucket.entities)
+            bucketPlayers = bucketPlayers + foundation.tableCount(bucket.players)
+        end
+        observability.gauge('entity_live_total', {}, registry.count())
+        observability.gauge('bucket_live_total', {}, foundation.tableCount(buckets))
+        observability.gauge('bucket_entity_count', {}, bucketEntities)
+        observability.gauge('bucket_player_count', {}, bucketPlayers)
+        if componentCount ~= nil then
+            observability.gauge('entity_component_count', {}, componentCount)
+        end
+    end
+    local function auditDeniedAccess(contractName, operationError, context)
+        if type(operationError) ~= 'table' then return end
+        if operationError.code == 'AUTHORITY_LEASE_CONFLICT' then
+            observability.increment('authority_lease_conflicts', {}, 1)
+        end
+        local action = ({
+            FOREIGN_BUCKET = 'foreign_resource_access',
+            FOREIGN_RESOURCE_OWNER = 'foreign_resource_access',
+            STALE_ENTITY = 'stale_entity_access',
+        })[operationError.code]
+        if action then
+            observability.audit('entities.' .. action, 'contract', contractName,
+                { code = operationError.code }, context)
+        end
+    end
     function service.healthSnapshot()
         return {
+            status = ({ READY = 'HEALTHY', STARTING = 'INFO', DEGRADED = 'DEGRADED',
+                UNHEALTHY = 'ERROR', STOPPING = 'UNAVAILABLE' })[health.state]
+                or 'UNAVAILABLE',
             buckets = foundation.tableCount(buckets),
             entities = registry.count(),
             onesync = health.onesync,
             persistence = health.persistence,
             reason = health.reason,
             service = health.service,
+            controlProvider = health.controlProvider or 'UNREGISTERED',
             state = health.state,
             drift = lastDrift,
+            cleanup = cleanupQueue.snapshot(10),
+            authority = authorityOperations.authoritySnapshot(),
+            extensionRegistries = extensionRegistry.snapshot(),
+            mutationLanes = lanes.snapshot(10),
         }
     end
 
@@ -75,29 +127,91 @@ function SynexEntityService.create(options)
             runtime = runtime,
             persistent = persistent,
             drift = lastDrift,
+            authority = authorityOperations.authoritySnapshot(),
+            extensionRegistries = extensionRegistry.snapshot(),
+            mutationLanes = lanes.snapshot(25),
+            metrics = observability.snapshot(),
         }
     end
 
-    function service.handlers()
+    function service.handlers(definitions)
+        local publicError = publicErrors.compile(definitions)
+        local durationMetrics = {
+            ['synex.entities.checkpoint'] = 'entity_checkpoint_duration_ms',
+            ['synex.entities.delete'] = 'entity_delete_duration_ms',
+            ['synex.entities.dematerialize'] = 'entity_dematerialize_duration_ms',
+            ['synex.entities.materialize'] = 'entity_materialize_duration_ms',
+            ['synex.entities.spawn'] = 'entity_spawn_duration_ms',
+        }
         local handlers = {
             ['synex.entities.bucket.create'] = bucketOperations.create,
             ['synex.entities.bucket.destroy'] = bucketOperations.destroy,
+            ['synex.entities.bucket.get'] = queryOperations.bucketGet,
             ['synex.entities.bucket.move_entity'] = bucketOperations.moveEntity,
             ['synex.entities.bucket.move_player'] = bucketOperations.movePlayer,
-            ['synex.entities.delete'] = entityOperations.delete,
+            ['synex.entities.binding.get'] = authorityOperations.bindingGet,
+            ['synex.entities.checkpoint'] = authorityOperations.checkpoint,
+            ['synex.entities.context.validate'] = queryOperations.contextValidate,
+            ['synex.entities.delete'] = authorityOperations.delete,
+            ['synex.entities.dematerialize'] = authorityOperations.dematerialize,
             ['synex.entities.get'] = entityOperations.get,
             ['synex.entities.health'] = service.getHealth,
+            ['synex.entities.materialize'] = authorityOperations.materialize,
+            ['synex.entities.owner.set'] = authorityOperations.ownerSet,
+            ['synex.entities.query.by_binding'] = queryOperations.byBinding,
+            ['synex.entities.query.by_bucket'] = queryOperations.byBucket,
+            ['synex.entities.query.by_net_id'] = queryOperations.byNetId,
+            ['synex.entities.query.by_owner'] = queryOperations.byOwner,
+            ['synex.entities.query.by_resource'] = queryOperations.byResource,
+            ['synex.entities.query.nearby'] = queryOperations.nearby,
             ['synex.entities.resolve_persistent'] = entityOperations.resolvePersistent,
-            ['synex.entities.spawn'] = entityOperations.spawn,
+            ['synex.entities.spawn'] = authorityOperations.spawn,
         }
+        for name, handler in pairs(extensionOperations.handlers()) do
+            if handlers[name] then
+                error(('duplicate entity handler: %s'):format(name), 0)
+            end
+            handlers[name] = handler
+        end
         local guarded = {}
         for name, handler in pairs(handlers) do
             local contractName = name
             local contractHandler = handler
             guarded[contractName] = function(request, context)
+                local metricName = durationMetrics[contractName]
+                local finish = metricName and observability.timer() or nil
                 local ok, value, operationError = xpcall(function()
                     return contractHandler(request, context)
                 end, debug.traceback)
+                if ok and value == nil then
+                    auditDeniedAccess(contractName, operationError, context)
+                    operationError = publicError(contractName, operationError, context)
+                end
+                if finish then
+                    local code = ok and type(operationError) == 'table'
+                        and operationError.code or ok and 'OK' or 'INTERNAL_ERROR'
+                    if type(code) ~= 'string' or #code < 2 or #code > 64
+                        or code:match('^[A-Z][A-Z0-9_]*$') == nil then code = 'UNKNOWN' end
+                    local entityType = type(request) == 'table'
+                        and request.entityType or nil
+                    if entityType ~= 'vehicle' and entityType ~= 'ped'
+                        and entityType ~= 'object' then entityType = 'unknown' end
+                    local labels = {
+                        code = code,
+                        entityType = entityType,
+                        result = ok and value ~= nil and 'success' or 'failure',
+                    }
+                    local elapsed = finish(metricName, labels)
+                    if contractName == 'synex.entities.spawn' then
+                        observability.observe('entity_spawn_duration', labels, elapsed)
+                    end
+                end
+                local componentCount
+                if ok and value ~= nil and (contractName == 'synex.entities.component.set'
+                    or contractName == 'synex.entities.component.remove') then
+                    componentCount = extensionOperations.componentCount(context)
+                end
+                emitRuntimeGauges(componentCount)
                 if not ok then
                     foundation.reportUnexpected('contract.' .. contractName, value, context)
                     error(value, 0)
@@ -106,144 +220,6 @@ function SynexEntityService.create(options)
             end
         end
         return guarded
-    end
-
-    function service.rehydratePersistentEntities()
-        local reconciled, reconcileError = repository.reconcileDeleting()
-        if reconciled == nil then
-            return nil, reconcileError
-        end
-        local rows, queryError = repository.listForRehydrate(config.rehydrateLimit + 1)
-        if not rows then
-            return nil, queryError
-        end
-
-        local limited = #rows > config.rehydrateLimit
-        for index = 1, math.min(#rows, config.rehydrateLimit) do
-            local row = rows[index]
-            local spawnRequest = {
-                bucket = 0,
-                bucketGeneration = 0,
-                entityType = row.entity_type,
-                heading = tonumber(row.heading),
-                model = tonumber(row.model),
-                owner = { id = row.owner_id, type = row.owner_type },
-                persistent = true,
-                persistentKey = row.persistent_key,
-                position = {
-                    x = tonumber(row.position_x),
-                    y = tonumber(row.position_y),
-                    z = tonumber(row.position_z),
-                },
-            }
-            if row.entity_type == 'vehicle' then
-                spawnRequest.vehicleType = row.vehicle_type
-            elseif row.entity_type == 'ped' then
-                spawnRequest.pedType = row.ped_type and tonumber(row.ped_type) or nil
-            elseif row.entity_type == 'object' then
-                spawnRequest.doorFlag = row.door_flag == 1 or row.door_flag == true
-            end
-            local normalized, validationError = validation.validateSpawn(spawnRequest)
-            if normalized then
-                normalized.version = tonumber(row.version)
-                local generation = (tonumber(row.generation) or 0) + 1
-                local record = entityRuntime.create(
-                    normalized,
-                    row.entity_id,
-                    generation,
-                    row.resource_owner
-                )
-                if record then
-                    local updated = repository.markRehydrated(
-                        row.entity_id,
-                        generation,
-                        tonumber(row.version)
-                    )
-                    if updated == 1 then
-                        record.version = tonumber(row.version) + 1
-                    else
-                        entityRuntime.delete(record)
-                        foundation.setHealth(
-                            'DEGRADED',
-                            'A persistent entity changed during rehydration'
-                        )
-                    end
-                else
-                    foundation.setHealth(
-                        'DEGRADED',
-                        'A persistent entity could not be rehydrated'
-                    )
-                end
-            else
-                foundation.setHealth('DEGRADED', validationError.message)
-            end
-            if index % 25 == 0 then
-                ports.wait(config.waitStepMs)
-            end
-        end
-
-        if limited then
-            foundation.setHealth('DEGRADED', 'Persistent entity rehydration limit reached')
-        end
-        return true
-    end
-
-    function service.getCharacterLifecycleSummary(characterId, context)
-        local persistent, persistentError = repository.getCharacterOwnerSummary(characterId, context)
-        if not persistent then return nil, persistentError end
-        local runtime = registry.forLogicalOwner('character', characterId)
-        local summary = {
-            persistent = persistent.total,
-            runtime = #runtime,
-            runtimePersistent = 0,
-            runtimeTemporary = 0,
-        }
-        for _, record in ipairs(runtime) do
-            if record.persistent then summary.runtimePersistent = summary.runtimePersistent + 1
-            else summary.runtimeTemporary = summary.runtimeTemporary + 1 end
-        end
-        return summary
-    end
-
-    local function deleteTemporaryCharacterEntities(characterId)
-        for _, record in ipairs(registry.forLogicalOwner('character', characterId)) do
-            if not record.persistent then
-                local removed, removeError = entityRuntime.delete(record)
-                if not removed then
-                    return nil, removeError
-                end
-            end
-        end
-        return true
-    end
-
-    function service.unloadCharacter(characterId)
-        return deleteTemporaryCharacterEntities(characterId)
-    end
-
-    function service.applyCharacterDeletion(characterId, retainedOwnerId, context)
-        local updated, updateError = repository.retainCharacterEntities(
-            characterId,
-            retainedOwnerId,
-            context
-        )
-        if updated == nil then return nil, updateError end
-
-        for _, record in ipairs(registry.forLogicalOwner('character', characterId)) do
-            if record.persistent then
-                record.owner = { type = 'system', id = retainedOwnerId }
-                record.orphaning = true
-                foundation.protect('character.set_durable_orphan_mode', function()
-                    ports.setEntityOrphanMode(record.handle, 2)
-                end, context)
-                record.orphaning = false
-                record.version = record.version + 1
-            else
-                local removed, removeError = entityRuntime.delete(record)
-                if not removed then return nil, removeError end
-            end
-        end
-        return { retained = updated }, nil
     end
 
     function service.runDriftDetection()
@@ -264,7 +240,34 @@ function SynexEntityService.create(options)
         local databaseWithoutRuntime = 0
         local inactiveOwners = {}
         local scanCount = math.min(#rows, config.driftScanLimit)
-        local runtimeBeforeScan = registry.all()
+        local runtimeAll = registry.all()
+        local runtimeBeforeScan = {}
+        local runtimeStarted = driftRuntimeCursor == ''
+        local runtimeTruncated = false
+        for _, record in ipairs(runtimeAll) do
+            if not runtimeStarted and record.entityId > driftRuntimeCursor then
+                runtimeStarted = true
+            end
+            if runtimeStarted then
+                if #runtimeBeforeScan >= config.driftScanLimit then
+                    runtimeTruncated = true
+                    break
+                end
+                runtimeBeforeScan[#runtimeBeforeScan + 1] = record
+            end
+        end
+        if #runtimeBeforeScan == 0 and driftRuntimeCursor ~= '' then
+            driftRuntimeCursor = ''
+            for index = 1, math.min(#runtimeAll, config.driftScanLimit) do
+                runtimeBeforeScan[index] = runtimeAll[index]
+            end
+            runtimeTruncated = #runtimeAll > #runtimeBeforeScan
+        end
+        if runtimeTruncated and #runtimeBeforeScan > 0 then
+            driftRuntimeCursor = runtimeBeforeScan[#runtimeBeforeScan].entityId
+        else
+            driftRuntimeCursor = ''
+        end
         local runtimeById = {}
         for _, record in ipairs(runtimeBeforeScan) do runtimeById[record.entityId] = record end
         local function markOrphan(entityId)
@@ -313,6 +316,13 @@ function SynexEntityService.create(options)
         local duplicatePersistentKeys = 0
         local persistentKeys = {}
         local generationMismatches = 0
+        local invalidNetMappings = 0
+        local wrongBuckets = 0
+        local wrongModels = 0
+        local wrongOwners = 0
+        local wrongBindings = 0
+        local wrongResourceOwners = 0
+        local wrongTypes = 0
         local generationMismatchIds = {}
         local missingPersistenceIds = {}
         for _, record in ipairs(runtimeBeforeScan) do
@@ -326,13 +336,44 @@ function SynexEntityService.create(options)
                     generationMismatchIds[record.entityId] = true
                     markOrphan(record.entityId)
                 end
-                if record.persistentKey then
-                    if persistentKeys[record.persistentKey] then
-                        duplicatePersistentKeys = duplicatePersistentKeys + 1
-                    else
-                        persistentKeys[record.persistentKey] = true
+                if persisted then
+                    if persisted.entity_type and persisted.entity_type ~= record.entityType then
+                        wrongTypes = wrongTypes + 1
+                    end
+                    if persisted.model and tonumber(persisted.model) ~= record.model then
+                        wrongModels = wrongModels + 1
+                    end
+                    if tonumber(persisted.bucket_id) ~= record.bucket then
+                        wrongBuckets = wrongBuckets + 1
+                    end
+                    if persisted.resource_owner ~= record.resourceOwner then
+                        wrongResourceOwners = wrongResourceOwners + 1
+                    end
+                    if not record.owner or persisted.owner_type ~= record.owner.type
+                        or persisted.owner_id ~= record.owner.id then
+                        wrongOwners = wrongOwners + 1
+                    end
+                    local storedHasBinding = persisted.binding_namespace ~= nil
+                        or persisted.binding_ref ~= nil
+                    local runtimeHasBinding = record.binding ~= nil
+                    if storedHasBinding ~= runtimeHasBinding
+                        or storedHasBinding and (
+                            persisted.binding_namespace ~= record.binding.namespace
+                            or persisted.binding_ref ~= record.binding.ref) then
+                        wrongBindings = wrongBindings + 1
                     end
                 end
+                if record.persistentKey then
+                    local persistentIdentity = record.resourceOwner .. ':' .. record.persistentKey
+                    if persistentKeys[persistentIdentity] then
+                        duplicatePersistentKeys = duplicatePersistentKeys + 1
+                    else
+                        persistentKeys[persistentIdentity] = true
+                    end
+                end
+            end
+            if registry.byNetId(record.netId) ~= record then
+                invalidNetMappings = invalidNetMappings + 1
             end
             local forceDetach = generationMismatchIds[record.entityId]
                 or missingPersistenceIds[record.entityId]
@@ -366,40 +407,69 @@ function SynexEntityService.create(options)
             for index = first, math.min(#orphanIds, first + driftSqlBatchLimit - 1) do
                 batch[#batch + 1] = orphanIds[index]
             end
-            local affected, repairError = repository.markDriftOrphans(batch)
-            if affected == nil then return nil, repairError end
-            repaired = repaired + affected
+            local reconciliation, repairError = authorityOperations.reconcileMissingRuntime(
+                batch,
+                {
+                    caller = resourceName,
+                    callerEpoch = coreRef.value and coreRef.value.ownerEpoch or 0,
+                    traceId = 'entity_drift_reconcile',
+                }
+            )
+            if not reconciliation then return nil, repairError end
+            repaired = repaired + reconciliation.released
         end
         local inactiveOwnerCount = foundation.tableCount(inactiveOwners)
         local anomalies = databaseWithoutRuntime + runtimeWithoutPersistence
             + staleMappings + generationMismatches + duplicatePersistentKeys + inactiveOwnerCount
+            + invalidNetMappings + wrongBindings + wrongBuckets + wrongModels + wrongOwners
+            + wrongResourceOwners + wrongTypes
         local previousDrift = lastDrift
         lastDrift = {
             state = anomalies > 0 and 'drift_detected' or 'consistent',
             checkedAt = os.date('!%Y-%m-%dT%H:%M:%SZ'),
             scannedPersistence = scanCount,
             scannedRuntime = #runtimeBeforeScan,
+            runtimeTruncated = runtimeTruncated,
             truncated = truncated,
-            scanCycleComplete = not truncated,
+            scanCycleComplete = not truncated and not runtimeTruncated,
             wrapped = wrapped,
             databaseWithoutRuntime = databaseWithoutRuntime,
             runtimeWithoutPersistence = runtimeWithoutPersistence,
             staleMappings = staleMappings,
             generationMismatches = generationMismatches,
+            invalidNetMappings = invalidNetMappings,
             duplicatePersistentKeys = duplicatePersistentKeys,
+            wrongBindings = wrongBindings,
+            wrongBuckets = wrongBuckets,
+            wrongModels = wrongModels,
+            wrongOwners = wrongOwners,
+            wrongResourceOwners = wrongResourceOwners,
+            wrongTypes = wrongTypes,
             inactiveOwners = inactiveOwnerCount,
             orphaned = repaired,
         }
+        observability.gauge('drift_findings', {}, anomalies)
+        observability.gauge('managed_entity_count', {}, registry.count())
+        observability.gauge('orphan_count', {}, #orphanIds)
+        local componentCount = extensionOperations.componentCount(context)
+        emitRuntimeGauges(componentCount)
 
         if anomalies > 0 then
-            foundation.setHealth('DEGRADED', 'Entity ownership or runtime drift was detected')
+            foundation.setHealth('DEGRADED', 'DRIFT_DETECTED')
             local api = coreRef.value
             local changed = previousDrift.state ~= lastDrift.state
                 or previousDrift.databaseWithoutRuntime ~= databaseWithoutRuntime
                 or previousDrift.runtimeWithoutPersistence ~= runtimeWithoutPersistence
                 or previousDrift.staleMappings ~= staleMappings
                 or previousDrift.generationMismatches ~= generationMismatches
+                or previousDrift.invalidNetMappings ~= invalidNetMappings
                 or previousDrift.duplicatePersistentKeys ~= duplicatePersistentKeys
+                or previousDrift.wrongBindings ~= wrongBindings
+                or previousDrift.wrongBuckets ~= wrongBuckets
+                or previousDrift.wrongModels ~= wrongModels
+                or previousDrift.wrongOwners ~= wrongOwners
+                or previousDrift.wrongResourceOwners ~= wrongResourceOwners
+                or previousDrift.wrongTypes ~= wrongTypes
                 or previousDrift.inactiveOwners ~= inactiveOwnerCount
             if changed and api and api.Audit and foundation.isCallable(api.Audit.append) then
                 local invoked, auditResult = foundation.protect('drift.audit', function()
@@ -415,15 +485,13 @@ function SynexEntityService.create(options)
                 lastDrift.audit = changed and 'unavailable' or 'unchanged'
             end
         elseif health.state == 'DEGRADED'
-            and health.reason == 'Entity ownership or runtime drift was detected' then
+            and health.reason == 'DRIFT_DETECTED' then
             foundation.setHealth('READY', 'Entity foundation is ready')
         end
         return lastDrift
     end
 
     function service.cleanupOwner(owner, resourceCycle)
-        local records = registry.forOwner(owner)
-        local durableCleanup = {}
         local ownedBuckets = {}
         for _, bucket in pairs(buckets) do
             if bucket.resourceOwner == owner
@@ -432,71 +500,94 @@ function SynexEntityService.create(options)
             end
         end
         for _, bucket in ipairs(ownedBuckets) do
-            local destroyed, destroyError = bucketOperations.destroyRecord(bucket, false)
+            local destroyed, destroyError = bucketOperations.destroyRecord(
+                bucket,
+                ports.getGameTimer() + config.bucketCleanupTimeoutMs,
+                {
+                    caller = owner,
+                    callerEpoch = coreRef.value and coreRef.value.ownerEpoch or 0,
+                    traceId = 'entity_owner_bucket_cleanup',
+                }
+            )
             if not destroyed then
                 foundation.setHealth('DEGRADED', destroyError.message)
             end
         end
 
-        for _, record in ipairs(records) do
-            if (resourceCycle == nil or record.resourceCycle == resourceCycle) and record.persistent then
-                record.resourceCycle = nil
-                record.orphaning = true
-                foundation.protect('entity.set_durable_orphan_mode', function()
-                    ports.setEntityOrphanMode(record.handle, 2)
-                end)
-                if owner ~= resourceName then
-                    durableCleanup[#durableCleanup + 1] = record
-                else
-                    record.orphaning = false
-                end
-            elseif (resourceCycle == nil or record.resourceCycle == resourceCycle)
-                and not record.persistent then
-                local inspection = entityRuntime.inspect(record)
-                if inspection then
-                    foundation.protect('entity.delete_owner_temporary', function()
-                        ports.deleteEntity(record.handle)
-                    end)
-                end
-                registry.remove(record.entityId, record.generation)
-            end
-        end
-
-        if #durableCleanup > 0 then
-            ports.createThread(function()
-                local completed = foundation.protect('owner.persist_orphaned', function()
-                    local updated = repository.markOrphaned(durableCleanup)
-                    if updated == #durableCleanup then
-                        for _, record in ipairs(durableCleanup) do
-                            record.version = record.version + 1
-                            record.orphaning = false
-                        end
-                    else
-                        foundation.setHealth(
-                            'DEGRADED',
-                            'Persistent owner cleanup did not update every entity'
-                        )
-                    end
-                end)
-                if not completed then
-                    foundation.setHealth(
-                        'DEGRADED',
-                        'Persistent owner cleanup failed unexpectedly'
-                    )
-                end
-            end)
-        end
+        local context = {
+            caller = resourceName,
+            callerEpoch = coreRef.value and coreRef.value.ownerEpoch or 0,
+            traceId = 'entity_owner_cleanup',
+        }
+        local result, cleanupError = authorityOperations.cleanupResourceOwner(
+            owner, resourceCycle, context)
+        emitRuntimeGauges(extensionOperations.componentCount(context))
+        return result, cleanupError
     end
 
     function service.playerDropped(playerSource)
-        local membership = playerMemberships[playerSource]
-        if membership and buckets[membership.bucket] then
-            buckets[membership.bucket].players[playerSource] = nil
-        end
-        playerMemberships[playerSource] = nil
+        local result, operationError = bucketOperations.playerDropped(playerSource, {
+            caller = resourceName,
+            callerEpoch = coreRef.value and coreRef.value.ownerEpoch or 0,
+            traceId = 'player_bucket_disconnect',
+        })
+        emitRuntimeGauges()
+        return result, operationError
+    end
+
+    function service.entityBucketChanged(entityHandle, bucketId, oldBucketId)
+        local result, operationError = bucketOperations.observeEntityBucketChange(entityHandle, bucketId, {
+            caller = resourceName,
+            callerEpoch = coreRef.value and coreRef.value.ownerEpoch or 0,
+            traceId = 'entity_bucket_native_event',
+        })
+        emitRuntimeGauges()
+        return result, operationError
+    end
+
+    function service.playerBucketChanged(playerSource, bucketId, oldBucketId)
+        local result, operationError = bucketOperations.observePlayerBucketChange(playerSource, bucketId, {
+            caller = resourceName,
+            callerEpoch = coreRef.value and coreRef.value.ownerEpoch or 0,
+            traceId = 'player_bucket_native_event',
+        })
+        emitRuntimeGauges()
+        return result, operationError
+    end
+
+    function service.expireBuckets(context)
+        local result, operationError = bucketOperations.expire(context)
+        emitRuntimeGauges(extensionOperations.componentCount(context))
+        return result, operationError
     end
 
     function service.stop()
+        local context = {
+            caller = resourceName,
+            callerEpoch = coreRef.value and coreRef.value.ownerEpoch or 0,
+            traceId = 'entity_resource_stop',
+        }
+        local managedBuckets = {}
+        for _, bucket in pairs(buckets) do
+            managedBuckets[#managedBuckets + 1] = bucket
+        end
+        table.sort(managedBuckets, function(left, right) return left.id < right.id end)
+        for _, bucket in ipairs(managedBuckets) do
+            local destroyed, destroyError = bucketOperations.destroyRecord(
+                bucket,
+                ports.getGameTimer() + config.bucketCleanupTimeoutMs,
+                context
+            )
+            if not destroyed then
+                foundation.setHealth('DEGRADED', type(destroyError) == 'table'
+                    and destroyError.code or 'BUCKET_RESOURCE_LEAK')
+            end
+        end
+        local prepared, prepareError = authorityOperations.prepareStop(context)
+        if not prepared then
+            foundation.setHealth('DEGRADED', type(prepareError) == 'table'
+                and prepareError.code or 'ENTITY_RESOURCE_LEAK')
+        end
         for playerSource, membership in pairs(playerMemberships) do
             if ports.getPlayerName(tostring(playerSource))
                 and ports.getPlayerRoutingBucket(playerSource) == membership.bucket then
@@ -512,13 +603,66 @@ function SynexEntityService.create(options)
                 ports.setRoutingBucketEntityLockdownMode(bucketId, 'inactive')
             end)
         end
-        for _, record in ipairs(registry.all()) do
-            if ports.doesEntityExist(record.handle) then
-                foundation.protect('stop.delete_entity', function()
-                    ports.deleteEntity(record.handle)
-                end)
-            end
-        end
+        cleanupQueue.process(context)
+        authorityOperations.releaseAuthority('synex.entities.resource_stop', context)
+        emitRuntimeGauges(extensionOperations.componentCount(context))
+    end
+
+    function service.initializeAuthority(context)
+        return authorityOperations.initialize(context)
+    end
+
+    function service.heartbeatAuthority(context)
+        local result, heartbeatError = authorityOperations.heartbeat(context)
+        emitRuntimeGauges(extensionOperations.componentCount(context))
+        return result, heartbeatError
+    end
+
+    function service.runRecovery(context)
+        cleanupQueue.process(context)
+        local result, recoveryError = authorityOperations.runRecovery(context)
+        emitRuntimeGauges(extensionOperations.componentCount(context))
+        return result, recoveryError
+    end
+
+    function service.entityRemoved(entityHandle, context)
+        local result, removalError = authorityOperations.entityRemoved(entityHandle, context)
+        emitRuntimeGauges(extensionOperations.componentCount(context))
+        return result, removalError
+    end
+
+    function service.cleanupExtensions(owner, ownerEpoch)
+        local removed = extensionOperations.cleanupOwner(owner, ownerEpoch)
+        emitRuntimeGauges(extensionOperations.componentCount({
+            traceId = 'entity_extension_cleanup',
+        }))
+        return removed
+    end
+
+    function service.inspectEntity(request, context)
+        return queryOperations.inspectEntity(request, context)
+    end
+
+    function service.queryByOwner(request, context)
+        return queryOperations.byOwner(request, context)
+    end
+
+    function service.queryByResource(request, context)
+        return queryOperations.byResource(request, context)
+    end
+
+    function service.queryByBucket(request, context)
+        return queryOperations.byBucket(request, context)
+    end
+
+    function service.getDiagnosticSnapshot(request, context)
+        local snapshot, diagnosticError = queryOperations.diagnosticSnapshot(
+            request, authorityOperations.authoritySnapshot(), context)
+        if not snapshot then return nil, diagnosticError end
+        snapshot.cleanup = cleanupQueue.snapshot(50)
+        if snapshot.cleanup.count > 0 then snapshot.status = 'DEGRADED' end
+        emitRuntimeGauges(snapshot.counts and snapshot.counts.components or nil)
+        return snapshot
     end
 
     return service
