@@ -154,7 +154,11 @@ jobs:
   ui-visual:
     name: Synex UI browser visual regression
     needs: quality
-    runs-on: ubuntu-latest
+    # The committed snapshots are owned by this fixed Windows runner label and
+    # the Chromium revision locked through the Playwright dependency.
+    # Keep the runner aligned with the primary FiveM client platform so native
+    # text and control metrics do not introduce cross-platform baseline drift.
+    runs-on: windows-2022
     timeout-minutes: 20
 
     steps:
@@ -174,7 +178,7 @@ jobs:
         run: npm ci
 
       - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Run Synex UI browser visual regression
         run: npm run test:ui:visual

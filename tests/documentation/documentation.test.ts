@@ -269,6 +269,14 @@ test("framework CI pins official actions and runs the required untrusted-safe ga
   assert.doesNotMatch(workflow, /\$\{\{\s*secrets\./gu);
   assert.doesNotMatch(workflow, /^\s+[a-z-]+: write$/gmu);
   const workflowLines = workflow.split(/\r?\n/gu);
+  const uiVisualStart = workflowLines.findIndex((line) => line === "  ui-visual:");
+  assert.notEqual(uiVisualStart, -1, "framework CI must define the ui-visual job");
+  const uiVisualEnd = workflowLines.findIndex(
+    (line, index) => index > uiVisualStart && /^\s{2}[a-z][a-z0-9-]*:\s*$/u.test(line),
+  );
+  const uiVisualJob = workflowLines
+    .slice(uiVisualStart, uiVisualEnd === -1 ? workflowLines.length : uiVisualEnd)
+    .join("\n");
   const checkoutIndexes = workflowLines.flatMap((line, index) =>
     /^\s+uses: actions\/checkout@[0-9a-f]{40}\s+# v\d/u.test(line) ? [index] : [],
   );
@@ -299,8 +307,10 @@ test("framework CI pins official actions and runs the required untrusted-safe ga
   assert.match(workflow, /run: npm run test:ui/u);
   assert.match(workflow, /run: npm run build:ui/u);
   assert.match(workflow, /git status --porcelain --untracked-files=all -- libraries\/synex_ui\/dist libraries\/synex_ui\/web\/dist/u);
-  assert.match(workflow, /run: npx playwright install --with-deps chromium/u);
-  assert.match(workflow, /run: npm run test:ui:visual/u);
+  assert.match(uiVisualJob, /^\s{4}runs-on: windows-2022$/mu);
+  assert.match(uiVisualJob, /run: npx playwright install chromium/u);
+  assert.doesNotMatch(uiVisualJob, /run: npx playwright install --with-deps chromium/u);
+  assert.match(uiVisualJob, /run: npm run test:ui:visual/u);
   assert.match(workflow, /run: npm run generate:check/u);
   assert.match(workflow, /run: npm run test:lua/u);
   assert.match(workflow, /tools\/test-runner\.mjs core/u);
