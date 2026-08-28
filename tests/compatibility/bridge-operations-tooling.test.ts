@@ -309,6 +309,14 @@ test("compatibility certification is deterministic and fails closed on any exact
   const execution = await executeCompatibilityProfile(fixture.root, catalog, "qb.fixture");
   assert.equal(execution.status, "PASS", JSON.stringify(execution));
   assert.equal(execution.flows[0]?.status, "PASS");
+  assert.deepEqual(execution.flows[0]?.assertions, {
+    tests: 1,
+    passed: 1,
+    failed: 0,
+    skipped: 0,
+    cancelled: 0,
+    todo: 0,
+  });
   const first = await certifyCompatibilityProfile(fixture.root, catalog, "qb.fixture", evidence, execution);
   const second = await certifyCompatibilityProfile(fixture.root, catalog, "qb.fixture", evidence, execution);
   assert.equal(first.status, "CERTIFIED");
@@ -359,6 +367,14 @@ test("compatibility execution keeps skipped repository flows unknown", async (co
   assert.equal(execution.status, "UNKNOWN");
   assert.equal(execution.complete, false);
   assert.equal(execution.flows[0]?.status, "SKIP");
+  assert.deepEqual(execution.flows[0]?.assertions, {
+    tests: 1,
+    passed: 0,
+    failed: 0,
+    skipped: 1,
+    cancelled: 0,
+    todo: 0,
+  });
 });
 
 test("runtime schema rejects unknown data and the offline review lock reports upstream as unknown", async (context) => {

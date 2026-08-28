@@ -34,7 +34,12 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-const testArguments = ['--test'];
+// Certification consumes the summary, so keep it machine-readable across Node releases.
+const testArguments = [
+  '--test',
+  '--test-reporter=tap',
+  '--test-reporter-destination=stdout',
+];
 if (scope === 'database'
   || (scope === undefined && process.env.SYNEX_TEST_DATABASE_LIVE === '1')) {
   testArguments.push('--test-concurrency=1');

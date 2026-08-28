@@ -174,7 +174,12 @@ async function executeFlow(
   const started = process.hrtime.bigint();
   const childEnvironment = { ...process.env };
   delete childEnvironment.NODE_TEST_CONTEXT;
-  const child = spawnSync(process.execPath, ["--test", resolved.executable], {
+  const child = spawnSync(process.execPath, [
+    "--test",
+    "--test-reporter=tap",
+    "--test-reporter-destination=stdout",
+    resolved.executable,
+  ], {
     cwd: repositoryRoot,
     env: childEnvironment,
     encoding: "utf8",
