@@ -1,0 +1,125 @@
+{
+  "$schema": "../../../schemas/contract.schema.json",
+  "schema": 1,
+  "domain": "synex.interact",
+  "contracts": [
+    {
+      "name": "synex.interact.candidates",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_interact",
+      "stability": "experimental",
+      "network": "client-to-server",
+      "sessionStates": ["ACTIVE"],
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "radius": { "type": "number", "exclusiveMinimum": 0, "maximum": 12 },
+          "hitNetId": { "type": "integer", "minimum": 1, "maximum": 65535 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["items", "registryRevision", "session", "serverTime"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["objectKey", "actionKey", "label", "priority", "maxDistance", "distance", "revision"],
+              "properties": {
+                "objectKey": { "type": "string", "minLength": 3, "maxLength": 128 },
+                "actionKey": { "type": "string", "minLength": 3, "maxLength": 128 },
+                "label": { "type": "string", "minLength": 1, "maxLength": 96 },
+                "description": { "type": "string", "maxLength": 240 },
+                "icon": { "type": "string", "maxLength": 96 },
+                "priority": { "type": "number", "minimum": -1000, "maximum": 1000 },
+                "maxDistance": { "type": "number", "exclusiveMinimum": 0, "maximum": 12 },
+                "distance": { "type": "number", "minimum": 0, "maximum": 12 },
+                "position": { "type": "object" },
+                "entityRef": { "type": "object" },
+                "anchorRef": { "type": "object" },
+                "revision": { "type": "integer", "minimum": 1 }
+              }
+            }
+          },
+          "worldContext": { "type": "object" },
+          "registryRevision": { "type": "integer", "minimum": 0 },
+          "session": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "sourceGeneration"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "sourceGeneration": { "type": "integer", "minimum": 1 }
+            }
+          },
+          "serverTime": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "errors": ["INTERACT_INVALID_ARGUMENT", "INTERACT_SESSION_INACTIVE", "INTERACT_TARGET_UNAVAILABLE", "INTERACT_INTERNAL_ERROR"],
+      "rateLimit": { "capacity": 8, "refillPerSecond": 4 }
+    },
+    {
+      "name": "synex.interact.begin",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_interact",
+      "stability": "experimental",
+      "network": "client-to-server",
+      "sessionStates": ["ACTIVE"],
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["objectKey", "actionKey", "revision"],
+        "properties": {
+          "objectKey": { "type": "string", "minLength": 3, "maxLength": 128 },
+          "actionKey": { "type": "string", "minLength": 3, "maxLength": 128 },
+          "revision": { "type": "integer", "minimum": 1 },
+          "worldContext": { "type": "object" }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["lease", "objectKey", "actionKey", "ownerResource", "distance"],
+        "properties": {
+          "lease": { "type": "object" },
+          "objectKey": { "type": "string" },
+          "actionKey": { "type": "string" },
+          "ownerResource": { "type": "string" },
+          "distance": { "type": "number", "minimum": 0 }
+        }
+      },
+      "errors": ["INTERACT_INVALID_ARGUMENT", "INTERACT_NOT_FOUND", "INTERACT_STALE_TARGET", "INTERACT_OUT_OF_RANGE", "INTERACT_ACCESS_DENIED", "INTERACT_ACCESS_UNAVAILABLE", "INTERACT_CONTEXT_CHANGED", "INTERACT_SLOT_BUSY", "INTERACT_SESSION_INACTIVE", "INTERACT_TARGET_UNAVAILABLE"],
+      "rateLimit": { "capacity": 6, "refillPerSecond": 3 }
+    },
+    {
+      "name": "synex.interact.execute",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_interact",
+      "stability": "experimental",
+      "network": "client-to-server",
+      "sessionStates": ["ACTIVE"],
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["leaseId", "objectKey", "actionKey"],
+        "properties": {
+          "leaseId": { "type": "string", "minLength": 3, "maxLength": 128 },
+          "objectKey": { "type": "string", "minLength": 3, "maxLength": 128 },
+          "actionKey": { "type": "string", "minLength": 3, "maxLength": 128 },
+          "payload": { "type": "object" }
+        }
+      },
+      "output": { "type": "object" },
+      "errors": ["INTERACT_INVALID_ARGUMENT", "INTERACT_NOT_FOUND", "INTERACT_LEASE_EXPIRED", "INTERACT_LEASE_STALE", "INTERACT_OUT_OF_RANGE", "INTERACT_ACCESS_DENIED", "INTERACT_ACCESS_UNAVAILABLE", "INTERACT_TARGET_UNAVAILABLE", "INTERACT_ACTION_FAILED", "INTERACT_ACTION_UNAVAILABLE", "INTERACT_GRAPH_INVALID", "INTERACT_GRAPH_LIMIT", "INTERACT_SESSION_INACTIVE"],
+      "rateLimit": { "capacity": 6, "refillPerSecond": 3 }
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "$schema": "../../schemas/resource.schema.json",
+  "schema": 1,
+  "name": "synex_interact",
+  "version": "0.1.0",
+  "synex": "^1.0.0",
+  "critical": false,
+  "capabilities": {
+    "request": [
+      "synex.capabilities.delegate",
+      "synex.entities.query",
+      "synex.entities.read",
+      "synex.events.publish",
+      "synex.groups.read",
+      "synex.identity.read",
+      "synex.metrics.write",
+      "synex.runtime.read",
+      "synex.world.query",
+      "synex.world.read"
+    ]
+  },
+  "services": {
+    "provide": [
+      { "name": "synex.interact", "version": "1.0.0" }
+    ],
+    "require": [
+      { "name": "synex.world", "version": "^1.0.0" }
+    ],
+    "optional": [
+      { "name": "synex.groups", "version": "^1.0.0" }
+    ]
+  },
+  "contracts": {
+    "provide": [
+      "synex.interact.candidates@1.0.0",
+      "synex.interact.begin@1.0.0",
+      "synex.interact.execute@1.0.0"
+    ],
+    "consume": [
+      "synex.entities.get@1.0.0",
+      "synex.entities.query.by_net_id@1.0.0"
+    ]
+  },
+  "events": {
+    "publish": ["synex.interact.action.requested"],
+    "subscribe": []
+  },
+  "hooks": {
+    "register": [],
+    "run": []
+  },
+  "dependencies": {
+    "required": [
+      { "name": "synex_core", "version": ">=0.1.0" },
+      { "name": "synex_world", "version": ">=0.1.0" },
+      { "name": "synex_entities", "version": ">=0.1.0" },
+      { "name": "synex_ui", "version": ">=0.1.0" }
+    ],
+    "optional": [
+      { "name": "synex_groups", "version": ">=0.1.0" },
+      { "name": "synex_notify", "version": ">=0.1.0" }
+    ],
+    "development": []
+  },
+  "migrations": [],
+  "dataOwnership": {
+    "tables": [],
+    "characterDelete": "none"
+  },
+  "stateSnapshot": {
+    "supported": false,
+    "schemaVersion": 1
+  }
+}
