@@ -10,6 +10,8 @@ export const migrationDirectories = [
   'resources/synex_groups/migrations',
   'resources/synex_accounts/migrations',
   'resources/synex_entities/migrations',
+  'libraries/synex_bridge/migrations',
+  'resources/synex_world/migrations',
 ] as const;
 
 export interface MigrationSource {

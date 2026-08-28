@@ -36,6 +36,18 @@ describe('design token foundation', () => {
     expect(styles).toContain('color: var(--sx-color-text); background: var(--sx-input-bg); color-scheme: dark;');
     expect(styles).not.toContain('--sx-button-bg: var(--sx-color-route');
   });
+
+  it('removes platform-dependent inline baseline geometry from multiline fields and data cells', () => {
+    expect(styles).toContain('.sx-textarea { display: block;');
+    expect(styles).toContain('.sx-data-grid__cell { display: flex;');
+    expect(styles).toContain('align-items: center; padding: var(--sx-space-3)');
+    expect(styles).toContain(
+      '.sx-data-grid__content { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis;',
+    );
+    expect(styles).toContain(
+      '.sx-data-grid__cell[data-sx-align="end"] { justify-content: flex-end;',
+    );
+  });
 });
 
 describe('formatting foundation', () => {

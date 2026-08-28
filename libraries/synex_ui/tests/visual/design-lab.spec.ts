@@ -112,6 +112,29 @@ test.describe('Synex Design Lab visual regression', () => {
     });
   }
 
+  test('keeps long direct data-grid text ellipsized inside the aligned cell', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== '1080p', 'Data-grid geometry is verified at 1080p.');
+
+    await openDesignLab(page, 'section=data');
+    const content = page.locator('.sx-data-grid__body .sx-data-grid__content').first();
+    await expect(content).toBeVisible();
+    const geometry = await content.evaluate((element) => {
+      element.textContent = 'synex-data-grid-long-value-'.repeat(16);
+      const style = getComputedStyle(element);
+      return {
+        clientWidth: element.clientWidth,
+        scrollWidth: element.scrollWidth,
+        overflow: style.overflow,
+        textOverflow: style.textOverflow,
+        whiteSpace: style.whiteSpace,
+      };
+    });
+    expect(geometry.scrollWidth).toBeGreaterThan(geometry.clientWidth);
+    expect(geometry.overflow).toBe('hidden');
+    expect(geometry.textOverflow).toBe('ellipsis');
+    expect(geometry.whiteSpace).toBe('nowrap');
+  });
+
   for (const profile of profileVariants) {
     test(`renders the ${profile.name} profile at 1080p`, async ({ page }, testInfo) => {
       test.skip(testInfo.project.name !== '1080p', 'Profile baselines are captured at 1080p.');

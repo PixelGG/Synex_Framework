@@ -46,8 +46,11 @@ export interface DataGridCellProps extends HTMLAttributes<HTMLDivElement> {
   active?: boolean;
 }
 
-export const DataGridCell = forwardRef<HTMLDivElement, DataGridCellProps>(function DataGridCell({ columnIndex, header = false, align = "start", active = false, className, ...props }, ref) {
-  return <div ref={ref} role={header ? "columnheader" : "gridcell"} aria-colindex={columnIndex === undefined ? undefined : columnIndex + 1} className={sx("sx-data-grid__cell", className)} data-sx-align={align} data-sx-active={active || undefined} {...props} />;
+export const DataGridCell = forwardRef<HTMLDivElement, DataGridCellProps>(function DataGridCell({ columnIndex, header = false, align = "start", active = false, className, children, ...props }, ref) {
+  const content = typeof children === "string" || typeof children === "number"
+    ? <span className="sx-data-grid__content">{children}</span>
+    : children;
+  return <div ref={ref} role={header ? "columnheader" : "gridcell"} aria-colindex={columnIndex === undefined ? undefined : columnIndex + 1} className={sx("sx-data-grid__cell", className)} data-sx-align={align} data-sx-active={active || undefined} {...props}>{content}</div>;
 });
 
 export interface DataGridColumn<Row> {

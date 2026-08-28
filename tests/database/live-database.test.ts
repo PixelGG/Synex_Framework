@@ -88,6 +88,24 @@ function asNumber(value: string | number): number {
   return typeof value === 'number' ? value : Number.parseInt(value, 10);
 }
 
+function isRetryableTransactionError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return false;
+  return error.code === 'ER_LOCK_DEADLOCK' || error.code === 'ER_LOCK_WAIT_TIMEOUT';
+}
+
+async function retryTransaction<T>(operation: () => Promise<T>): Promise<T> {
+  const maximumAttempts = 5;
+  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!isRetryableTransactionError(error) || attempt === maximumAttempts) throw error;
+      await new Promise<void>((resolve) => setTimeout(resolve, attempt));
+    }
+  }
+  throw new Error('transaction retry bound exhausted');
+}
+
 function importDatabase(connection: Connection): ImportDatabase {
   return {
     begin: async () => connection.beginTransaction(),
@@ -114,7 +132,7 @@ async function completedTransfer(connection: Connection, input: TransferInput): 
     `SELECT operation_name, request_fingerprint, state, response_json
      FROM synex_account_operations WHERE idempotency_key = ?
        AND caller_resource = 'synex_live_test' AND caller_principal_kind = 'resource'
-       AND caller_principal_ref = 'synex_live_test'`,
+       AND caller_principal_ref = 'synex_live_test' AND operation_name = 'transfer'`,
     [input.idempotencyKey],
   );
   const operation = rows[0];
@@ -144,7 +162,7 @@ async function assertOneRow(
   assert.equal(result.affectedRows, 1, message);
 }
 
-async function transferAtomically(connection: Connection, input: TransferInput): Promise<string> {
+async function transferAtomicallyOnce(connection: Connection, input: TransferInput): Promise<string> {
   const replayed = await completedTransfer(connection, input);
   if (replayed) return replayed;
 
@@ -213,6 +231,7 @@ async function transferAtomically(connection: Connection, input: TransferInput):
          AND operation.caller_resource = 'synex_live_test'
          AND operation.caller_principal_kind = 'resource'
          AND operation.caller_principal_ref = 'synex_live_test'
+         AND operation.operation_name = 'transfer'
        INNER JOIN synex_account_balance_snapshots AS balance
          ON balance.account_id = source.id
         AND balance.sequence_no = (
@@ -324,7 +343,7 @@ async function transferAtomically(connection: Connection, input: TransferInput):
          ?,
          (SELECT id FROM synex_account_operations WHERE idempotency_key = ?
            AND caller_resource = 'synex_live_test' AND caller_principal_kind = 'resource'
-           AND caller_principal_ref = 'synex_live_test'),
+           AND caller_principal_ref = 'synex_live_test' AND operation_name = 'transfer'),
          'synex.accounts.transfer',
          ?,
          'synex_live_test',
@@ -367,6 +386,10 @@ async function transferAtomically(connection: Connection, input: TransferInput):
     if (winner) return winner;
     throw error;
   }
+}
+
+async function transferAtomically(connection: Connection, input: TransferInput): Promise<string> {
+  return retryTransaction(() => transferAtomicallyOnce(connection, input));
 }
 
 function transferInput(
@@ -434,7 +457,7 @@ async function createTransferFixture(
   return { currencyInternalId: currency.insertId, firstAccountId, secondAccountId };
 }
 
-async function createHoldAtomically(
+async function createHoldAtomicallyOnce(
   connection: Connection,
   sourceAccountId: string,
   captureAccountId: string,
@@ -490,6 +513,9 @@ async function createHoldAtomically(
          TIMESTAMPADD(HOUR, 1, CURRENT_TIMESTAMP(6)), 1
        FROM synex_account_operations operation, synex_accounts source, synex_accounts destination
        WHERE operation.idempotency_key = ? AND operation.caller_resource = 'synex_live_test'
+         AND operation.caller_principal_kind = 'resource'
+         AND operation.caller_principal_ref = 'synex_live_test'
+         AND operation.operation_name = 'hold_create'
          AND source.public_id = ? AND destination.public_id = ?
          AND source.currency_id = destination.currency_id`,
       [holdId, amountMinor, amountMinor, operationId, operationId, sourceAccountId, captureAccountId],
@@ -510,7 +536,10 @@ async function createHoldAtomically(
          'synex_accounts.hold', 'synex_live_test', ?, 'resource', 'synex_live_test', ?
        FROM synex_account_holds hold_record, synex_account_operations operation
        WHERE hold_record.public_id = ? AND operation.idempotency_key = ?
-         AND operation.caller_resource = 'synex_live_test'`,
+         AND operation.caller_resource = 'synex_live_test'
+         AND operation.caller_principal_kind = 'resource'
+         AND operation.caller_principal_ref = 'synex_live_test'
+         AND operation.operation_name = 'hold_create'`,
       [holdEventId, amountMinor, operationId, responseJson, holdId, operationId],
       'the current hold event must be persisted');
     await assertOneRow(connection,
@@ -526,7 +555,9 @@ async function createHoldAtomically(
          actor_kind, actor_ref, snapshot_json)
        SELECT ?, id, 'synex.accounts.hold.created', ?, 'synex_live_test', ?,
          'resource', 'synex_live_test', ? FROM synex_account_operations
-       WHERE idempotency_key = ? AND caller_resource = 'synex_live_test'`,
+       WHERE idempotency_key = ? AND caller_resource = 'synex_live_test'
+         AND caller_principal_kind = 'resource' AND caller_principal_ref = 'synex_live_test'
+         AND operation_name = 'hold_create'`,
       [domainEventId, holdId, operationId, responseJson, operationId],
       'the hold audit record must commit atomically');
     await assertOneRow(connection,
@@ -548,6 +579,20 @@ async function createHoldAtomically(
     await connection.rollback();
     throw error;
   }
+}
+
+async function createHoldAtomically(
+  connection: Connection,
+  sourceAccountId: string,
+  captureAccountId: string,
+  amountMinor: number,
+): Promise<string> {
+  return retryTransaction(() => createHoldAtomicallyOnce(
+    connection,
+    sourceAccountId,
+    captureAccountId,
+    amountMinor,
+  ));
 }
 
 const gate = liveDatabaseGate();

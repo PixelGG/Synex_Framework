@@ -85,7 +85,10 @@ SET `hold`.`capture_policy` = 'single',
             AND `hold`.`expires_at` <= CURRENT_TIMESTAMP(6)
             THEN `hold`.`expires_at`
         ELSE NULL
-    END;
+    END
+WHERE `hold`.`source_resource` = 'legacy'
+    AND `hold`.`version` = 1
+    AND `hold`.`trace_id` IS NULL;
 
 -- synex:statement
 CREATE INDEX IF NOT EXISTS `idx_account_holds_state_expiry`
@@ -226,7 +229,7 @@ CREATE TABLE IF NOT EXISTS `synex_account_hold_events_v2` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- synex:statement
-INSERT IGNORE INTO `synex_account_hold_events_v2`
+INSERT INTO `synex_account_hold_events_v2`
     (`event_id`, `hold_id`, `operation_id`, `sequence_no`, `event_type`,
         `amount_minor`, `remaining_after_minor`, `ledger_transaction_id`,
         `reason_code`, `source_resource`, `trace_id`, `actor_kind`, `actor_ref`,
@@ -248,10 +251,42 @@ SELECT CONCAT(
 FROM `synex_account_hold_events` AS `legacy`
 INNER JOIN `synex_account_holds` AS `hold` ON `hold`.`id` = `legacy`.`hold_id`
 LEFT JOIN `synex_ledger_transactions` AS `transaction`
-    ON `transaction`.`id` = `legacy`.`ledger_transaction_id`;
+    ON `transaction`.`id` = `legacy`.`ledger_transaction_id`
+WHERE `hold`.`source_resource` = 'legacy'
+    AND `hold`.`version` = 1
+    AND `hold`.`trace_id` IS NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM `synex_account_hold_events_v2` AS `existing`
+        WHERE `existing`.`event_id` = CONVERT(CONCAT(
+            SUBSTRING(MD5(CONCAT('synex-hold-event-v2:', `legacy`.`id`)), 1, 8), '-',
+            SUBSTRING(MD5(CONCAT('synex-hold-event-v2:', `legacy`.`id`)), 9, 4), '-',
+            SUBSTRING(MD5(CONCAT('synex-hold-event-v2:', `legacy`.`id`)), 13, 4), '-',
+            SUBSTRING(MD5(CONCAT('synex-hold-event-v2:', `legacy`.`id`)), 17, 4), '-',
+            SUBSTRING(MD5(CONCAT('synex-hold-event-v2:', `legacy`.`id`)), 21, 12))
+            USING ascii) COLLATE ascii_bin
+            AND `existing`.`hold_id` = `legacy`.`hold_id`
+            AND `existing`.`operation_id`
+                = COALESCE(`transaction`.`operation_id`, `hold`.`operation_id`)
+            AND `existing`.`sequence_no` = `legacy`.`sequence_no`
+            AND `existing`.`event_type` = `legacy`.`event_type`
+            AND `existing`.`amount_minor` = CASE
+                WHEN `legacy`.`event_type` = 'created' THEN 0
+                ELSE `hold`.`amount_minor` END
+            AND `existing`.`remaining_after_minor` = CASE
+                WHEN `legacy`.`event_type` = 'created' THEN `hold`.`amount_minor`
+                ELSE 0 END
+            AND `existing`.`ledger_transaction_id` <=> `legacy`.`ledger_transaction_id`
+            AND `existing`.`reason_code` = 'synex_accounts.hold'
+            AND `existing`.`source_resource` = 'legacy'
+            AND `existing`.`trace_id` IS NULL
+            AND `existing`.`actor_kind` <=> (CASE
+                WHEN `legacy`.`actor_ref` IS NULL THEN NULL ELSE 'migration' END)
+            AND `existing`.`actor_ref` <=> `legacy`.`actor_ref`
+            AND BINARY `existing`.`snapshot_json` = BINARY `legacy`.`snapshot_json`
+            AND `existing`.`occurred_at` = `legacy`.`occurred_at`);
 
 -- synex:statement
-INSERT IGNORE INTO `synex_account_hold_events_v2`
+INSERT INTO `synex_account_hold_events_v2`
     (`event_id`, `hold_id`, `operation_id`, `sequence_no`, `event_type`,
         `amount_minor`, `remaining_after_minor`, `ledger_transaction_id`,
         `reason_code`, `source_resource`, `trace_id`, `actor_kind`, `actor_ref`,
@@ -269,10 +304,38 @@ SELECT CONCAT(
     `hold`.`expires_at`
 FROM `synex_account_holds` AS `hold`
 WHERE `hold`.`state` = 'expired'
+    AND `hold`.`source_resource` = 'legacy'
+    AND `hold`.`version` = 1
+    AND `hold`.`trace_id` IS NULL
     AND NOT EXISTS (
         SELECT 1 FROM `synex_account_hold_events` AS `legacy`
         WHERE `legacy`.`hold_id` = `hold`.`id`
-            AND `legacy`.`event_type` IN ('captured', 'released'));
+            AND `legacy`.`event_type` IN ('captured', 'released'))
+    AND NOT EXISTS (
+        SELECT 1 FROM `synex_account_hold_events_v2` AS `existing`
+        WHERE `existing`.`event_id` = CONVERT(CONCAT(
+            SUBSTRING(MD5(CONCAT('synex-hold-expired-v2:', `hold`.`id`)), 1, 8), '-',
+            SUBSTRING(MD5(CONCAT('synex-hold-expired-v2:', `hold`.`id`)), 9, 4), '-',
+            SUBSTRING(MD5(CONCAT('synex-hold-expired-v2:', `hold`.`id`)), 13, 4), '-',
+            SUBSTRING(MD5(CONCAT('synex-hold-expired-v2:', `hold`.`id`)), 17, 4), '-',
+            SUBSTRING(MD5(CONCAT('synex-hold-expired-v2:', `hold`.`id`)), 21, 12))
+            USING ascii) COLLATE ascii_bin
+            AND `existing`.`hold_id` = `hold`.`id`
+            AND `existing`.`operation_id` IS NULL
+            AND `existing`.`sequence_no` = 2
+            AND `existing`.`event_type` = 'expired'
+            AND `existing`.`amount_minor` = `hold`.`amount_minor`
+            AND `existing`.`remaining_after_minor` = 0
+            AND `existing`.`ledger_transaction_id` IS NULL
+            AND `existing`.`reason_code` = `hold`.`reason_code`
+            AND `existing`.`source_resource` = 'migration'
+            AND `existing`.`trace_id` IS NULL
+            AND `existing`.`actor_kind` = 'migration'
+            AND `existing`.`actor_ref` = 'migration:011'
+            AND BINARY `existing`.`snapshot_json` = BINARY JSON_OBJECT(
+                'hold_id', `hold`.`public_id`, 'state', 'expired',
+                'released_minor', `hold`.`amount_minor`)
+            AND `existing`.`occurred_at` = `hold`.`expires_at`);
 
 -- synex:statement
 INSERT INTO `synex_account_migration_assertions`
@@ -285,10 +348,32 @@ FROM (
     FROM (
         SELECT `hold`.`account_id`, SUM(`hold`.`released_minor`) AS `release_minor`
         FROM `synex_account_holds` AS `hold`
+        INNER JOIN `synex_accounts` AS `account` ON `account`.`id` = `hold`.`account_id`
         INNER JOIN `synex_account_hold_events_v2` AS `event`
-            ON `event`.`hold_id` = `hold`.`id`
+            ON `event`.`event_id` = CONVERT(CONCAT(
+                SUBSTRING(MD5(CONCAT('synex-hold-expired-v2:', `hold`.`id`)), 1, 8), '-',
+                SUBSTRING(MD5(CONCAT('synex-hold-expired-v2:', `hold`.`id`)), 9, 4), '-',
+                SUBSTRING(MD5(CONCAT('synex-hold-expired-v2:', `hold`.`id`)), 13, 4), '-',
+                SUBSTRING(MD5(CONCAT('synex-hold-expired-v2:', `hold`.`id`)), 17, 4), '-',
+                SUBSTRING(MD5(CONCAT('synex-hold-expired-v2:', `hold`.`id`)), 21, 12))
+                USING ascii) COLLATE ascii_bin
+            AND `event`.`hold_id` = `hold`.`id`
             AND `event`.`event_type` = 'expired'
             AND `event`.`source_resource` = 'migration'
+        WHERE `hold`.`source_resource` = 'legacy'
+            AND `hold`.`version` = 1
+            AND `hold`.`trace_id` IS NULL
+            AND NOT EXISTS (
+                SELECT 1 FROM `synex_account_balance_snapshots` AS `corrected`
+                WHERE `corrected`.`account_id` = `account`.`id`
+                    AND `corrected`.`source_kind` = 'hold'
+                    AND `corrected`.`source_ref` = CONVERT(CONCAT(
+                        SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 1, 8), '-',
+                        SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 9, 4), '-',
+                        SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 13, 4), '-',
+                        SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 17, 4), '-',
+                        SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 21, 12))
+                        USING ascii) COLLATE ascii_bin)
         GROUP BY `hold`.`account_id`
     ) AS `expired`
     LEFT JOIN `synex_account_balance_snapshots` AS `latest`
@@ -322,9 +407,19 @@ FROM (
     SELECT `hold`.`account_id`, SUM(`hold`.`released_minor`) AS `release_minor`
     FROM `synex_account_holds` AS `hold`
     INNER JOIN `synex_account_hold_events_v2` AS `event`
-        ON `event`.`hold_id` = `hold`.`id`
+        ON `event`.`event_id` = CONVERT(CONCAT(
+            SUBSTRING(MD5(CONCAT('synex-hold-expired-v2:', `hold`.`id`)), 1, 8), '-',
+            SUBSTRING(MD5(CONCAT('synex-hold-expired-v2:', `hold`.`id`)), 9, 4), '-',
+            SUBSTRING(MD5(CONCAT('synex-hold-expired-v2:', `hold`.`id`)), 13, 4), '-',
+            SUBSTRING(MD5(CONCAT('synex-hold-expired-v2:', `hold`.`id`)), 17, 4), '-',
+            SUBSTRING(MD5(CONCAT('synex-hold-expired-v2:', `hold`.`id`)), 21, 12))
+            USING ascii) COLLATE ascii_bin
+        AND `event`.`hold_id` = `hold`.`id`
         AND `event`.`event_type` = 'expired'
         AND `event`.`source_resource` = 'migration'
+    WHERE `hold`.`source_resource` = 'legacy'
+        AND `hold`.`version` = 1
+        AND `hold`.`trace_id` IS NULL
     GROUP BY `hold`.`account_id`
 ) AS `expired`
 INNER JOIN `synex_accounts` AS `account` ON `account`.`id` = `expired`.`account_id`
@@ -338,12 +433,13 @@ WHERE NOT EXISTS (
     SELECT 1 FROM `synex_account_balance_snapshots` AS `existing`
     WHERE `existing`.`account_id` = `account`.`id`
         AND `existing`.`source_kind` = 'hold'
-        AND `existing`.`source_ref` = CONCAT(
+        AND `existing`.`source_ref` = CONVERT(CONCAT(
             SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 1, 8), '-',
             SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 9, 4), '-',
             SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 13, 4), '-',
             SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 17, 4), '-',
-            SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 21, 12)));
+            SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 21, 12))
+            USING ascii) COLLATE ascii_bin);
 
 -- synex:statement
 INSERT INTO `synex_account_migration_assertions`
@@ -357,31 +453,91 @@ SELECT '011_hold_lifecycle_v2',
                 <> (`hold`.`terminal_at` IS NULL))
     + (SELECT COUNT(*)
         FROM `synex_account_hold_events` AS `legacy`
-        WHERE NOT EXISTS (
-            SELECT 1 FROM `synex_account_hold_events_v2` AS `event`
-            WHERE `event`.`event_id` = CONCAT(
-                SUBSTRING(MD5(CONCAT('synex-hold-event-v2:', `legacy`.`id`)), 1, 8), '-',
-                SUBSTRING(MD5(CONCAT('synex-hold-event-v2:', `legacy`.`id`)), 9, 4), '-',
-                SUBSTRING(MD5(CONCAT('synex-hold-event-v2:', `legacy`.`id`)), 13, 4), '-',
-                SUBSTRING(MD5(CONCAT('synex-hold-event-v2:', `legacy`.`id`)), 17, 4), '-',
-                SUBSTRING(MD5(CONCAT('synex-hold-event-v2:', `legacy`.`id`)), 21, 12))))
+        INNER JOIN `synex_account_holds` AS `hold`
+            ON `hold`.`id` = `legacy`.`hold_id`
+        LEFT JOIN `synex_ledger_transactions` AS `transaction`
+            ON `transaction`.`id` = `legacy`.`ledger_transaction_id`
+        WHERE `hold`.`source_resource` = 'legacy'
+            AND `hold`.`version` = 1
+            AND `hold`.`trace_id` IS NULL
+            AND NOT EXISTS (
+                SELECT 1 FROM `synex_account_hold_events_v2` AS `event`
+                WHERE `event`.`event_id` = CONVERT(CONCAT(
+                    SUBSTRING(MD5(CONCAT('synex-hold-event-v2:', `legacy`.`id`)), 1, 8), '-',
+                    SUBSTRING(MD5(CONCAT('synex-hold-event-v2:', `legacy`.`id`)), 9, 4), '-',
+                    SUBSTRING(MD5(CONCAT('synex-hold-event-v2:', `legacy`.`id`)), 13, 4), '-',
+                    SUBSTRING(MD5(CONCAT('synex-hold-event-v2:', `legacy`.`id`)), 17, 4), '-',
+                    SUBSTRING(MD5(CONCAT('synex-hold-event-v2:', `legacy`.`id`)), 21, 12))
+                    USING ascii) COLLATE ascii_bin
+                    AND `event`.`hold_id` = `legacy`.`hold_id`
+                    AND `event`.`operation_id`
+                        = COALESCE(`transaction`.`operation_id`, `hold`.`operation_id`)
+                    AND `event`.`sequence_no` = `legacy`.`sequence_no`
+                    AND `event`.`event_type` = `legacy`.`event_type`
+                    AND `event`.`amount_minor` = CASE
+                        WHEN `legacy`.`event_type` = 'created' THEN 0
+                        ELSE `hold`.`amount_minor` END
+                    AND `event`.`remaining_after_minor` = CASE
+                        WHEN `legacy`.`event_type` = 'created' THEN `hold`.`amount_minor`
+                        ELSE 0 END
+                    AND `event`.`ledger_transaction_id`
+                        <=> `legacy`.`ledger_transaction_id`
+                    AND `event`.`reason_code` = 'synex_accounts.hold'
+                    AND `event`.`source_resource` = 'legacy'
+                    AND `event`.`trace_id` IS NULL
+                    AND `event`.`actor_kind` <=> (CASE
+                        WHEN `legacy`.`actor_ref` IS NULL THEN NULL ELSE 'migration' END)
+                    AND `event`.`actor_ref` <=> `legacy`.`actor_ref`
+                    AND BINARY `event`.`snapshot_json` = BINARY `legacy`.`snapshot_json`
+                    AND `event`.`occurred_at` = `legacy`.`occurred_at`))
     + (SELECT COUNT(*)
         FROM `synex_account_holds` AS `hold`
-        INNER JOIN `synex_account_hold_events_v2` AS `event`
-            ON `event`.`hold_id` = `hold`.`id`
-            AND `event`.`event_type` = 'expired'
-            AND `event`.`source_resource` = 'migration'
         INNER JOIN `synex_accounts` AS `account` ON `account`.`id` = `hold`.`account_id`
-        WHERE NOT EXISTS (
-            SELECT 1 FROM `synex_account_balance_snapshots` AS `snapshot`
-            WHERE `snapshot`.`account_id` = `account`.`id`
-                AND `snapshot`.`source_kind` = 'hold'
-                AND `snapshot`.`source_ref` = CONCAT(
-                    SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 1, 8), '-',
-                    SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 9, 4), '-',
-                    SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 13, 4), '-',
-                    SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 17, 4), '-',
-                    SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 21, 12)))),
+        WHERE `hold`.`state` = 'expired'
+            AND `hold`.`source_resource` = 'legacy'
+            AND `hold`.`version` = 1
+            AND `hold`.`trace_id` IS NULL
+            AND NOT EXISTS (
+                SELECT 1 FROM `synex_account_hold_events` AS `legacy`
+                WHERE `legacy`.`hold_id` = `hold`.`id`
+                    AND `legacy`.`event_type` IN ('captured', 'released'))
+            AND (NOT EXISTS (
+                SELECT 1 FROM `synex_account_hold_events_v2` AS `event`
+                WHERE `event`.`event_id` = CONVERT(CONCAT(
+                    SUBSTRING(MD5(CONCAT('synex-hold-expired-v2:', `hold`.`id`)), 1, 8), '-',
+                    SUBSTRING(MD5(CONCAT('synex-hold-expired-v2:', `hold`.`id`)), 9, 4), '-',
+                    SUBSTRING(MD5(CONCAT('synex-hold-expired-v2:', `hold`.`id`)), 13, 4), '-',
+                    SUBSTRING(MD5(CONCAT('synex-hold-expired-v2:', `hold`.`id`)), 17, 4), '-',
+                    SUBSTRING(MD5(CONCAT('synex-hold-expired-v2:', `hold`.`id`)), 21, 12))
+                    USING ascii) COLLATE ascii_bin
+                    AND `event`.`hold_id` = `hold`.`id`
+                    AND `event`.`operation_id` IS NULL
+                    AND `event`.`sequence_no` = 2
+                    AND `event`.`event_type` = 'expired'
+                    AND `event`.`amount_minor` = `hold`.`amount_minor`
+                    AND `event`.`remaining_after_minor` = 0
+                    AND `event`.`ledger_transaction_id` IS NULL
+                    AND `event`.`reason_code` = `hold`.`reason_code`
+                    AND `event`.`source_resource` = 'migration'
+                    AND `event`.`trace_id` IS NULL
+                    AND `event`.`actor_kind` = 'migration'
+                    AND `event`.`actor_ref` = 'migration:011'
+                    AND BINARY `event`.`snapshot_json` = BINARY JSON_OBJECT(
+                        'hold_id', `hold`.`public_id`, 'state', 'expired',
+                        'released_minor', `hold`.`amount_minor`)
+                    AND `event`.`occurred_at` = `hold`.`expires_at`)
+                OR NOT EXISTS (
+                    SELECT 1 FROM `synex_account_balance_snapshots` AS `snapshot`
+                    WHERE `snapshot`.`account_id` = `account`.`id`
+                        AND `snapshot`.`source_kind` = 'hold'
+                        AND `snapshot`.`source_ref` = CONVERT(CONCAT(
+                            SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 1, 8), '-',
+                            SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 9, 4), '-',
+                            SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 13, 4), '-',
+                            SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 17, 4), '-',
+                            SUBSTRING(MD5(CONCAT('migration-011-expiry:', `account`.`public_id`)), 21, 12))
+                            USING ascii) COLLATE ascii_bin))
+            ),
     JSON_OBJECT(
         'legacyTableRetained', TRUE,
         'supportsPartialCapture', TRUE,

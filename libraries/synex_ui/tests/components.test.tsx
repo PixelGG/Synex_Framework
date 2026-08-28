@@ -292,6 +292,7 @@ describe('component interaction contracts', () => {
     expect(emptyCell.parentElement).toHaveAttribute('aria-rowindex', '2');
     expect(emptyCell).toHaveAttribute('aria-colspan', '2');
     expect(emptyCell).toHaveAttribute('tabindex', '0');
+    expect(emptyCell.querySelector('.sx-data-grid__content')).toHaveTextContent('No focus leases');
   });
 
   it('unmounts a closed loading overlay completely', () => {

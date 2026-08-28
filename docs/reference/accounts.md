@@ -1,7 +1,7 @@
 # Accounts Financial Engine
 
 > [!WARNING]
-> `synex_accounts` is an **Experimental Alpha**. Its automated implementation is largely complete, but the current candidate has not yet completed the separate real-MariaDB, FXServer, restart, crash-recovery, or upgrade acceptance required for a production ledger. It remains outside the frozen `synex_core` Production-Beta boundary.
+> `synex_accounts` is an **Experimental Alpha**. The current working tree passed the isolated MariaDB 11.8.8 database scope on 2026-08-28, but it has not completed FXServer, restart, crash-recovery, restored-upgrade, exact-candidate, or maturity acceptance required for a production ledger. It remains outside the frozen `synex_core` Production-Beta boundary.
 
 `synex_accounts` is the server-owned financial domain for Synex. It provides currencies, accounts, an immutable multi-leg ledger, balance snapshots, holds, account-local access policy, reversals and refunds, reconciliation, audit evidence, and a durable outbox. It is not a player-facing banking UI and does not replace a future `synex_banking` gameplay resource.
 
@@ -15,9 +15,9 @@
 | Dependencies | `synex_core >=0.1.0`, `oxmysql >=2.14.1` |
 | Public contracts | 59 experimental contracts; all declare `network: none` |
 | Service | `synex.accounts@1`, experimental and server-local |
-| Schema | 17 ordered resource migrations, `001` through `017` |
+| Schema | 18 ordered resource migrations, `001` through `018` |
 | Maturity | Experimental Alpha |
-| Acceptance | automated source tests exist; real MariaDB/FXServer/restart acceptance is deferred |
+| Acceptance | current working tree: isolated MariaDB 11.8.8 database scope passed; FXServer/restart/exact-candidate acceptance remains open |
 
 No Accounts operation is client-callable. A gameplay resource must resolve the authenticated actor and all authoritative economic inputs on the server, declare the exact contract and capability, and call through `synex_core`.
 
@@ -226,19 +226,19 @@ The effective Core retention default is `retain_forever`. When an operator expli
 | `015_financial_archive_v2` | multi-leg transaction and entry archive mirrors |
 | `016_financial_entry_bounds` | authoritative 2–16 entry bound |
 | `017_idempotency_principal_scope` | principal-scoped operation uniqueness |
+| `018_access_grant_valid_from_default` | replay-safe default for access-grant validity start |
 
 Migration files are forward-only and owned by `synex_accounts`. Do not edit an applied migration or apply this Alpha schema to a deployment that is intended to reproduce the frozen Core-only acceptance profile. See [Migrations](../migrations.md) and [Database model](database.md).
 
 ## Testing and acceptance boundary
 
-The repository contains Accounts-focused source, contract, static-schema, security, database, concurrency, outbox-recovery, and local hot-path tests. On 2026-08-26 the working tree passed the 57-test focused Accounts suite and the complete 735-test repository run with 707 passes, no failures, and 28 expected live-database skips; security reported 0 findings across 201 scanned files and the dependency audit reported 0 vulnerabilities. The four new gated MariaDB concurrency/recovery cases were discovered but not executed because no disposable database URL was supplied. This is implementation evidence, not production acceptance. Before changing the maturity label, the exact committed candidate still needs:
+The repository contains Accounts-focused source, contract, static-schema, security, database, concurrency, outbox-recovery, and local hot-path tests. On 2026-08-28 the current working tree passed `npm run check`, focused Accounts 61/61, the repository Node suite with 1,208 passes, no failures and 31 gated skips, UI unit tests 66/66, security with 0 findings across 339 scanned files, dependency audit with 0 vulnerabilities, and the database scope 104/104 on isolated MariaDB 11.8.8. The live scope covered all 82 manifest-declared migrations plus Accounts migration replay, concurrent spending and holds, randomized transfers, and commit/outbox recovery. This is working-tree implementation and isolated-database evidence, not production acceptance. Before changing the maturity label, the exact committed candidate still needs:
 
-1. a clean disposable MariaDB migration and live-database run;
-2. an isolated FXServer start with Core and Accounts reaching healthy state;
-3. real contract/service, worker, outbox, hold-expiry, and reconciliation execution;
-4. prepared and unplanned restart/recovery checks with idempotency replay;
-5. restored-copy upgrade and rollback evidence;
-6. exact-candidate diff, secret, and documentation review.
+1. an isolated FXServer start with Core and Accounts reaching healthy state;
+2. real contract/service, worker, outbox, hold-expiry, and reconciliation execution;
+3. prepared and unplanned restart/recovery checks with idempotency replay;
+4. restored-copy upgrade and rollback evidence;
+5. exact-candidate diff, secret, documentation, and evidence-binding review; changed migration or runtime bytes require a fresh database run.
 
 Accounts itself has no client or NUI surface, so no direct Accounts client smoke is required. Downstream gameplay resources that expose financial actions will require their own hostile-client and reconnect tests.
 

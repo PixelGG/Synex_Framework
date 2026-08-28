@@ -4,6 +4,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { LuaFactory } from 'wasmoon';
 
+import { MIGRATION_CHECKSUM_CORRECTIONS } from '../../tools/cli/src/migration-compatibility.js';
+
 const root = process.cwd();
 
 test('migration execution is fenced across lease expiry, errors, release, and restart', async () => {
@@ -19,11 +21,42 @@ test('migration execution is fenced across lease expiry, errors, release, and re
     path.join(root, 'core/synex_core/migrations/021_worker_queue_scalability.sql'),
     'utf8',
   )).replace(/\r\n?/gu, '\n');
+  const correctionPaths: Readonly<Record<string, string>> = {
+    'synex_core:021_worker_queue_scalability': 'core/synex_core/migrations/021_worker_queue_scalability.sql',
+    'synex_accounts:011_hold_lifecycle_v2': 'resources/synex_accounts/migrations/011_hold_lifecycle_v2.sql',
+    'synex_accounts:015_financial_archive_v2': 'resources/synex_accounts/migrations/015_financial_archive_v2.sql',
+    'synex_entities:002_entity_lifecycle_authority': 'resources/synex_entities/migrations/002_entity_lifecycle_authority.sql',
+  };
+  const correctionFixtures = await Promise.all(
+    Object.entries(MIGRATION_CHECKSUM_CORRECTIONS).map(async ([identity, correction]) => {
+      const migrationPath = correctionPaths[identity];
+      assert.ok(migrationPath, `missing migration fixture path for ${identity}`);
+      const [resource, id] = identity.split(':');
+      assert.ok(resource && id, `invalid migration identity ${identity}`);
+      return {
+        resource,
+        id,
+        path: migrationPath,
+        previous: correction.previous,
+        current: correction.current,
+        contents: (await readFile(path.join(root, migrationPath), 'utf8')).replace(/\r\n?/gu, '\n'),
+      };
+    }),
+  );
+  const correctionFixturesLua = `{${correctionFixtures.map((correction) => `{
+    resource=${JSON.stringify(correction.resource)},
+    id=${JSON.stringify(correction.id)},
+    path=${JSON.stringify(correction.path)},
+    previous=${JSON.stringify(correction.previous)},
+    current=${JSON.stringify(correction.current)},
+    contents=${JSON.stringify(correction.contents)}
+  }`).join(',')}}`;
 
   const result = await engine.doString(`
     local clock, idSequence = 1000, 0
     local files, threads = {}, {}
     local migration021Contents = ${JSON.stringify(migration021)}
+    local migrationChecksumCorrections = ${correctionFixturesLua}
     local shared = nil
     local contender, contenderError = nil, nil
 
@@ -414,27 +447,30 @@ test('migration execution is fenced across lease expiry, errors, release, and re
     local migration021Path = 'migrations/021_worker_queue_scalability.sql'
     local migration021Key = 'synex_core|021_worker_queue_scalability'
 
-    resetState()
-    files[migration021Path] = migration021Contents
-    local correctedSystem = persistence('instance-021-applied')
-    assert(correctedSystem.sha256(migration021Contents) == current021Checksum)
-    shared.markers[migration021Key] = {
-      checksum_sha256 = previous021Checksum, instance_id = 'legacy-instance'
-    }
-    shared.fences[migration021Key] = {
-      checksum_sha256 = previous021Checksum, owner_id = 'legacy-instance', fencing_token = 42,
-      state = 'applied', statement_count = 1, completed_statements = 1
-    }
-    shared.attempts[migration021Key] = {
-      checksum_sha256 = previous021Checksum, state = 'applied', attempts = 1
-    }
-    assert(correctedSystem.migrations:acquireLease() == 1)
-    assert(correctedSystem.migrations:apply('synex_core', {
-      { id = '021_worker_queue_scalability', path = migration021Path }
-    }))
-    assert(next(shared.executions) == nil)
-    assert(shared.markers[migration021Key].checksum_sha256 == previous021Checksum)
-    assert(correctedSystem.migrations:releaseLease())
+    for correctionIndex, correction in ipairs(migrationChecksumCorrections) do
+      resetState()
+      files[correction.path] = correction.contents
+      local correctedSystem = persistence('instance-correction-' .. tostring(correctionIndex))
+      assert(correctedSystem.sha256(correction.contents) == correction.current)
+      local correctionKey = correction.resource .. '|' .. correction.id
+      shared.markers[correctionKey] = {
+        checksum_sha256 = correction.previous, instance_id = 'legacy-instance'
+      }
+      shared.fences[correctionKey] = {
+        checksum_sha256 = correction.previous, owner_id = 'legacy-instance', fencing_token = 42,
+        state = 'applied', statement_count = 1, completed_statements = 1
+      }
+      shared.attempts[correctionKey] = {
+        checksum_sha256 = correction.current, state = 'applied', attempts = 1
+      }
+      assert(correctedSystem.migrations:acquireLease() == 1)
+      assert(correctedSystem.migrations:apply(correction.resource, {
+        { id = correction.id, path = correction.path }
+      }))
+      assert(next(shared.executions) == nil)
+      assert(shared.markers[correctionKey].checksum_sha256 == correction.previous)
+      assert(correctedSystem.migrations:releaseLease())
+    end
 
     resetState()
     files[migration021Path] = migration021Contents

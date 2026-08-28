@@ -21,6 +21,7 @@ import {
   deriveExpectedDatabaseShape,
   extractDatabaseShape,
 } from "../../tools/cli/src/database-doctor.js";
+import { MIGRATION_CHECKSUM_CORRECTIONS } from "../../tools/cli/src/migration-compatibility.js";
 
 function fixtureManifest(
   name: string,
@@ -535,6 +536,45 @@ ALTER TABLE \`synex_probe\`
   );
   assert.deepEqual(markerlessControls.checksumMismatches, [`fence:${migrationIdentity}`]);
   assert.deepEqual(markerlessControls.inconsistentStates, [`fence:${migrationIdentity}`]);
+
+  for (const [identity, correction] of Object.entries(MIGRATION_CHECKSUM_CORRECTIONS)) {
+    const expectedCorrection = { [identity]: correction.current };
+    const appliedCorrection = [[identity, correction.previous] as const];
+    assert.deepEqual(
+      compareAppliedMigrations(expectedCorrection, appliedCorrection),
+      { pending: [], checksumMismatches: [], unknownApplied: [] },
+      `${identity} accepts only its registered historical marker`,
+    );
+    assert.deepEqual(
+      compareMigrationControls(
+        expectedCorrection,
+        appliedCorrection,
+        [{ identity, checksum: correction.previous, state: "applied" }],
+        [{ identity, checksum: correction.current, state: "applied" }],
+      ),
+      { checksumMismatches: [], inconsistentStates: [], unknownEntries: [] },
+      `${identity} accepts registered old/current applied controls`,
+    );
+
+    const unknown = "f".repeat(64);
+    const rejected = compareMigrationControls(
+      expectedCorrection,
+      appliedCorrection,
+      [{ identity, checksum: unknown, state: "indeterminate" }],
+      [{ identity, checksum: unknown, state: "failed" }],
+    );
+    assert.deepEqual(rejected.checksumMismatches, [`attempt:${identity}`, `fence:${identity}`]);
+    assert.deepEqual(rejected.inconsistentStates, [`attempt:${identity}`, `fence:${identity}`]);
+
+    const markerless = compareMigrationControls(
+      expectedCorrection,
+      [],
+      [{ identity, checksum: correction.previous, state: "applied" }],
+      [],
+    );
+    assert.deepEqual(markerless.checksumMismatches, [`fence:${identity}`]);
+    assert.deepEqual(markerless.inconsistentStates, [`fence:${identity}`]);
+  }
 });
 
 test("benchmark baseline comparison emits reproducible regression warnings", () => {

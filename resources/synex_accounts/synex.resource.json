@@ -451,6 +451,11 @@
       "id": "017_idempotency_principal_scope",
       "path": "migrations/017_idempotency_principal_scope.sql",
       "transactional": false
+    },
+    {
+      "id": "018_access_grant_valid_from_default",
+      "path": "migrations/018_access_grant_valid_from_default.sql",
+      "transactional": false
     }
   ],
   "dataOwnership": {

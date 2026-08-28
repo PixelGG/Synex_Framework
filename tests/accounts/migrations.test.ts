@@ -26,13 +26,14 @@ const additiveFiles = [
   '015_financial_archive_v2.sql',
   '016_financial_entry_bounds.sql',
   '017_idempotency_principal_scope.sql',
+  '018_access_grant_valid_from_default.sql',
 ] as const;
 
 async function migration(file: string): Promise<string> {
   return readFile(path.join(migrationRoot, file), 'utf8');
 }
 
-test('published migrations remain immutable and the Financial Engine is strictly additive through 017', async () => {
+test('published migrations remain immutable and the Financial Engine is strictly additive through 018', async () => {
   const files = (await readdir(migrationRoot))
     .filter((file) => /^\d{3}_[a-z0-9_]+\.sql$/u.test(file))
     .sort((left, right) => left.localeCompare(right, 'en'));
@@ -112,6 +113,18 @@ test('holds, access, restrictions, and policies have explicit terminal and concu
   assert.match(holds, /`state` IN \('active', 'partially_captured'\)[\s\S]*?`terminal_at` IS NULL/u);
   assert.match(holds, /`state` IN \('captured', 'released', 'expired'\)[\s\S]*?`terminal_at` IS NOT NULL/u);
   assert.match(holds, /UNIQUE KEY `uq_account_hold_events_v2_sequence`[\s\S]*?\(`hold_id`, `sequence_no`\)/u);
+  assert.doesNotMatch(holds, /`(?:event_id|source_ref)` = CONCAT\(/u);
+  assert.match(holds, /`event`\.`event_id` = CONVERT\(CONCAT\(/u);
+  assert.match(
+    holds,
+    /FROM `synex_account_hold_events` AS `legacy`[\s\S]*?WHERE NOT EXISTS \([\s\S]*?`event`\.`hold_id` = `legacy`\.`hold_id`[\s\S]*?`event`\.`sequence_no` = `legacy`\.`sequence_no`[\s\S]*?`event`\.`event_type` = `legacy`\.`event_type`/u,
+  );
+  assert.equal((holds.match(/USING ascii\) COLLATE ascii_bin/gu) ?? []).length, 9);
+  assert.match(
+    holds,
+    /UPDATE `synex_account_holds` AS `hold`[\s\S]*?WHERE `hold`\.`source_resource` = 'legacy'[\s\S]*?AND `hold`\.`version` = 1[\s\S]*?AND `hold`\.`trace_id` IS NULL/u,
+  );
+  assert.doesNotMatch(holds, /INSERT IGNORE INTO `synex_account_hold_events_v2`/u);
 
   const access = await migration('012_access_policies.sql');
   assert.match(access, /`valid_until` IS NULL OR `valid_until` > `valid_from`/u);
@@ -120,6 +133,24 @@ test('holds, access, restrictions, and policies have explicit terminal and concu
   assert.match(access, /`minimum_balance_minor` <= `maximum_balance_minor`/u);
   assert.match(access, /PRIMARY KEY \(`account_id`, `usage_date`\)/u);
   assert.match(access, /`outgoing_minor` <= 9007199254740991/u);
+
+  const validFromDefault = await migration('018_access_grant_valid_from_default.sql');
+  assert.match(
+    validFromDefault,
+    /MODIFY COLUMN `valid_from`\s+DATETIME\(6\) NOT NULL DEFAULT CURRENT_TIMESTAMP\(6\)/u,
+  );
+  assert.match(
+    validFromDefault,
+    /`TABLE_SCHEMA` = DATABASE\(\)[\s\S]*?`TABLE_NAME` = 'synex_account_access_grants'[\s\S]*?`COLUMN_NAME` = 'valid_from'[\s\S]*?LOWER\(`DATA_TYPE`\) = 'datetime'[\s\S]*?`DATETIME_PRECISION` = 6[\s\S]*?`IS_NULLABLE` = 'NO'[\s\S]*?LOWER\(REPLACE\(CAST\(`COLUMN_DEFAULT` AS CHAR\), ' ', ''\)\)[\s\S]*?= 'current_timestamp\(6\)'/u,
+  );
+  assert.match(
+    validFromDefault,
+    /SIGNAL SQLSTATE '45000'[\s\S]*?synex migration 018 valid_from metadata verification failed/u,
+  );
+  assert.equal(
+    (validFromDefault.match(/CALL `synex_migrate_018_access_grant_valid_from_default`\(\)/gu) ?? []).length,
+    1,
+  );
 });
 
 test('group lifecycle journaling is local, fail-closed, and has no cross-domain foreign key', async () => {
@@ -144,6 +175,14 @@ test('integrity, outbox, and archive migrations keep evidence append-only and bo
   assert.match(archive, /UNIQUE KEY `uq_financial_entry_archive_v2_source` \(`source_entry_id`\)/u);
   assert.match(archive, /`posting_model` IN \('legacy_pair', 'multi_leg'\)/u);
   assert.match(archive, /`amount_minor` <> 0[\s\S]*?BETWEEN -9007199254740991 AND 9007199254740991/u);
+  assert.match(
+    archive,
+    /HAVING COUNT\(`transaction`.`id`\) = 0 OR COUNT\(`operation`.`id`\) = 0/u,
+  );
+  assert.doesNotMatch(
+    archive,
+    /HAVING `transaction`.`id` IS NULL OR `operation`.`id` IS NULL/u,
+  );
   assert.doesNotMatch(archive, /DELETE\s+FROM|TRUNCATE|DROP\s+TABLE/iu);
 
   const bounds = await migration('016_financial_entry_bounds.sql');

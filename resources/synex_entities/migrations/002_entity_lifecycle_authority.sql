@@ -28,6 +28,16 @@ ALTER TABLE `synex_entities`
 ALTER TABLE `synex_entities`
     DROP CONSTRAINT IF EXISTS `ck_synex_entities_status`,
     DROP CONSTRAINT IF EXISTS `ck_synex_entities_owner_type`,
+    DROP CONSTRAINT IF EXISTS `ck_synex_entities_deleted_tombstone`,
+    DROP CONSTRAINT IF EXISTS `ck_synex_entities_persistence_policy`,
+    DROP CONSTRAINT IF EXISTS `ck_synex_entities_recovery_policy`,
+    DROP CONSTRAINT IF EXISTS `ck_synex_entities_server_scope`,
+    DROP CONSTRAINT IF EXISTS `ck_synex_entities_persistent_key_v2`,
+    DROP CONSTRAINT IF EXISTS `ck_synex_entities_archetype`,
+    DROP CONSTRAINT IF EXISTS `ck_synex_entities_recovery_state`,
+    DROP CONSTRAINT IF EXISTS `ck_synex_entities_recovery_failure`,
+    DROP CONSTRAINT IF EXISTS `ck_synex_entities_reason`,
+    DROP CONSTRAINT IF EXISTS `ck_synex_entities_trace`,
     ADD CONSTRAINT `ck_synex_entities_status`
         CHECK (`status` IN (
             'defined', 'spawning', 'active', 'orphaned', 'recovering',

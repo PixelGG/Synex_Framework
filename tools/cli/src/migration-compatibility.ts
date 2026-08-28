@@ -8,6 +8,18 @@ export const MIGRATION_CHECKSUM_CORRECTIONS: Readonly<Record<string, MigrationCh
     previous: "6d314f977f47fa39125c9597172e75fa05d80bfbd310aaf6be4c5584f6823b59",
     current: "5add0fed6935b83e7fd0905c188c1e534a6636d5d935fea1a28a145f7b533b7c",
   }),
+  "synex_accounts:011_hold_lifecycle_v2": Object.freeze({
+    previous: "03fdb945f64e134f4e0e5c6dd8808702c497d2cb89d3f3cd6b162977e6d8c536",
+    current: "8da0db6df52c57aa4ea2eebaba0524d6d9e3a537a2cd53e83bf8a9e0ead0ff53",
+  }),
+  "synex_accounts:015_financial_archive_v2": Object.freeze({
+    previous: "05afc56dff22982f0e30cab204fd6e3215a9653bcd3275760b7e4a1a337972c2",
+    current: "7c0be6f831823316fada3122edb36e63c49535f0e6088edcdbd26ef73bdb5d64",
+  }),
+  "synex_entities:002_entity_lifecycle_authority": Object.freeze({
+    previous: "cffdd0b9b456e2d32c40a399cfd46aebb1d606167873c5c518ec6bd463571c5e",
+    current: "4bc9d239f42008fec43aa2e86e376cf0e9b5d97a7786ce0bb1642efe598c354f",
+  }),
 });
 
 export function isRegisteredMigrationChecksumCorrection(

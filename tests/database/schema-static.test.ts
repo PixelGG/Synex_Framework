@@ -252,6 +252,29 @@ test('migrations are deterministic, forward ordered, and split exactly as the co
       }
       continue;
     }
+    if (migration.directory === 'resources/synex_accounts/migrations'
+      && migration.file === '018_access_grant_valid_from_default.sql') {
+      assert.equal(migration.statements.length, 5, migration.relativePath);
+      assertProcedureCycle(
+        migration.statements,
+        0,
+        'synex_migrate_018_access_grant_valid_from_default',
+        migration.relativePath,
+      );
+      assert.match(
+        migration.statements[4] ?? '',
+        /^INSERT INTO `synex_account_migration_assertions`/u,
+        migration.relativePath,
+      );
+      for (const statement of migration.statements) {
+        assert.doesNotMatch(
+          withoutSqlStringLiterals(statement),
+          /\b(?:DROP\s+(?:TABLE|COLUMN)|TRUNCATE|RENAME\s+TABLE|DELETE\s+FROM)\b/iu,
+          `${migration.relativePath} must preserve financial data`,
+        );
+      }
+      continue;
+    }
     if (migration.directory === 'resources/synex_groups/migrations'
       && migration.file === '024_group_deletion_lifecycle.sql') {
       assert.equal(migration.statements.length, 9, migration.relativePath);

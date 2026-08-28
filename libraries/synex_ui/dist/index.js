@@ -2690,15 +2690,20 @@ var Tt = r(function({ columns: e, label: t, rowCount: n, columnTemplate: r, clas
 		"data-sx-selected": t || void 0,
 		...r
 	});
-}), Ot = r(function({ columnIndex: e, header: t = !1, align: n = "start", active: r = !1, className: i, ...a }, o) {
+}), Ot = r(function({ columnIndex: e, header: t = !1, align: n = "start", active: r = !1, className: i, children: a, ...o }, s) {
+	let c = typeof a == "string" || typeof a == "number" ? /* @__PURE__ */ m("span", {
+		className: "sx-data-grid__content",
+		children: a
+	}) : a;
 	return /* @__PURE__ */ m("div", {
-		ref: o,
+		ref: s,
 		role: t ? "columnheader" : "gridcell",
 		"aria-colindex": e === void 0 ? void 0 : e + 1,
 		className: D("sx-data-grid__cell", i),
 		"data-sx-align": n,
 		"data-sx-active": r || void 0,
-		...a
+		...o,
+		children: c
 	});
 });
 function kt({ columns: e, rows: t, rowKey: n, label: r, selectedKeys: i, onRowActivate: a, sort: o, onSortChange: s, empty: c = "No records", className: l, ...u }) {

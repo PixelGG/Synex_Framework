@@ -69,6 +69,25 @@ test('entity schema keeps migration 001 immutable and namespaces durable tombsto
     lifecycle,
     /`archetype_namespace` IS NOT NULL[\s\S]*?`archetype_schema_version` IS NOT NULL[\s\S]*?`archetype_descriptor_json` IS NOT NULL/u,
   );
+  for (const constraint of [
+    'ck_synex_entities_status',
+    'ck_synex_entities_owner_type',
+    'ck_synex_entities_deleted_tombstone',
+    'ck_synex_entities_persistence_policy',
+    'ck_synex_entities_recovery_policy',
+    'ck_synex_entities_server_scope',
+    'ck_synex_entities_persistent_key_v2',
+    'ck_synex_entities_archetype',
+    'ck_synex_entities_recovery_state',
+    'ck_synex_entities_recovery_failure',
+    'ck_synex_entities_reason',
+    'ck_synex_entities_trace',
+  ]) {
+    assert.match(
+      lifecycle,
+      new RegExp('DROP CONSTRAINT IF EXISTS `' + constraint + '`', 'u'),
+    );
+  }
   assert.doesNotMatch(
     lifecycle,
     /\b(?:DROP\s+(?:TABLE|COLUMN)|TRUNCATE|RENAME\s+TABLE|DELETE\s+FROM)\b/iu,

@@ -138,7 +138,7 @@ FROM (
         ON `entry`.`transaction_id` = `transaction`.`id`
     GROUP BY `legacy`.`source_transaction_id`, `transaction`.`id`, `operation`.`id`,
         `transaction`.`entry_count`
-    HAVING `transaction`.`id` IS NULL OR `operation`.`id` IS NULL
+    HAVING COUNT(`transaction`.`id`) = 0 OR COUNT(`operation`.`id`) = 0
         OR COUNT(`entry`.`id`) <> `transaction`.`entry_count`
         OR COUNT(`entry`.`id`) < 2
         OR COALESCE(SUM(`entry`.`amount_minor`), 1) <> 0
