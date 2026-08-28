@@ -44,6 +44,21 @@
       }
     },
     "controlProvider": { "$ref": "#/$defs/controlProvider" },
+    "worldBundles": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 18,
+        "maxLength": 240,
+        "pattern": "^world/[A-Za-z0-9._/-]+\\.world\\.json$",
+        "allOf": [
+          { "not": { "pattern": "(?:^|/)\\.{1,2}(?:/|$)" } },
+          { "not": { "pattern": "//" } }
+        ]
+      }
+    },
     "services": {
       "type": "object",
       "additionalProperties": false,

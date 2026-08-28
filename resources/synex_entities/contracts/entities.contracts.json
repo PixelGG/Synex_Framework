@@ -287,7 +287,7 @@
         }
       },
       "errors": ["BUCKET_CAPACITY_EXCEEDED", "CONFLICT", "FORBIDDEN", "INTERNAL_ERROR", "INVALID_ARGUMENT", "RATE_LIMITED", "STALE_RESOURCE", "UNAVAILABLE"],
-      "idempotent": false,
+      "idempotent": true,
       "rateLimit": { "capacity": 8, "refillPerSecond": 1 }
     },
     {

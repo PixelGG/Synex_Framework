@@ -41,6 +41,23 @@ synex validate [path] [--json]
 
 Generation is deterministic and `--check` fails on generated drift. Contract comparison reports incompatible schema or version changes; it does not rewrite the compared tree.
 
+## World bundle tooling
+
+```text
+synex world validate [--json]
+synex world doctor [--json]
+synex doctor world [--json]
+synex world bundles [--json]
+synex world inspect <namespaced-key> [--json]
+synex world locate <x> <y> <z> [--json]
+synex world graph <namespaced-key> [--json]
+synex world overlaps [--json]
+```
+
+These commands load every declared `worldBundles` file from repository resource manifests and validate the closed schema, owner namespaces, references, parent/dependency cycles and supported geometry. `inspect` and `graph` are exact-key reads. `locate` reports statically containing/nearby definitions at bounded coordinates. `overlaps` is a capped axis-aligned broad-phase report, not proof of a semantic conflict.
+
+The offline doctor always keeps runtime status `UNKNOWN` unless static validation already fails. It cannot verify Cfx resource state, client IPL/interior activation, DoorSystem entities, routing buckets or live presence. See the [World development guide](../world/development.md).
+
 ## Inspect and create
 
 ```text
@@ -127,7 +144,7 @@ Upgrade checking compares manifests, Core/API ranges, contracts, migrations, cap
 synex benchmark [--iterations <count>] [--baseline <file>] [--output <file>] [--json]
 ```
 
-This is a deterministic local headless microbenchmark for regression comparison. The Groups measurements execute the actual Lua organization-read, membership-read, effective-capability, online-member index, on-duty index, and stored-policy paths. Accounts covers balance, available-balance, access-check, transfer, multi-leg posting, hold creation/capture, and reconciliation. Entities covers registry, binding, logical-owner, spatial, spawn-validation, state, and bucket paths. Bridge covers bounded compatibility projection/callback DTO copies, indexed account-mapping resolution, consumer/profile/surface/adapter resolution, and telemetry aggregation. All run inside an embedded Wasmoon VM with deterministic in-memory fixtures or adapters. They exclude MariaDB I/O and locking, FXServer/Cfx networking, OneSync scheduling, workers, external framework runtimes, and production concurrency. The report is therefore not a server-capacity, competitor, compatibility-certification, or production-performance claim.
+This is a deterministic local headless microbenchmark for regression comparison. The Groups measurements execute the actual Lua organization-read, membership-read, effective-capability, online-member index, on-duty index, and stored-policy paths. Accounts covers balance, available-balance, access-check, transfer, multi-leg posting, hold creation/capture, and reconciliation. Entities covers registry, binding, logical-owner, spatial, spawn-validation, state, and bucket paths. World executes its actual spatial-index, coherent-context, registry and access modules against a fixed fixture of 50,000 Anchors, 10,000 Zones, 5,000 Doors and 1,000 Locations. Its paths are `queryAt`, `queryNearby` at 10 m and 100 m, Context resolution, Anchor resolution, Door resolution and Access; requested iterations are capped at 5,000 for those seven paths. Bridge covers bounded compatibility projection/callback DTO copies, indexed account-mapping resolution, consumer/profile/surface/adapter resolution, and telemetry aggregation. All run inside an embedded Wasmoon VM with deterministic in-memory fixtures or adapters. They exclude MariaDB I/O and locking, FXServer/Cfx networking, FiveM natives, OneSync scope/replication and scheduling, workers, client rendering, external framework runtimes, and production concurrency. The report is therefore not a server-capacity, competitor, compatibility-certification, concurrency, or production-performance claim.
 
 ## Managed reload
 

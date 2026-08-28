@@ -116,6 +116,7 @@ test('bucket profiles, custom policy, capacities and expiry are closed and bound
 test('bucket moves are lease-fenced, capacity-bound, event-authorized and source-reuse-safe', async () => {
   const engine = await new LuaFactory().createEngine();
   try {
+    await engine.doString(await luaSource('bucket_idempotency.lua'));
     await engine.doString(await luaSource('bucket_lifecycle.lua'));
     await engine.doString(await luaSource('bucket_service.lua'));
     const result = await engine.doString(String.raw`

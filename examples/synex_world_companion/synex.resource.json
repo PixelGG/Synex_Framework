@@ -1,0 +1,48 @@
+{
+  "$schema": "../../schemas/resource.schema.json",
+  "schema": 1,
+  "name": "synex_world_companion",
+  "version": "0.1.0",
+  "synex": "^1.0.0",
+  "critical": false,
+  "capabilities": {
+    "request": ["synex.world.bundle.register"]
+  },
+  "worldBundles": [
+    "world/example.world.json"
+  ],
+  "services": {
+    "provide": [],
+    "require": ["synex.runtime@1"],
+    "optional": []
+  },
+  "contracts": {
+    "provide": [],
+    "consume": []
+  },
+  "events": {
+    "publish": [],
+    "subscribe": []
+  },
+  "hooks": {
+    "register": [],
+    "run": []
+  },
+  "dependencies": {
+    "required": [
+      { "name": "synex_core", "version": ">=0.1.0" },
+      { "name": "synex_world", "version": ">=0.1.0" }
+    ],
+    "optional": [],
+    "development": []
+  },
+  "migrations": [],
+  "dataOwnership": {
+    "tables": [],
+    "characterDelete": "none"
+  },
+  "stateSnapshot": {
+    "supported": false,
+    "schemaVersion": 1
+  }
+}

@@ -1,0 +1,753 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://synex.dev/schemas/world-bundle.schema.json",
+  "title": "Synex declarative world bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "key", "version", "objects"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
+    },
+    "schema": { "const": 1 },
+    "key": { "$ref": "#/$defs/worldKey" },
+    "version": { "$ref": "#/$defs/semver" },
+    "dependencies": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/resourceName" }
+    },
+    "objects": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100000,
+      "items": {
+        "oneOf": [
+          { "$ref": "#/$defs/region" },
+          { "$ref": "#/$defs/location" },
+          { "$ref": "#/$defs/interior" },
+          { "$ref": "#/$defs/room" },
+          { "$ref": "#/$defs/zone" },
+          { "$ref": "#/$defs/anchor" },
+          { "$ref": "#/$defs/door" },
+          { "$ref": "#/$defs/portal" },
+          { "$ref": "#/$defs/instanceTemplate" },
+          { "$ref": "#/$defs/mapPackage" },
+          { "$ref": "#/$defs/iplBundle" },
+          { "$ref": "#/$defs/worldStateDefinition" }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|(?:[0-9]*[A-Za-z-][0-9A-Za-z-]*))(?:\\.(?:(?:0|[1-9][0-9]*)|(?:[0-9]*[A-Za-z-][0-9A-Za-z-]*)))*)?$",
+      "maxLength": 64
+    },
+    "resourceName": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$",
+      "maxLength": 64,
+      "not": { "pattern": "\\.\\." }
+    },
+    "worldKey": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$",
+      "minLength": 3,
+      "maxLength": 128
+    },
+    "tag": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_.-]+$",
+      "minLength": 3,
+      "maxLength": 64
+    },
+    "label": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 96,
+      "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
+    },
+    "coordinate": {
+      "type": "number",
+      "minimum": -20000,
+      "maximum": 20000
+    },
+    "positiveDistance": {
+      "type": "number",
+      "minimum": 0.001,
+      "maximum": 40000
+    },
+    "heading": {
+      "type": "number",
+      "minimum": -360000,
+      "maximum": 360000
+    },
+    "vector3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "z"],
+      "properties": {
+        "x": { "$ref": "#/$defs/coordinate" },
+        "y": { "$ref": "#/$defs/coordinate" },
+        "z": { "$ref": "#/$defs/coordinate" }
+      }
+    },
+    "vector2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "$ref": "#/$defs/coordinate" },
+        "y": { "$ref": "#/$defs/coordinate" }
+      }
+    },
+    "tags": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/tag" }
+    },
+    "commonProperties": {
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string" },
+        "key": { "$ref": "#/$defs/worldKey" },
+        "parent": { "$ref": "#/$defs/worldKey" },
+        "label": { "$ref": "#/$defs/label" },
+        "tags": { "$ref": "#/$defs/tags" },
+        "mapPackages": { "$ref": "#/$defs/worldReferences" },
+        "iplBundles": { "$ref": "#/$defs/worldReferences" }
+      }
+    },
+    "worldReferences": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/worldKey" }
+    },
+    "pointGeometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "position"],
+      "properties": {
+        "type": { "const": "point" },
+        "position": { "$ref": "#/$defs/vector3" }
+      }
+    },
+    "sphereGeometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "center", "radius"],
+      "properties": {
+        "type": { "const": "sphere" },
+        "center": { "$ref": "#/$defs/vector3" },
+        "radius": { "$ref": "#/$defs/positiveDistance" }
+      }
+    },
+    "axisAlignedBoxGeometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "min", "max"],
+      "properties": {
+        "type": { "const": "aabb" },
+        "min": { "$ref": "#/$defs/vector3" },
+        "max": { "$ref": "#/$defs/vector3" }
+      }
+    },
+    "rotatedBoxGeometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "center", "size", "heading"],
+      "properties": {
+        "type": { "const": "box" },
+        "center": { "$ref": "#/$defs/vector3" },
+        "size": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y", "z"],
+          "properties": {
+            "x": { "$ref": "#/$defs/positiveDistance" },
+            "y": { "$ref": "#/$defs/positiveDistance" },
+            "z": { "$ref": "#/$defs/positiveDistance" }
+          }
+        },
+        "heading": { "$ref": "#/$defs/heading" }
+      }
+    },
+    "polygonGeometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "vertices", "minZ", "maxZ"],
+      "properties": {
+        "type": { "const": "polygon" },
+        "vertices": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 128,
+          "items": { "$ref": "#/$defs/vector2" }
+        },
+        "minZ": { "$ref": "#/$defs/coordinate" },
+        "maxZ": { "$ref": "#/$defs/coordinate" }
+      }
+    },
+    "compositeGeometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "operation", "geometries"],
+      "properties": {
+        "type": { "const": "composite" },
+        "operation": { "const": "union" },
+        "geometries": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/geometry" }
+        }
+      }
+    },
+    "geometry": {
+      "oneOf": [
+        { "$ref": "#/$defs/pointGeometry" },
+        { "$ref": "#/$defs/sphereGeometry" },
+        { "$ref": "#/$defs/axisAlignedBoxGeometry" },
+        { "$ref": "#/$defs/rotatedBoxGeometry" },
+        { "$ref": "#/$defs/polygonGeometry" },
+        { "$ref": "#/$defs/compositeGeometry" }
+      ]
+    },
+    "accessPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "requiredCapability": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._*-]*$",
+          "minLength": 1,
+          "maxLength": 96
+        },
+        "groupId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 48,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$"
+        },
+        "scope": { "enum": ["group", "subtree"] },
+        "requireSameInstance": { "type": "boolean" },
+        "stateRequirements": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "operator", "value"],
+            "properties": {
+              "key": { "$ref": "#/$defs/worldKey" },
+              "scopeRef": { "$ref": "#/$defs/worldKey" },
+              "operator": { "enum": ["equals", "not_equals"] },
+              "value": {
+                "anyOf": [
+                  { "type": "boolean" },
+                  { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+                  { "type": "number", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+                  { "type": "string", "maxLength": 256, "pattern": "^[^\\u0000-\\u001F\\u007F]*$" }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "dependentRequired": {
+        "requiredCapability": ["groupId"],
+        "groupId": ["requiredCapability"],
+        "scope": ["requiredCapability", "groupId"]
+      }
+    },
+    "semanticAreaProperties": {
+      "allOf": [
+        { "$ref": "#/$defs/commonProperties" },
+        {
+          "type": "object",
+          "properties": {
+            "geometry": { "$ref": "#/$defs/geometry" },
+            "priority": { "type": "integer", "minimum": -1000, "maximum": 1000 }
+          }
+        }
+      ]
+    },
+    "region": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key", "geometry"],
+      "properties": {
+        "kind": { "const": "region" },
+        "key": { "$ref": "#/$defs/worldKey" },
+        "parent": { "$ref": "#/$defs/worldKey" },
+        "label": { "$ref": "#/$defs/label" },
+        "tags": { "$ref": "#/$defs/tags" },
+        "mapPackages": { "$ref": "#/$defs/worldReferences" },
+        "iplBundles": { "$ref": "#/$defs/worldReferences" },
+        "geometry": { "$ref": "#/$defs/geometry" }
+      }
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key", "geometry"],
+      "properties": {
+        "kind": { "const": "location" },
+        "key": { "$ref": "#/$defs/worldKey" },
+        "parent": { "$ref": "#/$defs/worldKey" },
+        "label": { "$ref": "#/$defs/label" },
+        "tags": { "$ref": "#/$defs/tags" },
+        "mapPackages": { "$ref": "#/$defs/worldReferences" },
+        "iplBundles": { "$ref": "#/$defs/worldReferences" },
+        "geometry": { "$ref": "#/$defs/geometry" }
+      }
+    },
+    "interior": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key", "geometry"],
+      "properties": {
+        "kind": { "const": "interior" },
+        "key": { "$ref": "#/$defs/worldKey" },
+        "parent": { "$ref": "#/$defs/worldKey" },
+        "label": { "$ref": "#/$defs/label" },
+        "tags": { "$ref": "#/$defs/tags" },
+        "mapPackages": { "$ref": "#/$defs/worldReferences" },
+        "iplBundles": { "$ref": "#/$defs/worldReferences" },
+        "geometry": { "$ref": "#/$defs/geometry" },
+        "gameInteriorId": { "type": "integer", "minimum": 0, "maximum": 2147483647 }
+      }
+    },
+    "room": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key", "geometry"],
+      "properties": {
+        "kind": { "const": "room" },
+        "key": { "$ref": "#/$defs/worldKey" },
+        "parent": { "$ref": "#/$defs/worldKey" },
+        "label": { "$ref": "#/$defs/label" },
+        "tags": { "$ref": "#/$defs/tags" },
+        "mapPackages": { "$ref": "#/$defs/worldReferences" },
+        "iplBundles": { "$ref": "#/$defs/worldReferences" },
+        "geometry": { "$ref": "#/$defs/geometry" },
+        "gameRoomKey": { "type": "string", "maxLength": 64, "pattern": "^[^\\u0000-\\u001F\\u007F]*$" }
+      }
+    },
+    "zone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key", "geometry"],
+      "properties": {
+        "kind": { "const": "zone" },
+        "key": { "$ref": "#/$defs/worldKey" },
+        "parent": { "$ref": "#/$defs/worldKey" },
+        "label": { "$ref": "#/$defs/label" },
+        "tags": { "$ref": "#/$defs/tags" },
+        "mapPackages": { "$ref": "#/$defs/worldReferences" },
+        "iplBundles": { "$ref": "#/$defs/worldReferences" },
+        "geometry": { "$ref": "#/$defs/geometry" }
+      }
+    },
+    "entityRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entityId", "generation"],
+      "properties": {
+        "entityId": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+        "generation": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+      }
+    },
+    "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key", "position"],
+      "properties": {
+        "kind": { "const": "anchor" },
+        "key": { "$ref": "#/$defs/worldKey" },
+        "parent": { "$ref": "#/$defs/worldKey" },
+        "label": { "$ref": "#/$defs/label" },
+        "tags": { "$ref": "#/$defs/tags" },
+        "mapPackages": { "$ref": "#/$defs/worldReferences" },
+        "iplBundles": { "$ref": "#/$defs/worldReferences" },
+        "position": { "$ref": "#/$defs/vector3" },
+        "radius": { "type": "number", "minimum": 0, "maximum": 100 },
+        "entityRef": { "$ref": "#/$defs/entityRef" }
+      }
+    },
+    "doorLeaf": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "model", "position"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 32, "pattern": "^[a-z][a-z0-9_.-]*$" },
+        "model": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "position": { "$ref": "#/$defs/vector3" },
+        "heading": { "$ref": "#/$defs/heading" },
+        "doorHash": { "type": "integer", "minimum": 0, "maximum": 4294967295 }
+      }
+    },
+    "door": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key", "position", "leaves", "defaultState", "persistent"],
+      "properties": {
+        "kind": { "const": "door" },
+        "key": { "$ref": "#/$defs/worldKey" },
+        "parent": { "$ref": "#/$defs/worldKey" },
+        "label": { "$ref": "#/$defs/label" },
+        "tags": { "$ref": "#/$defs/tags" },
+        "mapPackages": { "$ref": "#/$defs/worldReferences" },
+        "iplBundles": { "$ref": "#/$defs/worldReferences" },
+        "position": { "$ref": "#/$defs/vector3" },
+        "heading": { "$ref": "#/$defs/heading" },
+        "leaves": { "type": "array", "minItems": 1, "maxItems": 8, "items": { "$ref": "#/$defs/doorLeaf" } },
+        "defaultState": { "enum": ["LOCKED", "UNLOCKED", "DISABLED"] },
+        "persistent": { "type": "boolean" },
+        "accessPolicy": { "$ref": "#/$defs/accessPolicy" },
+        "autoRelockSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 }
+      }
+    },
+    "portalSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["position", "radius"],
+      "properties": {
+        "position": { "$ref": "#/$defs/vector3" },
+        "radius": { "type": "number", "minimum": 0.5, "maximum": 25 }
+      }
+    },
+    "physicalPortalDestination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target"],
+      "properties": { "target": { "$ref": "#/$defs/worldKey" } }
+    },
+    "teleportPortalDestination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["position"],
+      "properties": {
+        "position": { "$ref": "#/$defs/vector3" },
+        "heading": { "$ref": "#/$defs/heading" },
+        "target": { "$ref": "#/$defs/worldKey" }
+      }
+    },
+    "instancePortalDestination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instanceTemplate"],
+      "properties": {
+        "instanceTemplate": { "$ref": "#/$defs/worldKey" },
+        "entry": { "$ref": "#/$defs/vector3" }
+      }
+    },
+    "portalDestination": {
+      "oneOf": [
+        { "$ref": "#/$defs/physicalPortalDestination" },
+        { "$ref": "#/$defs/teleportPortalDestination" },
+        { "$ref": "#/$defs/instancePortalDestination" }
+      ]
+    },
+    "portal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key", "portalType", "source", "destination"],
+      "properties": {
+        "kind": { "const": "portal" },
+        "key": { "$ref": "#/$defs/worldKey" },
+        "parent": { "$ref": "#/$defs/worldKey" },
+        "label": { "$ref": "#/$defs/label" },
+        "tags": { "$ref": "#/$defs/tags" },
+        "mapPackages": { "$ref": "#/$defs/worldReferences" },
+        "iplBundles": { "$ref": "#/$defs/worldReferences" },
+        "portalType": { "enum": ["physical", "teleport", "instance"] },
+        "source": { "$ref": "#/$defs/portalSource" },
+        "destination": { "$ref": "#/$defs/portalDestination" },
+        "accessPolicy": { "$ref": "#/$defs/accessPolicy" },
+        "enabled": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "portalType": { "const": "physical" } }, "required": ["portalType"] },
+          "then": { "properties": { "destination": { "$ref": "#/$defs/physicalPortalDestination" } } }
+        },
+        {
+          "if": { "properties": { "portalType": { "const": "teleport" } }, "required": ["portalType"] },
+          "then": { "properties": { "destination": { "$ref": "#/$defs/teleportPortalDestination" } } }
+        },
+        {
+          "if": { "properties": { "portalType": { "const": "instance" } }, "required": ["portalType"] },
+          "then": { "properties": { "destination": { "$ref": "#/$defs/instancePortalDestination" } } }
+        }
+      ]
+    },
+    "instanceTemplate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key", "baseLocation", "entry", "exit", "capacity", "isolationProfile", "cleanupPolicy"],
+      "properties": {
+        "kind": { "const": "instance_template" },
+        "key": { "$ref": "#/$defs/worldKey" },
+        "label": { "$ref": "#/$defs/label" },
+        "tags": { "$ref": "#/$defs/tags" },
+        "mapPackages": { "$ref": "#/$defs/worldReferences" },
+        "iplBundles": { "$ref": "#/$defs/worldReferences" },
+        "baseLocation": { "$ref": "#/$defs/worldKey" },
+        "entry": { "$ref": "#/$defs/vector3" },
+        "exit": { "$ref": "#/$defs/vector3" },
+        "capacity": { "type": "integer", "minimum": 1, "maximum": 256 },
+        "ttlSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+        "isolationProfile": { "enum": ["isolated_strict", "session", "character_selection", "custom"] },
+        "cleanupPolicy": { "enum": ["empty_ttl", "owner_stop", "manual"] }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "cleanupPolicy": { "const": "empty_ttl" } },
+            "required": ["cleanupPolicy"]
+          },
+          "then": { "properties": { "ttlSeconds": {} }, "required": ["ttlSeconds"] },
+          "else": { "not": { "required": ["ttlSeconds"] } }
+        }
+      ]
+    },
+    "interiorVariant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["interiorId", "name"],
+      "properties": {
+        "interiorId": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[^\\u0000-\\u001F\\u007F]+$" },
+        "color": { "type": "integer", "minimum": 0, "maximum": 255 }
+      }
+    },
+    "mapPackage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key", "resourceName", "packageType"],
+      "properties": {
+        "kind": { "const": "map_package" },
+        "key": { "$ref": "#/$defs/worldKey" },
+        "label": { "$ref": "#/$defs/label" },
+        "tags": { "$ref": "#/$defs/tags" },
+        "mapPackages": { "$ref": "#/$defs/worldReferences" },
+        "resourceName": { "$ref": "#/$defs/resourceName" },
+        "packageType": { "enum": ["mlo", "ymap", "ipl", "interior", "custom"] },
+        "expectedResourceState": { "const": "started" },
+        "version": { "$ref": "#/$defs/semver" },
+        "dependencies": { "type": "array", "maxItems": 32, "uniqueItems": true, "items": { "$ref": "#/$defs/resourceName" } },
+        "locations": { "$ref": "#/$defs/worldReferences" },
+        "iplBundles": { "$ref": "#/$defs/worldReferences" },
+        "required": { "type": "boolean" }
+      }
+    },
+    "iplBundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key", "ipls", "scope"],
+      "properties": {
+        "kind": { "const": "ipl_bundle" },
+        "key": { "$ref": "#/$defs/worldKey" },
+        "label": { "$ref": "#/$defs/label" },
+        "tags": { "$ref": "#/$defs/tags" },
+        "mapPackages": { "$ref": "#/$defs/worldReferences" },
+        "iplBundles": { "$ref": "#/$defs/worldReferences" },
+        "ipls": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96,
+            "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
+          }
+        },
+        "scope": { "enum": ["global", "context", "instance"] },
+        "interiorSets": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "$ref": "#/$defs/interiorVariant" }
+        }
+      }
+    },
+    "structuredNodeSchema": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": { "type": { "const": "boolean" } }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": { "enum": ["integer", "number"] },
+            "minimum": { "type": "number", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+            "maximum": { "type": "number", "minimum": -9007199254740991, "maximum": 9007199254740991 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "maxLength"],
+          "properties": {
+            "type": { "const": "string" },
+            "maxLength": { "type": "integer", "minimum": 1, "maximum": 4096 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "allowed"],
+          "properties": {
+            "type": { "const": "enum" },
+            "allowed": {
+              "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^\\u0000-\\u001F\\u007F]+$" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "properties", "required", "additionalProperties"],
+          "properties": {
+            "type": { "const": "object" },
+            "properties": {
+              "type": "object", "maxProperties": 32,
+              "propertyNames": { "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,63}$" },
+              "additionalProperties": { "$ref": "#/$defs/structuredNodeSchema" }
+            },
+            "required": {
+              "type": "array", "maxItems": 32, "uniqueItems": true,
+              "items": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,63}$" }
+            },
+            "additionalProperties": { "const": false }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "items", "maximumItems"],
+          "properties": {
+            "type": { "const": "array" },
+            "items": { "$ref": "#/$defs/structuredNodeSchema" },
+            "maximumItems": { "type": "integer", "minimum": 1, "maximum": 64 }
+          }
+        }
+      ]
+    },
+    "boundedStateSchema": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "maximumBytes", "maximumDepth", "maximumEntries",
+            "properties", "required", "additionalProperties"],
+          "properties": {
+            "type": { "const": "object" },
+            "maximumBytes": { "type": "integer", "minimum": 1, "maximum": 16384 },
+            "maximumDepth": { "type": "integer", "minimum": 1, "maximum": 4 },
+            "maximumEntries": { "type": "integer", "minimum": 1, "maximum": 64 },
+            "properties": {
+              "type": "object", "maxProperties": 32,
+              "propertyNames": { "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,63}$" },
+              "additionalProperties": { "$ref": "#/$defs/structuredNodeSchema" }
+            },
+            "required": {
+              "type": "array", "maxItems": 32, "uniqueItems": true,
+              "items": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,63}$" }
+            },
+            "additionalProperties": { "const": false }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "maximumBytes", "maximumDepth", "maximumEntries",
+            "items", "maximumItems"],
+          "properties": {
+            "type": { "const": "array" },
+            "maximumBytes": { "type": "integer", "minimum": 1, "maximum": 16384 },
+            "maximumDepth": { "type": "integer", "minimum": 1, "maximum": 4 },
+            "maximumEntries": { "type": "integer", "minimum": 1, "maximum": 64 },
+            "items": { "$ref": "#/$defs/structuredNodeSchema" },
+            "maximumItems": { "type": "integer", "minimum": 1, "maximum": 64 }
+          }
+        }
+      ]
+    },
+    "worldStateDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key", "stateType", "scope", "persistence", "schemaVersion"],
+      "properties": {
+        "kind": { "const": "world_state_definition" },
+        "key": { "$ref": "#/$defs/worldKey" },
+        "parent": { "$ref": "#/$defs/worldKey" },
+        "label": { "$ref": "#/$defs/label" },
+        "tags": { "$ref": "#/$defs/tags" },
+        "mapPackages": { "$ref": "#/$defs/worldReferences" },
+        "iplBundles": { "$ref": "#/$defs/worldReferences" },
+        "stateType": { "enum": ["boolean", "integer", "number", "string", "enum", "structured"] },
+        "scope": { "enum": ["global", "region", "location", "interior", "room", "instance"] },
+        "persistence": { "enum": ["runtime", "persistent"] },
+        "schemaVersion": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+        "default": {},
+        "minimum": { "type": "number", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+        "maximum": { "type": "number", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+        "maxLength": { "type": "integer", "minimum": 1, "maximum": 4096 },
+        "allowed": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
+          }
+        },
+        "structuredSchema": { "$ref": "#/$defs/boundedStateSchema" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "stateType": { "const": "enum" } }, "required": ["stateType"] },
+          "then": { "properties": { "allowed": {} }, "required": ["allowed"] },
+          "else": { "not": { "required": ["allowed"] } }
+        },
+        {
+          "if": { "properties": { "stateType": { "const": "structured" } }, "required": ["stateType"] },
+          "then": { "properties": { "structuredSchema": {} }, "required": ["structuredSchema"] },
+          "else": { "not": { "required": ["structuredSchema"] } }
+        },
+        {
+          "if": {
+            "properties": { "stateType": { "enum": ["string", "enum"] } },
+            "required": ["stateType"]
+          },
+          "then": {
+            "properties": {
+              "default": { "type": "string", "pattern": "^[^\\u0000-\\u001F\\u007F]*$" }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

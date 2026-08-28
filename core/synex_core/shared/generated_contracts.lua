@@ -10430,7 +10430,7 @@ SynexGeneratedContracts = {
         "STALE_RESOURCE",
         "UNAVAILABLE"
       },
-      ["idempotent"] = false,
+      ["idempotent"] = true,
       ["input"] = {
         ["additionalProperties"] = false,
         ["properties"] = {
@@ -27114,8 +27114,1435 @@ SynexGeneratedContracts = {
       ["provider"] = "synex_core",
       ["stability"] = "experimental",
       ["version"] = "2.0.0"
+    },
+    {
+      ["capability"] = "synex.world.door.write",
+      ["domain"] = "synex.world",
+      ["errors"] = {
+        "CONCURRENT_MODIFICATION",
+        "CORE_UNAVAILABLE",
+        "DOOR_NOT_FOUND",
+        "DOOR_STATE_INVALID",
+        "FORBIDDEN",
+        "INTERNAL_ERROR",
+        "INVALID_ARGUMENT",
+        "MAP_PACKAGE_UNAVAILABLE",
+        "OUT_OF_CONTEXT",
+        "RATE_LIMITED",
+        "STALE_RESOURCE",
+        "STALE_WORLD_REF",
+        "STATE_SCHEMA_MISMATCH",
+        "UNAVAILABLE",
+        "WORLD_ACCESS_DENIED"
+      },
+      ["idempotent"] = true,
+      ["input"] = {
+        ["additionalProperties"] = false,
+        ["properties"] = {
+          ["doorRef"] = {
+            ["additionalProperties"] = false,
+            ["properties"] = {
+              ["key"] = {
+                ["maxLength"] = 128,
+                ["minLength"] = 3,
+                ["pattern"] = "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$",
+                ["type"] = "string"
+              },
+              ["kind"] = {
+                ["const"] = "door"
+              },
+              ["revision"] = {
+                ["maximum"] = 2147483647,
+                ["minimum"] = 1,
+                ["type"] = "integer"
+              }
+            },
+            ["required"] = {
+              "kind",
+              "key",
+              "revision"
+            },
+            ["type"] = "object"
+          },
+          ["expectedVersion"] = {
+            ["maximum"] = 9007199254740991,
+            ["minimum"] = 0,
+            ["type"] = "integer"
+          },
+          ["idempotencyKey"] = {
+            ["maxLength"] = 36,
+            ["minLength"] = 8,
+            ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+            ["type"] = "string"
+          },
+          ["instanceId"] = {
+            ["maxLength"] = 64,
+            ["minLength"] = 8,
+            ["type"] = "string"
+          },
+          ["reasonCode"] = {
+            ["maxLength"] = 128,
+            ["minLength"] = 3,
+            ["pattern"] = "^[a-z][a-z0-9_]*[.][a-z0-9_.-]+$",
+            ["type"] = "string"
+          },
+          ["source"] = {
+            ["maximum"] = 65535,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          },
+          ["state"] = {
+            ["enum"] = {
+              "LOCKED",
+              "UNLOCKED",
+              "DISABLED"
+            }
+          }
+        },
+        ["required"] = {
+          "doorRef",
+          "state",
+          "expectedVersion",
+          "reasonCode",
+          "idempotencyKey"
+        },
+        ["type"] = "object"
+      },
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.door.set_state",
+      ["network"] = "none",
+      ["output"] = {
+        ["additionalProperties"] = false,
+        ["properties"] = {
+          ["defaulted"] = {
+            ["type"] = "boolean"
+          },
+          ["definitionRevision"] = {
+            ["maximum"] = 2147483647,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          },
+          ["eventId"] = {
+            ["maxLength"] = 36,
+            ["minLength"] = 8,
+            ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+            ["type"] = "string"
+          },
+          ["key"] = {
+            ["maxLength"] = 128,
+            ["minLength"] = 3,
+            ["pattern"] = "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$",
+            ["type"] = "string"
+          },
+          ["persistent"] = {
+            ["type"] = "boolean"
+          },
+          ["previousVersion"] = {
+            ["maximum"] = 9007199254740991,
+            ["minimum"] = 0,
+            ["type"] = "integer"
+          },
+          ["provenance"] = {
+            ["additionalProperties"] = false,
+            ["properties"] = {
+              ["actor"] = {
+                ["additionalProperties"] = false,
+                ["properties"] = {
+                  ["ref"] = {
+                    ["maxLength"] = 128,
+                    ["minLength"] = 1,
+                    ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+                    ["type"] = "string"
+                  },
+                  ["type"] = {
+                    ["enum"] = {
+                      "resource",
+                      "system",
+                      "user",
+                      "character",
+                      "entity"
+                    }
+                  }
+                },
+                ["required"] = {
+                  "type",
+                  "ref"
+                },
+                ["type"] = "object"
+              },
+              ["reasonCode"] = {
+                ["maxLength"] = 128,
+                ["minLength"] = 3,
+                ["pattern"] = "^[a-z][a-z0-9_]*[.][a-z0-9_.-]+$",
+                ["type"] = "string"
+              },
+              ["sourceResource"] = {
+                ["maxLength"] = 64,
+                ["minLength"] = 7,
+                ["pattern"] = "^synex_[a-z0-9_]+$",
+                ["type"] = "string"
+              },
+              ["timestamp"] = {
+                ["maxLength"] = 32,
+                ["minLength"] = 20,
+                ["pattern"] = "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}",
+                ["type"] = "string"
+              },
+              ["traceId"] = {
+                ["maxLength"] = 64,
+                ["minLength"] = 8,
+                ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+                ["type"] = "string"
+              }
+            },
+            ["required"] = {
+              "actor",
+              "sourceResource",
+              "reasonCode",
+              "traceId",
+              "timestamp"
+            },
+            ["type"] = "object"
+          },
+          ["replayed"] = {
+            ["type"] = "boolean"
+          },
+          ["schemaVersion"] = {
+            ["maximum"] = 2147483647,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          },
+          ["state"] = {
+            ["enum"] = {
+              "LOCKED",
+              "UNLOCKED",
+              "DISABLED"
+            }
+          },
+          ["version"] = {
+            ["maximum"] = 9007199254740991,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          }
+        },
+        ["required"] = {
+          "key",
+          "schemaVersion",
+          "state",
+          "version",
+          "definitionRevision",
+          "persistent",
+          "eventId",
+          "provenance",
+          "replayed"
+        },
+        ["type"] = "object"
+      },
+      ["provider"] = "synex_world",
+      ["rateLimit"] = {
+        ["capacity"] = 30,
+        ["refillPerSecond"] = 10
+      },
+      ["stability"] = "experimental",
+      ["version"] = "1.0.0"
+    },
+    {
+      ["capability"] = "synex.world.instance.manage",
+      ["domain"] = "synex.world",
+      ["errors"] = {
+        "CONCURRENT_MODIFICATION",
+        "CORE_UNAVAILABLE",
+        "FORBIDDEN",
+        "INSTANCE_BUCKET_UNAVAILABLE",
+        "INSTANCE_NOT_FOUND",
+        "INTERNAL_ERROR",
+        "INVALID_ARGUMENT",
+        "QUERY_LIMIT_EXCEEDED",
+        "RATE_LIMITED",
+        "STALE_RESOURCE",
+        "STALE_WORLD_REF",
+        "TRANSITION_GRANT_REPLAYED",
+        "UNAVAILABLE",
+        "WORLD_ACCESS_DENIED",
+        "WORLD_REFERENCE_INVALID"
+      },
+      ["idempotent"] = true,
+      ["input"] = {
+        ["additionalProperties"] = false,
+        ["properties"] = {
+          ["idempotencyKey"] = {
+            ["maxLength"] = 36,
+            ["minLength"] = 8,
+            ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+            ["type"] = "string"
+          },
+          ["instanceId"] = {
+            ["maxLength"] = 64,
+            ["minLength"] = 8,
+            ["type"] = "string"
+          }
+        },
+        ["required"] = {
+          "instanceId",
+          "idempotencyKey"
+        },
+        ["type"] = "object"
+      },
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.instance.close",
+      ["network"] = "none",
+      ["output"] = {
+        ["additionalProperties"] = false,
+        ["properties"] = {
+          ["bucketRef"] = {
+            ["additionalProperties"] = false,
+            ["properties"] = {
+              ["bucket"] = {
+                ["maximum"] = 2147483647,
+                ["minimum"] = 1,
+                ["type"] = "integer"
+              },
+              ["generation"] = {
+                ["maxLength"] = 64,
+                ["minLength"] = 8,
+                ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+                ["type"] = "string"
+              }
+            },
+            ["required"] = {
+              "bucket",
+              "generation"
+            },
+            ["type"] = "object"
+          },
+          ["capacity"] = {
+            ["maximum"] = 256,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          },
+          ["cleanupPolicy"] = {
+            ["enum"] = {
+              "empty_ttl",
+              "owner_stop",
+              "manual"
+            }
+          },
+          ["createdAt"] = {
+            ["maxLength"] = 32,
+            ["minLength"] = 20,
+            ["type"] = "string"
+          },
+          ["expiresAtMs"] = {
+            ["maximum"] = 9007199254740991,
+            ["minimum"] = 0,
+            ["type"] = "integer"
+          },
+          ["instanceId"] = {
+            ["maxLength"] = 64,
+            ["minLength"] = 8,
+            ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+            ["type"] = "string"
+          },
+          ["members"] = {
+            ["maximum"] = 256,
+            ["minimum"] = 0,
+            ["type"] = "integer"
+          },
+          ["ownerEpoch"] = {
+            ["maximum"] = 9007199254740991,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          },
+          ["ownerResource"] = {
+            ["maxLength"] = 64,
+            ["minLength"] = 7,
+            ["pattern"] = "^synex_[a-z0-9_]+$",
+            ["type"] = "string"
+          },
+          ["replayed"] = {
+            ["type"] = "boolean"
+          },
+          ["revision"] = {
+            ["maximum"] = 2147483647,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          },
+          ["state"] = {
+            ["enum"] = {
+              "CREATING",
+              "READY",
+              "ACTIVE",
+              "DRAINING",
+              "CLOSED",
+              "FAILED"
+            }
+          },
+          ["template"] = {
+            ["additionalProperties"] = false,
+            ["properties"] = {
+              ["key"] = {
+                ["maxLength"] = 128,
+                ["minLength"] = 3,
+                ["pattern"] = "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$",
+                ["type"] = "string"
+              },
+              ["kind"] = {
+                ["const"] = "instance_template"
+              },
+              ["revision"] = {
+                ["maximum"] = 2147483647,
+                ["minimum"] = 1,
+                ["type"] = "integer"
+              }
+            },
+            ["required"] = {
+              "kind",
+              "key",
+              "revision"
+            },
+            ["type"] = "object"
+          },
+          ["transitionedMembers"] = {
+            ["maximum"] = 256,
+            ["minimum"] = 0,
+            ["type"] = "integer"
+          }
+        },
+        ["required"] = {
+          "instanceId",
+          "template",
+          "ownerResource",
+          "ownerEpoch",
+          "state",
+          "capacity",
+          "members",
+          "createdAt",
+          "revision",
+          "cleanupPolicy",
+          "transitionedMembers",
+          "replayed"
+        },
+        ["type"] = "object"
+      },
+      ["provider"] = "synex_world",
+      ["rateLimit"] = {
+        ["capacity"] = 8,
+        ["refillPerSecond"] = 2
+      },
+      ["stability"] = "experimental",
+      ["version"] = "1.0.0"
+    },
+    {
+      ["capability"] = "synex.world.instance.create",
+      ["domain"] = "synex.world",
+      ["errors"] = {
+        "CONCURRENT_MODIFICATION",
+        "CORE_UNAVAILABLE",
+        "FORBIDDEN",
+        "INSTANCE_BUCKET_UNAVAILABLE",
+        "INTERNAL_ERROR",
+        "INVALID_ARGUMENT",
+        "MAP_PACKAGE_UNAVAILABLE",
+        "RATE_LIMITED",
+        "STALE_RESOURCE",
+        "STALE_WORLD_REF",
+        "UNAVAILABLE",
+        "WORLD_NOT_FOUND",
+        "WORLD_REFERENCE_INVALID"
+      },
+      ["idempotent"] = true,
+      ["input"] = {
+        ["additionalProperties"] = false,
+        ["properties"] = {
+          ["capacity"] = {
+            ["maximum"] = 256,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          },
+          ["idempotencyKey"] = {
+            ["maxLength"] = 36,
+            ["minLength"] = 8,
+            ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+            ["type"] = "string"
+          },
+          ["templateRef"] = {
+            ["additionalProperties"] = false,
+            ["properties"] = {
+              ["key"] = {
+                ["maxLength"] = 128,
+                ["minLength"] = 3,
+                ["pattern"] = "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$",
+                ["type"] = "string"
+              },
+              ["kind"] = {
+                ["const"] = "instance_template"
+              },
+              ["revision"] = {
+                ["maximum"] = 2147483647,
+                ["minimum"] = 1,
+                ["type"] = "integer"
+              }
+            },
+            ["required"] = {
+              "kind",
+              "key",
+              "revision"
+            },
+            ["type"] = "object"
+          }
+        },
+        ["required"] = {
+          "templateRef",
+          "idempotencyKey"
+        },
+        ["type"] = "object"
+      },
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.instance.create",
+      ["network"] = "none",
+      ["output"] = {
+        ["additionalProperties"] = false,
+        ["properties"] = {
+          ["bucketRef"] = {
+            ["additionalProperties"] = false,
+            ["properties"] = {
+              ["bucket"] = {
+                ["maximum"] = 2147483647,
+                ["minimum"] = 1,
+                ["type"] = "integer"
+              },
+              ["generation"] = {
+                ["maxLength"] = 64,
+                ["minLength"] = 8,
+                ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+                ["type"] = "string"
+              }
+            },
+            ["required"] = {
+              "bucket",
+              "generation"
+            },
+            ["type"] = "object"
+          },
+          ["capacity"] = {
+            ["maximum"] = 256,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          },
+          ["cleanupPolicy"] = {
+            ["enum"] = {
+              "empty_ttl",
+              "owner_stop",
+              "manual"
+            }
+          },
+          ["createdAt"] = {
+            ["maxLength"] = 32,
+            ["minLength"] = 20,
+            ["type"] = "string"
+          },
+          ["expiresAtMs"] = {
+            ["maximum"] = 9007199254740991,
+            ["minimum"] = 0,
+            ["type"] = "integer"
+          },
+          ["instanceId"] = {
+            ["maxLength"] = 64,
+            ["minLength"] = 8,
+            ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+            ["type"] = "string"
+          },
+          ["members"] = {
+            ["maximum"] = 256,
+            ["minimum"] = 0,
+            ["type"] = "integer"
+          },
+          ["ownerEpoch"] = {
+            ["maximum"] = 9007199254740991,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          },
+          ["ownerResource"] = {
+            ["maxLength"] = 64,
+            ["minLength"] = 7,
+            ["pattern"] = "^synex_[a-z0-9_]+$",
+            ["type"] = "string"
+          },
+          ["replayed"] = {
+            ["type"] = "boolean"
+          },
+          ["revision"] = {
+            ["maximum"] = 2147483647,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          },
+          ["state"] = {
+            ["enum"] = {
+              "CREATING",
+              "READY",
+              "ACTIVE",
+              "DRAINING",
+              "CLOSED",
+              "FAILED"
+            }
+          },
+          ["template"] = {
+            ["additionalProperties"] = false,
+            ["properties"] = {
+              ["key"] = {
+                ["maxLength"] = 128,
+                ["minLength"] = 3,
+                ["pattern"] = "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$",
+                ["type"] = "string"
+              },
+              ["kind"] = {
+                ["const"] = "instance_template"
+              },
+              ["revision"] = {
+                ["maximum"] = 2147483647,
+                ["minimum"] = 1,
+                ["type"] = "integer"
+              }
+            },
+            ["required"] = {
+              "kind",
+              "key",
+              "revision"
+            },
+            ["type"] = "object"
+          }
+        },
+        ["required"] = {
+          "instanceId",
+          "template",
+          "ownerResource",
+          "ownerEpoch",
+          "state",
+          "capacity",
+          "members",
+          "createdAt",
+          "revision",
+          "cleanupPolicy",
+          "replayed"
+        },
+        ["type"] = "object"
+      },
+      ["provider"] = "synex_world",
+      ["rateLimit"] = {
+        ["capacity"] = 8,
+        ["refillPerSecond"] = 1
+      },
+      ["stability"] = "experimental",
+      ["version"] = "1.0.0"
+    },
+    {
+      ["capability"] = "synex.world.instance.manage",
+      ["domain"] = "synex.world",
+      ["errors"] = {
+        "CONCURRENT_MODIFICATION",
+        "CORE_UNAVAILABLE",
+        "FORBIDDEN",
+        "INSTANCE_BUCKET_UNAVAILABLE",
+        "INSTANCE_CLOSED",
+        "INSTANCE_FULL",
+        "INSTANCE_NOT_FOUND",
+        "INTERNAL_ERROR",
+        "INVALID_ARGUMENT",
+        "MAP_PACKAGE_UNAVAILABLE",
+        "RATE_LIMITED",
+        "STALE_RESOURCE",
+        "STALE_WORLD_REF",
+        "UNAVAILABLE",
+        "WORLD_ACCESS_DENIED",
+        "WRONG_INSTANCE"
+      },
+      ["idempotent"] = true,
+      ["input"] = {
+        ["additionalProperties"] = false,
+        ["properties"] = {
+          ["idempotencyKey"] = {
+            ["maxLength"] = 36,
+            ["minLength"] = 8,
+            ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+            ["type"] = "string"
+          },
+          ["instanceId"] = {
+            ["maxLength"] = 64,
+            ["minLength"] = 8,
+            ["type"] = "string"
+          },
+          ["source"] = {
+            ["maximum"] = 65535,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          }
+        },
+        ["required"] = {
+          "instanceId",
+          "source",
+          "idempotencyKey"
+        },
+        ["type"] = "object"
+      },
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.instance.join",
+      ["network"] = "none",
+      ["output"] = {
+        ["additionalProperties"] = false,
+        ["properties"] = {
+          ["bucketRef"] = {
+            ["additionalProperties"] = false,
+            ["properties"] = {
+              ["bucket"] = {
+                ["maximum"] = 2147483647,
+                ["minimum"] = 1,
+                ["type"] = "integer"
+              },
+              ["generation"] = {
+                ["maxLength"] = 64,
+                ["minLength"] = 8,
+                ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+                ["type"] = "string"
+              }
+            },
+            ["required"] = {
+              "bucket",
+              "generation"
+            },
+            ["type"] = "object"
+          },
+          ["capacity"] = {
+            ["maximum"] = 256,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          },
+          ["cleanupPolicy"] = {
+            ["enum"] = {
+              "empty_ttl",
+              "owner_stop",
+              "manual"
+            }
+          },
+          ["createdAt"] = {
+            ["maxLength"] = 32,
+            ["minLength"] = 20,
+            ["type"] = "string"
+          },
+          ["expiresAtMs"] = {
+            ["maximum"] = 9007199254740991,
+            ["minimum"] = 0,
+            ["type"] = "integer"
+          },
+          ["instanceId"] = {
+            ["maxLength"] = 64,
+            ["minLength"] = 8,
+            ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+            ["type"] = "string"
+          },
+          ["members"] = {
+            ["maximum"] = 256,
+            ["minimum"] = 0,
+            ["type"] = "integer"
+          },
+          ["ownerEpoch"] = {
+            ["maximum"] = 9007199254740991,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          },
+          ["ownerResource"] = {
+            ["maxLength"] = 64,
+            ["minLength"] = 7,
+            ["pattern"] = "^synex_[a-z0-9_]+$",
+            ["type"] = "string"
+          },
+          ["replayed"] = {
+            ["type"] = "boolean"
+          },
+          ["revision"] = {
+            ["maximum"] = 2147483647,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          },
+          ["state"] = {
+            ["enum"] = {
+              "CREATING",
+              "READY",
+              "ACTIVE",
+              "DRAINING",
+              "CLOSED",
+              "FAILED"
+            }
+          },
+          ["template"] = {
+            ["additionalProperties"] = false,
+            ["properties"] = {
+              ["key"] = {
+                ["maxLength"] = 128,
+                ["minLength"] = 3,
+                ["pattern"] = "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$",
+                ["type"] = "string"
+              },
+              ["kind"] = {
+                ["const"] = "instance_template"
+              },
+              ["revision"] = {
+                ["maximum"] = 2147483647,
+                ["minimum"] = 1,
+                ["type"] = "integer"
+              }
+            },
+            ["required"] = {
+              "kind",
+              "key",
+              "revision"
+            },
+            ["type"] = "object"
+          }
+        },
+        ["required"] = {
+          "instanceId",
+          "template",
+          "ownerResource",
+          "ownerEpoch",
+          "state",
+          "capacity",
+          "members",
+          "createdAt",
+          "revision",
+          "cleanupPolicy",
+          "replayed"
+        },
+        ["type"] = "object"
+      },
+      ["provider"] = "synex_world",
+      ["rateLimit"] = {
+        ["capacity"] = 20,
+        ["refillPerSecond"] = 5
+      },
+      ["stability"] = "experimental",
+      ["version"] = "1.0.0"
+    },
+    {
+      ["capability"] = "synex.world.instance.manage",
+      ["domain"] = "synex.world",
+      ["errors"] = {
+        "CONCURRENT_MODIFICATION",
+        "CORE_UNAVAILABLE",
+        "FORBIDDEN",
+        "INSTANCE_BUCKET_UNAVAILABLE",
+        "INSTANCE_NOT_FOUND",
+        "INTERNAL_ERROR",
+        "INVALID_ARGUMENT",
+        "MAP_PACKAGE_UNAVAILABLE",
+        "QUERY_LIMIT_EXCEEDED",
+        "RATE_LIMITED",
+        "STALE_RESOURCE",
+        "STALE_WORLD_REF",
+        "TRANSITION_GRANT_REPLAYED",
+        "UNAVAILABLE",
+        "WORLD_ACCESS_DENIED",
+        "WORLD_REFERENCE_INVALID"
+      },
+      ["idempotent"] = true,
+      ["input"] = {
+        ["additionalProperties"] = false,
+        ["properties"] = {
+          ["idempotencyKey"] = {
+            ["maxLength"] = 36,
+            ["minLength"] = 8,
+            ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+            ["type"] = "string"
+          },
+          ["instanceId"] = {
+            ["maxLength"] = 64,
+            ["minLength"] = 8,
+            ["type"] = "string"
+          },
+          ["source"] = {
+            ["maximum"] = 65535,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          }
+        },
+        ["required"] = {
+          "source",
+          "idempotencyKey"
+        },
+        ["type"] = "object"
+      },
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.instance.leave",
+      ["network"] = "none",
+      ["output"] = {
+        ["additionalProperties"] = false,
+        ["properties"] = {
+          ["bucketRef"] = {
+            ["additionalProperties"] = false,
+            ["properties"] = {
+              ["bucket"] = {
+                ["maximum"] = 2147483647,
+                ["minimum"] = 1,
+                ["type"] = "integer"
+              },
+              ["generation"] = {
+                ["maxLength"] = 64,
+                ["minLength"] = 8,
+                ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+                ["type"] = "string"
+              }
+            },
+            ["required"] = {
+              "bucket",
+              "generation"
+            },
+            ["type"] = "object"
+          },
+          ["capacity"] = {
+            ["maximum"] = 256,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          },
+          ["cleanupPolicy"] = {
+            ["enum"] = {
+              "empty_ttl",
+              "owner_stop",
+              "manual"
+            }
+          },
+          ["createdAt"] = {
+            ["maxLength"] = 32,
+            ["minLength"] = 20,
+            ["type"] = "string"
+          },
+          ["expiresAtMs"] = {
+            ["maximum"] = 9007199254740991,
+            ["minimum"] = 0,
+            ["type"] = "integer"
+          },
+          ["grantId"] = {
+            ["maxLength"] = 36,
+            ["minLength"] = 8,
+            ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+            ["type"] = "string"
+          },
+          ["instanceId"] = {
+            ["maxLength"] = 64,
+            ["minLength"] = 8,
+            ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+            ["type"] = "string"
+          },
+          ["members"] = {
+            ["maximum"] = 256,
+            ["minimum"] = 0,
+            ["type"] = "integer"
+          },
+          ["ownerEpoch"] = {
+            ["maximum"] = 9007199254740991,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          },
+          ["ownerResource"] = {
+            ["maxLength"] = 64,
+            ["minLength"] = 7,
+            ["pattern"] = "^synex_[a-z0-9_]+$",
+            ["type"] = "string"
+          },
+          ["replayed"] = {
+            ["type"] = "boolean"
+          },
+          ["revision"] = {
+            ["maximum"] = 2147483647,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          },
+          ["state"] = {
+            ["enum"] = {
+              "CREATING",
+              "READY",
+              "ACTIVE",
+              "DRAINING",
+              "CLOSED",
+              "FAILED"
+            }
+          },
+          ["template"] = {
+            ["additionalProperties"] = false,
+            ["properties"] = {
+              ["key"] = {
+                ["maxLength"] = 128,
+                ["minLength"] = 3,
+                ["pattern"] = "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$",
+                ["type"] = "string"
+              },
+              ["kind"] = {
+                ["const"] = "instance_template"
+              },
+              ["revision"] = {
+                ["maximum"] = 2147483647,
+                ["minimum"] = 1,
+                ["type"] = "integer"
+              }
+            },
+            ["required"] = {
+              "kind",
+              "key",
+              "revision"
+            },
+            ["type"] = "object"
+          },
+          ["transitioned"] = {
+            ["const"] = true
+          }
+        },
+        ["required"] = {
+          "instanceId",
+          "template",
+          "ownerResource",
+          "ownerEpoch",
+          "state",
+          "capacity",
+          "members",
+          "createdAt",
+          "revision",
+          "cleanupPolicy",
+          "transitioned",
+          "grantId",
+          "replayed"
+        },
+        ["type"] = "object"
+      },
+      ["provider"] = "synex_world",
+      ["rateLimit"] = {
+        ["capacity"] = 20,
+        ["refillPerSecond"] = 5
+      },
+      ["stability"] = "experimental",
+      ["version"] = "1.0.0"
+    },
+    {
+      ["capability"] = "synex.world.transition",
+      ["domain"] = "synex.world",
+      ["errors"] = {
+        "CONCURRENT_MODIFICATION",
+        "CORE_UNAVAILABLE",
+        "FORBIDDEN",
+        "INSTANCE_BUCKET_UNAVAILABLE",
+        "INSTANCE_CLOSED",
+        "INSTANCE_FULL",
+        "INSTANCE_NOT_FOUND",
+        "INTERNAL_ERROR",
+        "INVALID_ARGUMENT",
+        "MAP_PACKAGE_UNAVAILABLE",
+        "OUT_OF_CONTEXT",
+        "PORTAL_NOT_FOUND",
+        "PORTAL_TOO_FAR",
+        "PORTAL_UNAVAILABLE",
+        "QUERY_LIMIT_EXCEEDED",
+        "RATE_LIMITED",
+        "STALE_RESOURCE",
+        "STALE_WORLD_REF",
+        "TRANSITION_DENIED",
+        "TRANSITION_GRANT_EXPIRED",
+        "TRANSITION_GRANT_REPLAYED",
+        "UNAVAILABLE",
+        "WORLD_ACCESS_DENIED",
+        "WORLD_NOT_FOUND",
+        "WORLD_REFERENCE_INVALID",
+        "WRONG_INSTANCE"
+      },
+      ["idempotent"] = true,
+      ["input"] = {
+        ["additionalProperties"] = false,
+        ["properties"] = {
+          ["idempotencyKey"] = {
+            ["maxLength"] = 36,
+            ["minLength"] = 8,
+            ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+            ["type"] = "string"
+          },
+          ["instanceId"] = {
+            ["maxLength"] = 64,
+            ["minLength"] = 8,
+            ["type"] = "string"
+          },
+          ["portalRef"] = {
+            ["additionalProperties"] = false,
+            ["properties"] = {
+              ["key"] = {
+                ["maxLength"] = 128,
+                ["minLength"] = 3,
+                ["pattern"] = "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$",
+                ["type"] = "string"
+              },
+              ["kind"] = {
+                ["const"] = "portal"
+              },
+              ["revision"] = {
+                ["maximum"] = 2147483647,
+                ["minimum"] = 1,
+                ["type"] = "integer"
+              }
+            },
+            ["required"] = {
+              "kind",
+              "key",
+              "revision"
+            },
+            ["type"] = "object"
+          },
+          ["source"] = {
+            ["maximum"] = 65535,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          }
+        },
+        ["required"] = {
+          "source",
+          "portalRef",
+          "idempotencyKey"
+        },
+        ["type"] = "object"
+      },
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.portal.transition",
+      ["network"] = "none",
+      ["output"] = {
+        ["additionalProperties"] = false,
+        ["properties"] = {
+          ["destination"] = {
+            ["additionalProperties"] = false,
+            ["properties"] = {
+              ["target"] = {
+                ["maxLength"] = 128,
+                ["minLength"] = 3,
+                ["pattern"] = "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$",
+                ["type"] = "string"
+              }
+            },
+            ["required"] = {
+              "target"
+            },
+            ["type"] = "object"
+          },
+          ["grantId"] = {
+            ["maxLength"] = 64,
+            ["minLength"] = 8,
+            ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+            ["type"] = "string"
+          },
+          ["instanceId"] = {
+            ["maxLength"] = 64,
+            ["minLength"] = 8,
+            ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+            ["type"] = "string"
+          },
+          ["portal"] = {
+            ["additionalProperties"] = false,
+            ["properties"] = {
+              ["key"] = {
+                ["maxLength"] = 128,
+                ["minLength"] = 3,
+                ["pattern"] = "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$",
+                ["type"] = "string"
+              },
+              ["kind"] = {
+                ["const"] = "portal"
+              },
+              ["revision"] = {
+                ["maximum"] = 2147483647,
+                ["minimum"] = 1,
+                ["type"] = "integer"
+              }
+            },
+            ["required"] = {
+              "kind",
+              "key",
+              "revision"
+            },
+            ["type"] = "object"
+          },
+          ["replayed"] = {
+            ["type"] = "boolean"
+          },
+          ["source"] = {
+            ["additionalProperties"] = false,
+            ["properties"] = {
+              ["key"] = {
+                ["maxLength"] = 128,
+                ["minLength"] = 3,
+                ["pattern"] = "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$",
+                ["type"] = "string"
+              },
+              ["kind"] = {
+                ["const"] = "portal"
+              },
+              ["revision"] = {
+                ["maximum"] = 2147483647,
+                ["minimum"] = 1,
+                ["type"] = "integer"
+              }
+            },
+            ["required"] = {
+              "kind",
+              "key",
+              "revision"
+            },
+            ["type"] = "object"
+          },
+          ["transitioned"] = {
+            ["const"] = true
+          }
+        },
+        ["required"] = {
+          "portal",
+          "transitioned",
+          "replayed"
+        },
+        ["type"] = "object"
+      },
+      ["provider"] = "synex_world",
+      ["rateLimit"] = {
+        ["capacity"] = 12,
+        ["refillPerSecond"] = 3
+      },
+      ["stability"] = "experimental",
+      ["version"] = "1.0.0"
+    },
+    {
+      ["capability"] = "synex.world.state.write",
+      ["domain"] = "synex.world",
+      ["errors"] = {
+        "CONCURRENT_MODIFICATION",
+        "CORE_UNAVAILABLE",
+        "FORBIDDEN",
+        "INTERNAL_ERROR",
+        "INVALID_ARGUMENT",
+        "RATE_LIMITED",
+        "STALE_RESOURCE",
+        "STATE_SCHEMA_MISMATCH",
+        "UNAVAILABLE",
+        "WORLD_NOT_FOUND",
+        "WORLD_REFERENCE_INVALID",
+        "WORLD_STATE_CONFLICT",
+        "WORLD_STATE_NOT_FOUND",
+        "WORLD_STATE_SCHEMA_INVALID",
+        "WORLD_STATE_VALUE_INVALID"
+      },
+      ["idempotent"] = true,
+      ["input"] = {
+        ["additionalProperties"] = false,
+        ["properties"] = {
+          ["expectedVersion"] = {
+            ["maximum"] = 9007199254740991,
+            ["minimum"] = 0,
+            ["type"] = "integer"
+          },
+          ["idempotencyKey"] = {
+            ["maxLength"] = 36,
+            ["minLength"] = 8,
+            ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+            ["type"] = "string"
+          },
+          ["key"] = {
+            ["maxLength"] = 128,
+            ["minLength"] = 3,
+            ["pattern"] = "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$",
+            ["type"] = "string"
+          },
+          ["reasonCode"] = {
+            ["maxLength"] = 128,
+            ["minLength"] = 3,
+            ["pattern"] = "^[a-z][a-z0-9_]*[.][a-z0-9_.-]+$",
+            ["type"] = "string"
+          },
+          ["scopeRef"] = {
+            ["maxLength"] = 128,
+            ["minLength"] = 1,
+            ["type"] = "string"
+          },
+          ["value"] = {}
+        },
+        ["required"] = {
+          "key",
+          "scopeRef",
+          "value",
+          "expectedVersion",
+          "reasonCode",
+          "idempotencyKey"
+        },
+        ["type"] = "object"
+      },
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.state.set",
+      ["network"] = "none",
+      ["output"] = {
+        ["additionalProperties"] = false,
+        ["properties"] = {
+          ["defaulted"] = {
+            ["type"] = "boolean"
+          },
+          ["definitionRevision"] = {
+            ["maximum"] = 2147483647,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          },
+          ["eventId"] = {
+            ["maxLength"] = 36,
+            ["minLength"] = 8,
+            ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+            ["type"] = "string"
+          },
+          ["key"] = {
+            ["maxLength"] = 128,
+            ["minLength"] = 3,
+            ["pattern"] = "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$",
+            ["type"] = "string"
+          },
+          ["persistent"] = {
+            ["type"] = "boolean"
+          },
+          ["previousVersion"] = {
+            ["maximum"] = 9007199254740991,
+            ["minimum"] = 0,
+            ["type"] = "integer"
+          },
+          ["provenance"] = {
+            ["additionalProperties"] = false,
+            ["properties"] = {
+              ["actor"] = {
+                ["additionalProperties"] = false,
+                ["properties"] = {
+                  ["ref"] = {
+                    ["maxLength"] = 128,
+                    ["minLength"] = 1,
+                    ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+                    ["type"] = "string"
+                  },
+                  ["type"] = {
+                    ["enum"] = {
+                      "resource",
+                      "system",
+                      "user",
+                      "character",
+                      "entity"
+                    }
+                  }
+                },
+                ["required"] = {
+                  "type",
+                  "ref"
+                },
+                ["type"] = "object"
+              },
+              ["reasonCode"] = {
+                ["maxLength"] = 128,
+                ["minLength"] = 3,
+                ["pattern"] = "^[a-z][a-z0-9_]*[.][a-z0-9_.-]+$",
+                ["type"] = "string"
+              },
+              ["sourceResource"] = {
+                ["maxLength"] = 64,
+                ["minLength"] = 7,
+                ["pattern"] = "^synex_[a-z0-9_]+$",
+                ["type"] = "string"
+              },
+              ["timestamp"] = {
+                ["maxLength"] = 32,
+                ["minLength"] = 20,
+                ["pattern"] = "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}",
+                ["type"] = "string"
+              },
+              ["traceId"] = {
+                ["maxLength"] = 64,
+                ["minLength"] = 8,
+                ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+                ["type"] = "string"
+              }
+            },
+            ["required"] = {
+              "actor",
+              "sourceResource",
+              "reasonCode",
+              "traceId",
+              "timestamp"
+            },
+            ["type"] = "object"
+          },
+          ["replayed"] = {
+            ["type"] = "boolean"
+          },
+          ["schemaVersion"] = {
+            ["maximum"] = 2147483647,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          },
+          ["scope"] = {
+            ["additionalProperties"] = false,
+            ["properties"] = {
+              ["ref"] = {
+                ["maxLength"] = 128,
+                ["minLength"] = 1,
+                ["pattern"] = "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+                ["type"] = "string"
+              },
+              ["type"] = {
+                ["enum"] = {
+                  "global",
+                  "region",
+                  "location",
+                  "interior",
+                  "room",
+                  "instance"
+                }
+              }
+            },
+            ["required"] = {
+              "type",
+              "ref"
+            },
+            ["type"] = "object"
+          },
+          ["value"] = {},
+          ["valueType"] = {
+            ["enum"] = {
+              "boolean",
+              "integer",
+              "number",
+              "string",
+              "enum",
+              "structured"
+            }
+          },
+          ["version"] = {
+            ["maximum"] = 9007199254740991,
+            ["minimum"] = 1,
+            ["type"] = "integer"
+          }
+        },
+        ["required"] = {
+          "key",
+          "scope",
+          "schemaVersion",
+          "definitionRevision",
+          "valueType",
+          "version",
+          "value",
+          "persistent",
+          "eventId",
+          "provenance",
+          "replayed"
+        },
+        ["type"] = "object"
+      },
+      ["provider"] = "synex_world",
+      ["rateLimit"] = {
+        ["capacity"] = 30,
+        ["refillPerSecond"] = 10
+      },
+      ["stability"] = "experimental",
+      ["version"] = "1.0.0"
     }
   },
   ["schema"] = 1,
-  ["sourceHash"] = "b9ccdd473cdee6e47ce04d7615afe12f1d3f9ce0a103108f79cba44274f4183c"
+  ["sourceHash"] = "d221dcd6ed86651cadea6bed9fed5ab2d92470d4727475fa81e9454a194f7d19"
 }

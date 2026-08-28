@@ -1,4 +1,4 @@
-export const GENERATED_SOURCE_HASH = "b9ccdd473cdee6e47ce04d7615afe12f1d3f9ce0a103108f79cba44274f4183c";
+export const GENERATED_SOURCE_HASH = "d221dcd6ed86651cadea6bed9fed5ab2d92470d4727475fa81e9454a194f7d19";
 
 export const GENERATED_CONTRACT_VERSIONS = {
   "synex.accounts.access.check@1.0.0": { name: "synex.accounts.access.check", version: "1.0.0", kind: "rpc", provider: "synex_accounts" },
@@ -172,6 +172,13 @@ export const GENERATED_CONTRACT_VERSIONS = {
   "synex.identity.session.by_source@1.0.0": { name: "synex.identity.session.by_source", version: "1.0.0", kind: "service", provider: "synex_core" },
   "synex.runtime.status@1.0.0": { name: "synex.runtime.status", version: "1.0.0", kind: "service", provider: "synex_core" },
   "synex.runtime.status@2.0.0": { name: "synex.runtime.status", version: "2.0.0", kind: "service", provider: "synex_core" },
+  "synex.world.door.set_state@1.0.0": { name: "synex.world.door.set_state", version: "1.0.0", kind: "rpc", provider: "synex_world" },
+  "synex.world.instance.close@1.0.0": { name: "synex.world.instance.close", version: "1.0.0", kind: "rpc", provider: "synex_world" },
+  "synex.world.instance.create@1.0.0": { name: "synex.world.instance.create", version: "1.0.0", kind: "rpc", provider: "synex_world" },
+  "synex.world.instance.join@1.0.0": { name: "synex.world.instance.join", version: "1.0.0", kind: "rpc", provider: "synex_world" },
+  "synex.world.instance.leave@1.0.0": { name: "synex.world.instance.leave", version: "1.0.0", kind: "rpc", provider: "synex_world" },
+  "synex.world.portal.transition@1.0.0": { name: "synex.world.portal.transition", version: "1.0.0", kind: "rpc", provider: "synex_world" },
+  "synex.world.state.set@1.0.0": { name: "synex.world.state.set", version: "1.0.0", kind: "rpc", provider: "synex_world" },
 } as const;
 
 export const GENERATED_CONTRACTS = {
@@ -344,6 +351,13 @@ export const GENERATED_CONTRACTS = {
   "synex.identity.characters.select": GENERATED_CONTRACT_VERSIONS["synex.identity.characters.select@1.0.0"],
   "synex.identity.session.by_source": GENERATED_CONTRACT_VERSIONS["synex.identity.session.by_source@1.0.0"],
   "synex.runtime.status": GENERATED_CONTRACT_VERSIONS["synex.runtime.status@2.0.0"],
+  "synex.world.door.set_state": GENERATED_CONTRACT_VERSIONS["synex.world.door.set_state@1.0.0"],
+  "synex.world.instance.close": GENERATED_CONTRACT_VERSIONS["synex.world.instance.close@1.0.0"],
+  "synex.world.instance.create": GENERATED_CONTRACT_VERSIONS["synex.world.instance.create@1.0.0"],
+  "synex.world.instance.join": GENERATED_CONTRACT_VERSIONS["synex.world.instance.join@1.0.0"],
+  "synex.world.instance.leave": GENERATED_CONTRACT_VERSIONS["synex.world.instance.leave@1.0.0"],
+  "synex.world.portal.transition": GENERATED_CONTRACT_VERSIONS["synex.world.portal.transition@1.0.0"],
+  "synex.world.state.set": GENERATED_CONTRACT_VERSIONS["synex.world.state.set@1.0.0"],
 } as const;
 
 export type SynexAccountsAccessCheckInput = { "account_id": string; "actor_kind": "system" | "resource" | "user" | "character" | "group"; "actor_ref": string; "permission": "balance.read" | "history.read" | "deposit" | "withdraw" | "transfer" | "hold.create" | "hold.capture" | "hold.release" | "access.read" | "access.manage" | "settings.manage" | "close"; "principal_kind": "system" | "resource" | "user" | "character" | "group"; "principal_ref": string; };
@@ -1030,6 +1044,34 @@ export type SynexRuntimeStatusc2f5ab45Input = Record<string, never>;
 export type SynexRuntimeStatusc2f5ab45Output = { "operational": boolean; "playerAdmission": boolean; "reasons": { [key: string]: unknown; }; "recentTransitions": Array<{ [key: string]: unknown; }>; "revision": number; "state": string; };
 export type SynexRuntimeStatusc2f5ab45Error = "CAPABILITY_DENIED" | "NOT_READY";
 
+export type SynexWorldDoorSetStateInput = { "doorRef": { "key": string; "kind": "door"; "revision": number; }; "expectedVersion": number; "idempotencyKey": string; "instanceId"?: string; "reasonCode": string; "source"?: number; "state": "LOCKED" | "UNLOCKED" | "DISABLED"; };
+export type SynexWorldDoorSetStateOutput = { "defaulted"?: boolean; "definitionRevision": number; "eventId": string; "key": string; "persistent": boolean; "previousVersion"?: number; "provenance": { "actor": { "ref": string; "type": "resource" | "system" | "user" | "character" | "entity"; }; "reasonCode": string; "sourceResource": string; "timestamp": string; "traceId": string; }; "replayed": boolean; "schemaVersion": number; "state": "LOCKED" | "UNLOCKED" | "DISABLED"; "version": number; };
+export type SynexWorldDoorSetStateError = "CONCURRENT_MODIFICATION" | "CORE_UNAVAILABLE" | "DOOR_NOT_FOUND" | "DOOR_STATE_INVALID" | "FORBIDDEN" | "INTERNAL_ERROR" | "INVALID_ARGUMENT" | "MAP_PACKAGE_UNAVAILABLE" | "OUT_OF_CONTEXT" | "RATE_LIMITED" | "STALE_RESOURCE" | "STALE_WORLD_REF" | "STATE_SCHEMA_MISMATCH" | "UNAVAILABLE" | "WORLD_ACCESS_DENIED";
+
+export type SynexWorldInstanceCloseInput = { "idempotencyKey": string; "instanceId": string; };
+export type SynexWorldInstanceCloseOutput = { "bucketRef"?: { "bucket": number; "generation": string; }; "capacity": number; "cleanupPolicy": "empty_ttl" | "owner_stop" | "manual"; "createdAt": string; "expiresAtMs"?: number; "instanceId": string; "members": number; "ownerEpoch": number; "ownerResource": string; "replayed": boolean; "revision": number; "state": "CREATING" | "READY" | "ACTIVE" | "DRAINING" | "CLOSED" | "FAILED"; "template": { "key": string; "kind": "instance_template"; "revision": number; }; "transitionedMembers": number; };
+export type SynexWorldInstanceCloseError = "CONCURRENT_MODIFICATION" | "CORE_UNAVAILABLE" | "FORBIDDEN" | "INSTANCE_BUCKET_UNAVAILABLE" | "INSTANCE_NOT_FOUND" | "INTERNAL_ERROR" | "INVALID_ARGUMENT" | "QUERY_LIMIT_EXCEEDED" | "RATE_LIMITED" | "STALE_RESOURCE" | "STALE_WORLD_REF" | "TRANSITION_GRANT_REPLAYED" | "UNAVAILABLE" | "WORLD_ACCESS_DENIED" | "WORLD_REFERENCE_INVALID";
+
+export type SynexWorldInstanceCreateInput = { "capacity"?: number; "idempotencyKey": string; "templateRef": { "key": string; "kind": "instance_template"; "revision": number; }; };
+export type SynexWorldInstanceCreateOutput = { "bucketRef"?: { "bucket": number; "generation": string; }; "capacity": number; "cleanupPolicy": "empty_ttl" | "owner_stop" | "manual"; "createdAt": string; "expiresAtMs"?: number; "instanceId": string; "members": number; "ownerEpoch": number; "ownerResource": string; "replayed": boolean; "revision": number; "state": "CREATING" | "READY" | "ACTIVE" | "DRAINING" | "CLOSED" | "FAILED"; "template": { "key": string; "kind": "instance_template"; "revision": number; }; };
+export type SynexWorldInstanceCreateError = "CONCURRENT_MODIFICATION" | "CORE_UNAVAILABLE" | "FORBIDDEN" | "INSTANCE_BUCKET_UNAVAILABLE" | "INTERNAL_ERROR" | "INVALID_ARGUMENT" | "MAP_PACKAGE_UNAVAILABLE" | "RATE_LIMITED" | "STALE_RESOURCE" | "STALE_WORLD_REF" | "UNAVAILABLE" | "WORLD_NOT_FOUND" | "WORLD_REFERENCE_INVALID";
+
+export type SynexWorldInstanceJoinInput = { "idempotencyKey": string; "instanceId": string; "source": number; };
+export type SynexWorldInstanceJoinOutput = { "bucketRef"?: { "bucket": number; "generation": string; }; "capacity": number; "cleanupPolicy": "empty_ttl" | "owner_stop" | "manual"; "createdAt": string; "expiresAtMs"?: number; "instanceId": string; "members": number; "ownerEpoch": number; "ownerResource": string; "replayed": boolean; "revision": number; "state": "CREATING" | "READY" | "ACTIVE" | "DRAINING" | "CLOSED" | "FAILED"; "template": { "key": string; "kind": "instance_template"; "revision": number; }; };
+export type SynexWorldInstanceJoinError = "CONCURRENT_MODIFICATION" | "CORE_UNAVAILABLE" | "FORBIDDEN" | "INSTANCE_BUCKET_UNAVAILABLE" | "INSTANCE_CLOSED" | "INSTANCE_FULL" | "INSTANCE_NOT_FOUND" | "INTERNAL_ERROR" | "INVALID_ARGUMENT" | "MAP_PACKAGE_UNAVAILABLE" | "RATE_LIMITED" | "STALE_RESOURCE" | "STALE_WORLD_REF" | "UNAVAILABLE" | "WORLD_ACCESS_DENIED" | "WRONG_INSTANCE";
+
+export type SynexWorldInstanceLeaveInput = { "idempotencyKey": string; "instanceId"?: string; "source": number; };
+export type SynexWorldInstanceLeaveOutput = { "bucketRef"?: { "bucket": number; "generation": string; }; "capacity": number; "cleanupPolicy": "empty_ttl" | "owner_stop" | "manual"; "createdAt": string; "expiresAtMs"?: number; "grantId": string; "instanceId": string; "members": number; "ownerEpoch": number; "ownerResource": string; "replayed": boolean; "revision": number; "state": "CREATING" | "READY" | "ACTIVE" | "DRAINING" | "CLOSED" | "FAILED"; "template": { "key": string; "kind": "instance_template"; "revision": number; }; "transitioned": true; };
+export type SynexWorldInstanceLeaveError = "CONCURRENT_MODIFICATION" | "CORE_UNAVAILABLE" | "FORBIDDEN" | "INSTANCE_BUCKET_UNAVAILABLE" | "INSTANCE_NOT_FOUND" | "INTERNAL_ERROR" | "INVALID_ARGUMENT" | "MAP_PACKAGE_UNAVAILABLE" | "QUERY_LIMIT_EXCEEDED" | "RATE_LIMITED" | "STALE_RESOURCE" | "STALE_WORLD_REF" | "TRANSITION_GRANT_REPLAYED" | "UNAVAILABLE" | "WORLD_ACCESS_DENIED" | "WORLD_REFERENCE_INVALID";
+
+export type SynexWorldPortalTransitionInput = { "idempotencyKey": string; "instanceId"?: string; "portalRef": { "key": string; "kind": "portal"; "revision": number; }; "source": number; };
+export type SynexWorldPortalTransitionOutput = { "destination"?: { "target": string; }; "grantId"?: string; "instanceId"?: string; "portal": { "key": string; "kind": "portal"; "revision": number; }; "replayed": boolean; "source"?: { "key": string; "kind": "portal"; "revision": number; }; "transitioned": true; };
+export type SynexWorldPortalTransitionError = "CONCURRENT_MODIFICATION" | "CORE_UNAVAILABLE" | "FORBIDDEN" | "INSTANCE_BUCKET_UNAVAILABLE" | "INSTANCE_CLOSED" | "INSTANCE_FULL" | "INSTANCE_NOT_FOUND" | "INTERNAL_ERROR" | "INVALID_ARGUMENT" | "MAP_PACKAGE_UNAVAILABLE" | "OUT_OF_CONTEXT" | "PORTAL_NOT_FOUND" | "PORTAL_TOO_FAR" | "PORTAL_UNAVAILABLE" | "QUERY_LIMIT_EXCEEDED" | "RATE_LIMITED" | "STALE_RESOURCE" | "STALE_WORLD_REF" | "TRANSITION_DENIED" | "TRANSITION_GRANT_EXPIRED" | "TRANSITION_GRANT_REPLAYED" | "UNAVAILABLE" | "WORLD_ACCESS_DENIED" | "WORLD_NOT_FOUND" | "WORLD_REFERENCE_INVALID" | "WRONG_INSTANCE";
+
+export type SynexWorldStateSetInput = { "expectedVersion": number; "idempotencyKey": string; "key": string; "reasonCode": string; "scopeRef": string; "value": unknown; };
+export type SynexWorldStateSetOutput = { "defaulted"?: boolean; "definitionRevision": number; "eventId": string; "key": string; "persistent": boolean; "previousVersion"?: number; "provenance": { "actor": { "ref": string; "type": "resource" | "system" | "user" | "character" | "entity"; }; "reasonCode": string; "sourceResource": string; "timestamp": string; "traceId": string; }; "replayed": boolean; "schemaVersion": number; "scope": { "ref": string; "type": "global" | "region" | "location" | "interior" | "room" | "instance"; }; "value": unknown; "valueType": "boolean" | "integer" | "number" | "string" | "enum" | "structured"; "version": number; };
+export type SynexWorldStateSetError = "CONCURRENT_MODIFICATION" | "CORE_UNAVAILABLE" | "FORBIDDEN" | "INTERNAL_ERROR" | "INVALID_ARGUMENT" | "RATE_LIMITED" | "STALE_RESOURCE" | "STATE_SCHEMA_MISMATCH" | "UNAVAILABLE" | "WORLD_NOT_FOUND" | "WORLD_REFERENCE_INVALID" | "WORLD_STATE_CONFLICT" | "WORLD_STATE_NOT_FOUND" | "WORLD_STATE_SCHEMA_INVALID" | "WORLD_STATE_VALUE_INVALID";
+
 export type SynexEntitiesBucketCreateInput = SynexEntitiesBucketCreatef55e33f6Input;
 export type SynexEntitiesBucketCreateOutput = SynexEntitiesBucketCreatef55e33f6Output;
 export type SynexEntitiesBucketCreateError = SynexEntitiesBucketCreatef55e33f6Error;
@@ -1210,6 +1252,13 @@ export interface GeneratedVersionedContractMap {
   "synex.identity.session.by_source@1.0.0": { input: SynexIdentitySessionBySourceInput; output: SynexIdentitySessionBySourceOutput; error: SynexIdentitySessionBySourceError };
   "synex.runtime.status@1.0.0": { input: SynexRuntimeStatusf3d52e61Input; output: SynexRuntimeStatusf3d52e61Output; error: SynexRuntimeStatusf3d52e61Error };
   "synex.runtime.status@2.0.0": { input: SynexRuntimeStatusc2f5ab45Input; output: SynexRuntimeStatusc2f5ab45Output; error: SynexRuntimeStatusc2f5ab45Error };
+  "synex.world.door.set_state@1.0.0": { input: SynexWorldDoorSetStateInput; output: SynexWorldDoorSetStateOutput; error: SynexWorldDoorSetStateError };
+  "synex.world.instance.close@1.0.0": { input: SynexWorldInstanceCloseInput; output: SynexWorldInstanceCloseOutput; error: SynexWorldInstanceCloseError };
+  "synex.world.instance.create@1.0.0": { input: SynexWorldInstanceCreateInput; output: SynexWorldInstanceCreateOutput; error: SynexWorldInstanceCreateError };
+  "synex.world.instance.join@1.0.0": { input: SynexWorldInstanceJoinInput; output: SynexWorldInstanceJoinOutput; error: SynexWorldInstanceJoinError };
+  "synex.world.instance.leave@1.0.0": { input: SynexWorldInstanceLeaveInput; output: SynexWorldInstanceLeaveOutput; error: SynexWorldInstanceLeaveError };
+  "synex.world.portal.transition@1.0.0": { input: SynexWorldPortalTransitionInput; output: SynexWorldPortalTransitionOutput; error: SynexWorldPortalTransitionError };
+  "synex.world.state.set@1.0.0": { input: SynexWorldStateSetInput; output: SynexWorldStateSetOutput; error: SynexWorldStateSetError };
 }
 
 export interface GeneratedContractMap {
@@ -1382,4 +1431,11 @@ export interface GeneratedContractMap {
   "synex.identity.characters.select": { input: SynexIdentityCharactersSelectInput; output: SynexIdentityCharactersSelectOutput; error: SynexIdentityCharactersSelectError };
   "synex.identity.session.by_source": { input: SynexIdentitySessionBySourceInput; output: SynexIdentitySessionBySourceOutput; error: SynexIdentitySessionBySourceError };
   "synex.runtime.status": { input: SynexRuntimeStatusc2f5ab45Input; output: SynexRuntimeStatusc2f5ab45Output; error: SynexRuntimeStatusc2f5ab45Error };
+  "synex.world.door.set_state": { input: SynexWorldDoorSetStateInput; output: SynexWorldDoorSetStateOutput; error: SynexWorldDoorSetStateError };
+  "synex.world.instance.close": { input: SynexWorldInstanceCloseInput; output: SynexWorldInstanceCloseOutput; error: SynexWorldInstanceCloseError };
+  "synex.world.instance.create": { input: SynexWorldInstanceCreateInput; output: SynexWorldInstanceCreateOutput; error: SynexWorldInstanceCreateError };
+  "synex.world.instance.join": { input: SynexWorldInstanceJoinInput; output: SynexWorldInstanceJoinOutput; error: SynexWorldInstanceJoinError };
+  "synex.world.instance.leave": { input: SynexWorldInstanceLeaveInput; output: SynexWorldInstanceLeaveOutput; error: SynexWorldInstanceLeaveError };
+  "synex.world.portal.transition": { input: SynexWorldPortalTransitionInput; output: SynexWorldPortalTransitionOutput; error: SynexWorldPortalTransitionError };
+  "synex.world.state.set": { input: SynexWorldStateSetInput; output: SynexWorldStateSetOutput; error: SynexWorldStateSetError };
 }

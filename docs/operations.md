@@ -2,7 +2,7 @@
 
 Synex is fail-closed during boot. `synex_core` does not accept gated contract work until its lifecycle reaches `READY`.
 
-This runbook's accepted Production-Beta target is `synex_core` on the documented Core-only profile. `synex_groups`, the server-only `synex_accounts` Financial Engine and the server-only `synex_entities` Entity Authority Engine are separate Experimental Alpha domains. Their notes below describe current source behavior, not accepted production deployment procedures. The same exclusion applies to `synex_control`, bridges, and other non-Core code.
+This runbook's accepted Production-Beta target is `synex_core` on the documented Core-only profile. `synex_groups`, the server-only `synex_accounts` Financial Engine, the server-only `synex_entities` Entity Authority Engine and `synex_world` are separate Experimental Alpha domains. Their notes describe current source behavior, not accepted production deployment procedures. The same exclusion applies to `synex_control`, bridges, and other non-Core code.
 
 ## Boot sequence
 

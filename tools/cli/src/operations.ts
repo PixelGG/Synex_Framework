@@ -787,6 +787,7 @@ function sampleString(schema: JsonSchema): string {
   const candidates = [
     "11111111-1111-4111-8111-111111111111",
     "2000-01-01T00:00:00Z",
+    `a:${"a".repeat(Math.max(1, minimum - 2))}`,
     `synex_${"a".repeat(Math.max(1, minimum - 6))}`,
     `a.${"a".repeat(Math.max(1, minimum - 2))}`,
     "a".repeat(Math.max(1, minimum)),

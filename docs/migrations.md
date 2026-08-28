@@ -2,7 +2,7 @@
 
 Synex migrations are resource-owned, forward-only SQL files. Each runnable data-owning resource declares its ordered files in `synex.resource.json`. The current `synex_core` manifest declares 27 migrations in strict order.
 
-Only Core migrations `001` through `026` belong to the frozen Production-Beta profile. Current Core migration `027_domain_primitives` and every migration under `synex_groups`, `synex_accounts`, `synex_entities`, or a future downstream resource are outside that evidence. Groups, Accounts and Entities are separate Experimental Alpha domains. None is part of the accepted Core installation or upgrade path.
+Only Core migrations `001` through `026` belong to the frozen Production-Beta profile. Current Core migration `027_domain_primitives` and every migration under `synex_groups`, `synex_accounts`, `synex_entities`, `synex_world`, `synex_bridge`, or a future downstream resource are outside that evidence. Groups, Accounts, Entities and World are separate Experimental Alpha domains; Bridge is a separate Experimental Alpha compatibility platform. None is part of the accepted Core installation or upgrade path.
 
 ## Discovery and execution
 
@@ -73,7 +73,13 @@ The current Core-plus-Groups source manifests declare 58 migrations: 27 Core and
 
 The Accounts Alpha manifest separately declares 17 ordered migrations, `001_accounts` through `017_idempotency_principal_scope`. They evolve the original paired ledger into signed 2–16-entry transactions, add reason/currency mint-burn topology, refunds, partial/multiple holds, access policies and restrictions, group-deletion participation, expanded integrity/outbox/control data, V2 archive mirrors, and principal-scoped idempotency.
 
-The Entities Alpha manifest declares four ordered migrations: immutable base `001_entities`, lifecycle/authority extension `002`, bindings/components/states/tags/checkpoints `003`, and database-time authority leases/recovery history `004`. Across Core, Groups, Accounts, and Entities, the current manifests declare 79 migrations. That count is source inventory, not proof that any combined schema or downstream upgrade has passed real-database acceptance.
+The Entities Alpha manifest declares four ordered migrations: immutable base `001_entities`, lifecycle/authority extension `002`, bindings/components/states/tags/checkpoints `003`, and database-time authority leases/recovery history `004`.
+
+The World Alpha manifest declares one ordered migration, `001_world`, for persistent typed state values, authoritative logical door state, and the bounded at-least-once outbox. Static world definitions, process-local instance sessions, routing buckets, runtime handles, NetIDs, diagnostic findings, and native client state are not database-owned World data.
+
+The Bridge Alpha manifest declares one ordered migration, `001_compatibility_identity_metadata`, for provider-scoped legacy identity mappings and bounded compatibility metadata. It does not own Core identity, Groups memberships, Accounts ledger state, or gameplay authority.
+
+Across Core, Groups, Accounts, Entities, World, and Bridge, the current manifests declare 81 migrations. That count is source inventory, not proof that any combined schema or downstream upgrade has passed real-database acceptance.
 
 ## Immutability
 
@@ -93,8 +99,10 @@ The checked-in manifests currently declare these ownership snapshots:
 - `synex_groups` — **Experimental Alpha Organizations Engine:** 31 owned migrations comprising legacy-compatible foundations (`001`–`015`); static definition targets, default membership authority, applied-definition snapshots, capability delegability, persistent extension registries, workflow expiry, dynamic creation policy, deletion lifecycle, creation approvals and slug reservations, scoped attributes, identifier consistency, membership-transition policies, assignment active-member counts, first-class workflow entity identities, registry owner synchronization sessions, and the compatibility-facing character-reference contract (`017`–`032`). Migration ID `016` is intentionally reserved and is not declared in the current manifest;
 - `synex_accounts` — **Experimental Alpha Financial Engine:** 17 owned migrations for currencies, accounts and owners, reason/topology registries, signed multi-leg ledger entries, reversals/refunds, snapshots, partial/multiple holds, roles/grants/policies/restrictions, integrity/reconciliation, character/group deletion journals, non-destructive V2 transaction/entry archive mirrors, audit, outbox attempts, and retry evidence;
 - `synex_entities` — **Experimental Alpha Entity Authority Engine:** four owned migrations for stable definitions/tombstones, namespaced persistent keys, active bindings, components, states, tags, checkpoints, database-time authority leases and retention-bounded recovery history; never runtime handles, NetIDs or Cfx network owners.
+- `synex_world` — **Experimental Alpha World Semantics & Spatial Authority Engine:** one owned migration for persistent typed state values, authoritative logical door rows and bounded at-least-once outbox delivery; never routing buckets, process-local instance sessions, runtime handles, NetIDs, diagnostic findings or client-native ownership.
+- `synex_bridge` — **Experimental Alpha Compatibility Platform:** one owned migration for provider-scoped legacy identity mappings and bounded compatibility metadata; never Core identity authority, Groups membership authority, Accounts ledger state or gameplay ownership.
 
-Do not apply the three non-Core migration sets to a database intended to represent the Core-only acceptance target. Accounts and Entities still require their separate clean-schema, restored-upgrade, FXServer and restart/recovery acceptance; future rework in any downstream domain may require a new migration and upgrade decision.
+Do not apply the five non-Core migration sets to a database intended to represent the Core-only acceptance target. Groups, Accounts, Entities, World, and Bridge still require their separate clean-schema, restored-upgrade, FXServer and restart/recovery acceptance; future rework in any downstream domain may require a new migration and upgrade decision.
 
 The exact table model and constraints are documented in [Database model](reference/database.md).
 

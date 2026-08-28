@@ -1,5 +1,8 @@
 SynexEntityBucketOperations = {}
 
+local BucketIdempotency = assert(SynexEntityBucketIdempotency,
+    'bucket idempotency must be loaded first')
+
 function SynexEntityBucketOperations.create(options)
     assert(type(options) == 'table', 'bucket operation options are required')
     local validation = assert(options.validation, 'bucket operations validation is required')
@@ -27,6 +30,42 @@ function SynexEntityBucketOperations.create(options)
 
     local function failure(code, message, retryable, context)
         return foundation.failure(code, message, retryable == true, context)
+    end
+
+    local function idempotent(operation, request, context, caller, required, handler)
+        local key = type(context) == 'table' and context.idempotencyKey or nil
+        if key == nil then
+            if required then
+                return failure('INVALID_ARGUMENT',
+                    'An idempotency key is required for this operation', false, context)
+            end
+            return handler()
+        end
+        if type(key) ~= 'string' or #key < 8 or #key > 36
+            or key:match('^[A-Za-z0-9_.:%-]+$') == nil then
+            return failure('INVALID_ARGUMENT', 'The idempotency key is invalid', false, context)
+        end
+        local scopedOperation = BucketIdempotency.operation(operation, caller)
+        if not scopedOperation then
+            return failure('INVALID_ARGUMENT',
+                'The idempotency caller identity is invalid', false, context)
+        end
+        local api = coreRef.value
+        if not api or type(api.Idempotency) ~= 'table'
+            or not foundation.isCallable(api.Idempotency.run) then
+            return failure('CORE_UNAVAILABLE',
+                'The Core idempotency service is unavailable', true, context)
+        end
+        return api.Idempotency.run(scopedOperation, key, {
+            caller = caller,
+            request = request,
+            version = type(context) == 'table' and context.version or nil,
+        }, handler, {
+            lockSeconds = 30,
+            maximumRequestBytes = 16384,
+            maximumResponseBytes = 16384,
+            ttlSeconds = 86400,
+        })
     end
 
     local function contractError(operationError, context)
@@ -156,11 +195,15 @@ function SynexEntityBucketOperations.create(options)
     function operations.create(request, context)
         local caller, callerError = foundation.getCaller(context)
         if not caller then return nil, callerError end
-        local allowed, rateError = foundation.takeRateLimit(caller, 3, context, false)
-        if not allowed then return nil, rateError end
-        return foundation.withOwnerMutation(caller, context, function()
-            local normalized, normalizeError = policy.normalizeCreate(request, context)
-            if not normalized then return nil, normalizeError end
+        local normalized, normalizeError = policy.normalizeCreate(request, context)
+        if not normalized then return nil, normalizeError end
+        local requireIdempotency = type(context) == 'table'
+            and context.version == '2.0.0'
+        return idempotent('bucket.create', request, context, caller,
+            requireIdempotency, function()
+            local allowed, rateError = foundation.takeRateLimit(caller, 3, context, false)
+            if not allowed then return nil, rateError end
+            return foundation.withOwnerMutation(caller, context, function()
             if foundation.tableCount(buckets) >= config.maxBuckets then
                 return failure('UNAVAILABLE',
                     'The managed routing bucket limit has been reached', true, context)
@@ -211,6 +254,7 @@ function SynexEntityBucketOperations.create(options)
                 }
             end
             return policy.snapshot(bucket)
+            end)
         end)
     end
 
@@ -586,18 +630,21 @@ function SynexEntityBucketOperations.create(options)
     function operations.movePlayer(request, context)
         local caller, callerError = foundation.getCaller(context)
         if not caller then return nil, callerError end
-        local allowed, rateError = foundation.takeRateLimit(caller, 1, context, false)
-        if not allowed then return nil, rateError end
         local valid, requestError = plainObject(request, {
             bucket = true, bucketGeneration = true, source = true,
         }, context)
         if not valid then return nil, requestError end
         if type(request.source) ~= 'number' or request.source % 1 ~= 0
-            or request.source < 1 or request.source > 65535
-            or not ports.getPlayerName(tostring(request.source)) then
-            return failure('NOT_FOUND', 'The player source is not connected', false, context)
+            or request.source < 1 or request.source > 65535 then
+            return failure('INVALID_ARGUMENT', 'The player source is invalid', false, context)
         end
-        return foundation.withOwnerMutation(caller, context, function()
+        return idempotent('bucket.move-player', request, context, caller, false, function()
+            local allowed, rateError = foundation.takeRateLimit(caller, 1, context, false)
+            if not allowed then return nil, rateError end
+            if not ports.getPlayerName(tostring(request.source)) then
+                return failure('NOT_FOUND', 'The player source is not connected', false, context)
+            end
+            return foundation.withOwnerMutation(caller, context, function()
             local moved, moveError = lanes.with('player:' .. tostring(request.source),
                 'bucket_move_player', context, function()
                 local target, bucketError = entityRuntime.resolveBucket(
@@ -608,6 +655,7 @@ function SynexEntityBucketOperations.create(options)
             end)
             if not moved then return nil, contractError(moveError, context) end
             return moved
+            end)
         end)
     end
 
@@ -625,6 +673,7 @@ function SynexEntityBucketOperations.create(options)
         registry = registry,
         contractError = contractError,
         validation = validation,
+        idempotent = idempotent,
     }
     assert(type(SynexEntityBucketLifecycle) == 'table'
         and type(SynexEntityBucketLifecycle.attach) == 'function',

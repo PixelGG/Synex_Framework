@@ -1013,9 +1013,51 @@ SynexLuaGeneratedContracts = {
       ["name"] = "synex.runtime.status",
       ["provider"] = "synex_core",
       ["version"] = "2.0.0"
+    },
+    ["synex.world.door.set_state"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.door.set_state",
+      ["provider"] = "synex_world",
+      ["version"] = "1.0.0"
+    },
+    ["synex.world.instance.close"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.instance.close",
+      ["provider"] = "synex_world",
+      ["version"] = "1.0.0"
+    },
+    ["synex.world.instance.create"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.instance.create",
+      ["provider"] = "synex_world",
+      ["version"] = "1.0.0"
+    },
+    ["synex.world.instance.join"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.instance.join",
+      ["provider"] = "synex_world",
+      ["version"] = "1.0.0"
+    },
+    ["synex.world.instance.leave"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.instance.leave",
+      ["provider"] = "synex_world",
+      ["version"] = "1.0.0"
+    },
+    ["synex.world.portal.transition"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.portal.transition",
+      ["provider"] = "synex_world",
+      ["version"] = "1.0.0"
+    },
+    ["synex.world.state.set"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.state.set",
+      ["provider"] = "synex_world",
+      ["version"] = "1.0.0"
     }
   },
-  ["sourceHash"] = "b9ccdd473cdee6e47ce04d7615afe12f1d3f9ce0a103108f79cba44274f4183c",
+  ["sourceHash"] = "d221dcd6ed86651cadea6bed9fed5ab2d92470d4727475fa81e9454a194f7d19",
   ["versions"] = {
     ["synex.accounts.access.check@1.0.0"] = {
       ["kind"] = "rpc",
@@ -2042,6 +2084,48 @@ SynexLuaGeneratedContracts = {
       ["name"] = "synex.runtime.status",
       ["provider"] = "synex_core",
       ["version"] = "2.0.0"
+    },
+    ["synex.world.door.set_state@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.door.set_state",
+      ["provider"] = "synex_world",
+      ["version"] = "1.0.0"
+    },
+    ["synex.world.instance.close@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.instance.close",
+      ["provider"] = "synex_world",
+      ["version"] = "1.0.0"
+    },
+    ["synex.world.instance.create@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.instance.create",
+      ["provider"] = "synex_world",
+      ["version"] = "1.0.0"
+    },
+    ["synex.world.instance.join@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.instance.join",
+      ["provider"] = "synex_world",
+      ["version"] = "1.0.0"
+    },
+    ["synex.world.instance.leave@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.instance.leave",
+      ["provider"] = "synex_world",
+      ["version"] = "1.0.0"
+    },
+    ["synex.world.portal.transition@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.portal.transition",
+      ["provider"] = "synex_world",
+      ["version"] = "1.0.0"
+    },
+    ["synex.world.state.set@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.world.state.set",
+      ["provider"] = "synex_world",
+      ["version"] = "1.0.0"
     }
   }
 }

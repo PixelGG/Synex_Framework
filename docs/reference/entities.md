@@ -114,6 +114,8 @@ The source declares 33 experimental, closed-schema, capability-gated `network: n
 
 Canonical request/response schemas, rate limits and structured error sets are generated from [`entities.contracts.json`](../../resources/synex_entities/contracts/entities.contracts.json). The [generated contract catalog](../../packages/contracts/generated/docs/contracts.md) is the API-level reference.
 
+`synex.entities.bucket.create@2.0.0` requires a Core invocation `idempotencyKey` of 8–36 safe characters. The key is durably bound to the real caller, contract version and complete request before a bucket is allocated, so replaying an exact request after a lost response returns the original bucket reference rather than allocating another bucket. The compatibility-only v1 create form remains callable without a key. Bucket destroy and player-move calls preserve their historical no-key compatibility, but any supplied invocation key receives the same caller-bound durable replay and changed-request conflict protection. A consumer coordinating multiple bucket side effects must assign a distinct stable key to every create, move and destroy stage.
+
 Before a failure crosses Core's provider boundary, Entities restricts it to the exact generated error set for the invoked contract/version. Internal database, persistence, capability and idempotency failures are mapped to compatible stable codes; provider trace IDs and native/driver details are removed; only bounded quota scope/limit details may survive. Core attaches the consumer-facing trace ID.
 
 Every consumer must declare the exact contract under `contracts.consume`, request its capability and receive an explicit Core policy grant. A grant without a declaration, or a declaration without a grant, fails closed.

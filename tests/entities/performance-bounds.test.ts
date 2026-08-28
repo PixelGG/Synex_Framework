@@ -23,7 +23,7 @@ test('Entity runner rejects parameters outside its deterministic safety bounds',
 
 test('deterministic benchmark executes every required Entity hot path without runtime claims', () => {
   const report = runDeterministicBenchmark(10);
-  assert.equal(report.suiteVersion, 7);
+  assert.equal(report.suiteVersion, 8);
   for (const name of required) {
     const measurement = report.benchmarks[name];
     assert.ok(measurement, name);

@@ -10,6 +10,7 @@ function SynexEntityBucketLifecycle.attach(operations, shared)
     local entityRuntime = assert(shared.entityRuntime, 'bucket lifecycle runtime is required')
     local failure = assert(shared.failure, 'bucket lifecycle failure is required')
     local foundation = assert(shared.foundation, 'bucket lifecycle foundation is required')
+    local idempotent = assert(shared.idempotent, 'bucket lifecycle idempotency is required')
     local lanes = assert(shared.lanes, 'bucket lifecycle lanes are required')
     local observability = assert(shared.observability,
         'bucket lifecycle observability is required')
@@ -185,18 +186,32 @@ function SynexEntityBucketLifecycle.attach(operations, shared)
     function operations.destroy(request, context)
         local caller, callerError = foundation.getCaller(context)
         if not caller then return nil, callerError end
-        local allowed, rateError = foundation.takeRateLimit(caller, 3, context, false)
-        if not allowed then return nil, rateError end
-        return foundation.withOwnerMutation(caller, context, function()
-            local bucket, bucketError = resolveDestroyTarget(request, caller, context)
-            if not bucket then return nil, bucketError end
-            local destroyed, destroyError = operations.destroyRecord(
-                bucket,
-                ports.getGameTimer() + config.bucketCleanupTimeoutMs,
-                context
-            )
-            if not destroyed then return nil, contractError(destroyError, context) end
-            return { bucket = request.bucket, destroyed = true }
+        if type(request) ~= 'table' or getmetatable(request) ~= nil then
+            return failure('INVALID_ARGUMENT', 'request must be a plain object', false, context)
+        end
+        for key in pairs(request) do
+            if key ~= 'bucket' and key ~= 'generation' then
+                return failure('INVALID_ARGUMENT',
+                    'request contains an unknown field', false, context)
+            end
+        end
+        local reference, referenceError = validation.validateBucketReference(
+            request.bucket, request.generation, false)
+        if not reference then return nil, referenceError end
+        return idempotent('bucket.destroy', request, context, caller, false, function()
+            local allowed, rateError = foundation.takeRateLimit(caller, 3, context, false)
+            if not allowed then return nil, rateError end
+            return foundation.withOwnerMutation(caller, context, function()
+                local bucket, bucketError = resolveDestroyTarget(request, caller, context)
+                if not bucket then return nil, bucketError end
+                local destroyed, destroyError = operations.destroyRecord(
+                    bucket,
+                    ports.getGameTimer() + config.bucketCleanupTimeoutMs,
+                    context
+                )
+                if not destroyed then return nil, contractError(destroyError, context) end
+                return { bucket = reference.id, destroyed = true }
+            end)
         end)
     end
 

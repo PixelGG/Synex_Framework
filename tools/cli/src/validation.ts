@@ -22,6 +22,7 @@ import {
 } from "./schemas.ts";
 import { flattenContracts, loadContractSources } from "./contracts.ts";
 import { parseVersion, satisfiesVersionRange } from "./semver.ts";
+import { loadWorldBundleCatalog } from "./world.ts";
 
 export interface ResourceManifest {
   schema: number;
@@ -80,6 +81,7 @@ export interface ResourceManifest {
   migrations: Array<{ id: string; path: string; transactional: boolean }>;
   dataOwnership: { tables: string[]; characterDelete: string };
   stateSnapshot: { supported: boolean; schemaVersion: number };
+  worldBundles?: string[];
 }
 
 export interface LoadedResourceManifest {
@@ -94,6 +96,7 @@ export interface ValidationReport {
   resources: number;
   contracts: number;
   states: number;
+  worldBundles: number;
   diagnostics: Diagnostic[];
 }
 
@@ -358,6 +361,17 @@ export async function validateRepository(
   const knownContracts = new Map(
     flattenContracts(globalContractSources.sources).map((contract) => [contract.name, contract]),
   );
+
+  const selectedResourceNames = new Set(
+    resources.manifests.map((resource) => resource.manifest.name),
+  );
+  const worldCatalog = await loadWorldBundleCatalog(
+    repositoryRoot,
+    globalResources.manifests,
+    schemas,
+    selectedResourceNames,
+  );
+  diagnostics.push(...worldCatalog.diagnostics);
 
   const stateFiles = await walkFiles(selectedTarget, (path) => path.endsWith(".state.json"));
   for (const file of stateFiles) {
@@ -628,10 +642,11 @@ export async function validateRepository(
   return {
     target: displayPath(repositoryRoot, selectedTarget),
     filesChecked: resources.manifests.length + contractSources.sources.length + stateFiles.length
-      + configurationFiles.length + fxmanifests.length,
+      + configurationFiles.length + fxmanifests.length + worldCatalog.declaredBundleFiles,
     resources: resources.manifests.length,
     contracts: contractSources.sources.reduce((total, source) => total + source.collection.contracts.length, 0),
     states: stateFiles.length,
+    worldBundles: worldCatalog.bundles.filter((bundle) => selectedResourceNames.has(bundle.ownerResource)).length,
     diagnostics,
   };
 }

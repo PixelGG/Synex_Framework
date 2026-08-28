@@ -1,0 +1,145 @@
+:root,
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: transparent !important;
+}
+
+html,
+body {
+  overflow: hidden;
+}
+
+body,
+#root {
+  pointer-events: none;
+}
+
+body[data-sx-open='true'],
+body[data-sx-open='true'] #root {
+  pointer-events: auto;
+}
+
+#root:empty {
+  display: none;
+}
+
+.sx-dialog-layer {
+  padding:
+    max(var(--synex-safe-top, 0px), var(--sx-space-5, 1.25rem))
+    max(var(--synex-safe-right, 0px), var(--sx-space-5, 1.25rem))
+    max(var(--synex-safe-bottom, 0px), var(--sx-space-5, 1.25rem))
+    max(var(--synex-safe-left, 0px), var(--sx-space-5, 1.25rem));
+}
+
+.sx-runtime-form {
+  width: min(100%, 42rem);
+}
+
+.sx-runtime-menu,
+.sx-runtime-options {
+  min-width: min(30rem, 78vw);
+}
+
+.sx-runtime-menu__section + .sx-runtime-menu__section {
+  margin-top: var(--sx-space-4, 1rem);
+  padding-top: var(--sx-space-4, 1rem);
+  border-top: 1px solid var(--sx-color-border);
+}
+
+.sx-runtime-menu__label {
+  margin: 0 0 var(--sx-space-2, 0.5rem);
+  color: var(--sx-color-text-muted);
+  font: var(--sx-type-label, 600 0.75rem/1.2 'IBM Plex Sans Variable', sans-serif);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.sx-runtime-menu .sx-button,
+.sx-runtime-options .sx-button {
+  width: 100%;
+  justify-content: space-between;
+  text-align: left;
+}
+
+.sx-runtime-option-label,
+.sx-runtime-menu-option {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--sx-space-2, 0.5rem);
+}
+
+.sx-runtime-option-label > span:not(.sx-key-hint),
+.sx-runtime-menu-option {
+  flex: 1;
+  min-width: 0;
+}
+
+.sx-runtime-menu-option {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+}
+
+.sx-runtime-menu-option small {
+  color: var(--sx-color-text-muted);
+  font-size: var(--sx-font-size-caption, 0.75rem);
+  font-weight: 400;
+}
+
+.sx-runtime-context-menu {
+  position: fixed;
+  top: max(var(--synex-safe-top, 0px), min(var(--sx-runtime-anchor-y, 50vh), calc(100vh - 22rem)));
+  left: max(var(--synex-safe-left, 0px), min(var(--sx-runtime-anchor-x, 50vw), calc(100vw - 30rem)));
+  width: min(28rem, calc(100vw - var(--synex-safe-left, 0px) - var(--synex-safe-right, 0px) - 2rem));
+  max-height: min(34rem, calc(100vh - var(--synex-safe-top, 0px) - var(--synex-safe-bottom, 0px) - 2rem));
+}
+
+.sx-runtime-options small {
+  display: block;
+  color: var(--sx-color-text-muted);
+  font-size: var(--sx-font-size-caption, 0.75rem);
+}
+
+.sx-runtime-hints {
+  display: flex;
+  align-items: center;
+  gap: var(--sx-space-2, 0.5rem);
+  margin-top: var(--sx-space-5, 1.25rem);
+  color: var(--sx-color-text-muted);
+  font-size: var(--sx-font-size-caption, 0.75rem);
+}
+
+.sx-runtime-hints span + .sx-key-hint {
+  margin-left: var(--sx-space-3, 0.75rem);
+}
+
+.sx-runtime-error {
+  position: fixed;
+  inset: auto max(var(--synex-safe-right, 0px), 1.5rem) max(var(--synex-safe-bottom, 0px), 1.5rem) auto;
+  display: grid;
+  max-width: 28rem;
+  gap: 0.4rem;
+  padding: 1rem 1.2rem;
+  color: var(--sx-color-text);
+  background: var(--sx-color-surface-raised);
+  border: 1px solid var(--sx-color-danger);
+  border-radius: 0.35rem 0.35rem 0.35rem 0;
+  pointer-events: auto;
+}
+
+@media (max-width: 640px) {
+  .sx-dialog-layer {
+    align-items: end;
+    padding: max(var(--synex-safe-top, 0px), 0.75rem) max(var(--synex-safe-right, 0px), 0.75rem) max(var(--synex-safe-bottom, 0px), 0.75rem) max(var(--synex-safe-left, 0px), 0.75rem);
+  }
+
+  .sx-dialog {
+    width: 100%;
+    max-height: min(90vh, calc(var(--synex-screen-height, 100vh) - 1.5rem));
+  }
+}

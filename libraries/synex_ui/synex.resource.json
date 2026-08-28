@@ -1,0 +1,47 @@
+{
+  "$schema": "../../schemas/resource.schema.json",
+  "schema": 1,
+  "name": "synex_ui",
+  "version": "0.1.0",
+  "synex": "^1.0.0",
+  "critical": false,
+  "capabilities": {
+    "request": []
+  },
+  "services": {
+    "provide": [],
+    "require": [],
+    "optional": []
+  },
+  "contracts": {
+    "provide": [],
+    "consume": []
+  },
+  "events": {
+    "publish": [],
+    "subscribe": []
+  },
+  "hooks": {
+    "register": [],
+    "run": []
+  },
+  "dependencies": {
+    "required": [
+      {
+        "name": "synex_core",
+        "version": ">=0.1.0"
+      }
+    ],
+    "optional": [],
+    "development": []
+  },
+  "migrations": [],
+  "dataOwnership": {
+    "tables": [],
+    "characterDelete": "none"
+  },
+  "stateSnapshot": {
+    "supported": false,
+    "schemaVersion": 1
+  }
+}

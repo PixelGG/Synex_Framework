@@ -1,0 +1,139 @@
+{
+  "$schema": "../../../schemas/world-bundle.schema.json",
+  "schema": 1,
+  "key": "synex_world_companion:example",
+  "version": "0.1.0",
+  "dependencies": [],
+  "objects": [
+    {
+      "kind": "map_package",
+      "key": "synex_world_companion:example_map",
+      "label": "Example custom MLO",
+      "resourceName": "custom_mlo_example",
+      "packageType": "mlo",
+      "expectedResourceState": "started",
+      "locations": ["synex_world_companion:example_site"],
+      "dependencies": [],
+      "required": true
+    },
+    {
+      "kind": "location",
+      "key": "synex_world_companion:example_site",
+      "label": "Example Site",
+      "tags": ["synex.example.location"],
+      "mapPackages": ["synex_world_companion:example_map"],
+      "geometry": {
+        "type": "composite",
+        "operation": "union",
+        "geometries": [
+          {
+            "type": "aabb",
+            "min": { "x": -12.0, "y": -10.0, "z": 8.0 },
+            "max": { "x": 12.0, "y": 10.0, "z": 18.0 }
+          },
+          {
+            "type": "aabb",
+            "min": { "x": -6.0, "y": -16.0, "z": 8.0 },
+            "max": { "x": 6.0, "y": -10.0, "z": 14.0 }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "interior",
+      "key": "synex_world_companion:example_site.main",
+      "parent": "synex_world_companion:example_site",
+      "label": "Main Interior",
+      "mapPackages": ["synex_world_companion:example_map"],
+      "geometry": {
+        "type": "aabb",
+        "min": { "x": -10.0, "y": -8.0, "z": 9.0 },
+        "max": { "x": 10.0, "y": 8.0, "z": 17.0 }
+      }
+    },
+    {
+      "kind": "room",
+      "key": "synex_world_companion:example_site.lobby",
+      "parent": "synex_world_companion:example_site.main",
+      "label": "Lobby",
+      "geometry": {
+        "type": "box",
+        "center": { "x": 0.0, "y": -3.0, "z": 12.0 },
+        "size": { "x": 12.0, "y": 8.0, "z": 6.0 },
+        "heading": 0.0
+      }
+    },
+    {
+      "kind": "anchor",
+      "key": "synex_world_companion:example_site.reception",
+      "parent": "synex_world_companion:example_site.lobby",
+      "label": "Reception Counter",
+      "position": { "x": 0.0, "y": -1.5, "z": 10.0 },
+      "radius": 0.75,
+      "tags": ["synex.anchor.counter", "synex.example.reception"]
+    },
+    {
+      "kind": "door",
+      "key": "synex_world_companion:example_site.front_door",
+      "parent": "synex_world_companion:example_site.main",
+      "label": "Front Door",
+      "position": { "x": 0.0, "y": -8.0, "z": 10.0 },
+      "heading": 0.0,
+      "leaves": [
+        {
+          "id": "left",
+          "model": 1234,
+          "position": { "x": -1.0, "y": -8.0, "z": 10.0 },
+          "heading": 0.0
+        },
+        {
+          "id": "right",
+          "model": 1234,
+          "position": { "x": 1.0, "y": -8.0, "z": 10.0 },
+          "heading": 180.0
+        }
+      ],
+      "defaultState": "LOCKED",
+      "persistent": false,
+      "tags": ["synex.example.entrance"]
+    },
+    {
+      "kind": "world_state_definition",
+      "key": "synex_world_companion:example_site.lockdown",
+      "parent": "synex_world_companion:example_site",
+      "label": "Example lockdown",
+      "stateType": "boolean",
+      "scope": "location",
+      "persistence": "runtime",
+      "schemaVersion": 1,
+      "default": false
+    },
+    {
+      "kind": "portal",
+      "key": "synex_world_companion:example_site.exit",
+      "parent": "synex_world_companion:example_site.lobby",
+      "label": "Example Exit",
+      "portalType": "teleport",
+      "source": {
+        "position": { "x": 0.0, "y": 6.0, "z": 10.0 },
+        "radius": 1.5
+      },
+      "destination": {
+        "position": { "x": 0.0, "y": -14.0, "z": 10.0 },
+        "heading": 180.0
+      },
+      "accessPolicy": {
+        "stateRequirements": [
+          {
+            "key": "synex_world_companion:example_site.lockdown",
+            "scopeRef": "synex_world_companion:example_site",
+            "operator": "equals",
+            "value": false
+          }
+        ]
+      },
+      "enabled": true,
+      "tags": ["synex.anchor.exit"]
+    }
+  ]
+}

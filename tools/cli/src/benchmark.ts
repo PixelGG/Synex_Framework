@@ -7,7 +7,7 @@ import { CliError } from "./errors.ts";
 import { canonicalJson, compareText, isRecord } from "./filesystem.ts";
 import { scanLuaText } from "./security.ts";
 
-const SUITE_VERSION = 7;
+const SUITE_VERSION = 8;
 const SAMPLE_COUNT = 5;
 const REGRESSION_THRESHOLD = 0.25;
 const BENCHMARK_SEED = 0x5a17;
@@ -16,7 +16,7 @@ const MAXIMUM_ITERATIONS = 100_000;
 
 export interface BenchmarkMeasurement {
   workload: string;
-  execution: "node" | "synex_groups_lua" | "synex_accounts_lua" | "synex_entities_lua" | "synex_bridge_lua";
+  execution: "node" | "synex_groups_lua" | "synex_accounts_lua" | "synex_entities_lua" | "synex_bridge_lua" | "synex_world_lua";
   medianMilliseconds: number;
   operationsPerSecond: number;
   samplesMilliseconds: number[];
@@ -114,6 +114,25 @@ const BRIDGE_LUA_WORKLOADS = {
   bridge_telemetry_record:
     "Actual synex_bridge bounded compatibility telemetry aggregation into one fixed owner/surface series.",
 } as const;
+
+const WORLD_LUA_WORKLOADS = {
+  world_query_at:
+    "Actual synex_world Context.queryAt path through compiled geometry and the hierarchical spatial index over the fixed 66,000-object World fixture.",
+  world_query_nearby_10m:
+    "Actual synex_world Context.queryNearby 10m path through the hierarchical spatial index over the fixed 66,000-object World fixture.",
+  world_query_nearby_100m:
+    "Actual synex_world Context.queryNearby 100m path through the hierarchical spatial index over the fixed 66,000-object World fixture.",
+  world_context_resolve:
+    "Actual synex_world canonical Context.resolve path over the fixed 66,000-object World fixture.",
+  world_anchor_resolve:
+    "Actual synex_world revision-fenced Registry.resolve path for a compiled semantic Anchor.",
+  world_door_resolve:
+    "Actual synex_world revision-fenced Registry.resolve path for a compiled Door.",
+  world_access_check:
+    "Actual synex_world Access.check path with active-session revalidation and a deterministic in-memory Groups capability port.",
+} as const;
+
+const MAXIMUM_WORLD_ITERATIONS = 5_000;
 
 function measureGroupsLua(iterations: number): { measurements: Record<string, BenchmarkMeasurement>; checksum: number } {
   const runnerExtension = import.meta.url.endsWith(".ts") ? "ts" : "js";
@@ -335,6 +354,65 @@ function measureBridgeLua(iterations: number): { measurements: Record<string, Be
   return { measurements, checksum: decoded.checksum >>> 0 };
 }
 
+function measureWorldLua(iterations: number): { measurements: Record<string, BenchmarkMeasurement>; checksum: number } {
+  const measuredIterations = Math.min(iterations, MAXIMUM_WORLD_ITERATIONS);
+  const runnerExtension = import.meta.url.endsWith(".ts") ? "ts" : "js";
+  const runner = fileURLToPath(new URL(`./world-benchmark-runner.${runnerExtension}`, import.meta.url));
+  const child = spawnSync(process.execPath, [
+    "--no-warnings",
+    "--experimental-strip-types",
+    runner,
+    String(measuredIterations),
+    String(SAMPLE_COUNT),
+    String(BENCHMARK_SEED),
+  ], {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 120_000,
+    maxBuffer: 1024 * 1024,
+  });
+  if (child.error || child.status !== 0) {
+    const reason = child.error?.message || child.stderr.trim() || "embedded Lua runner exited unsuccessfully";
+    throw new CliError(`World Lua benchmark failed: ${reason}`, 1);
+  }
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(child.stdout);
+  } catch {
+    throw new CliError("World Lua benchmark returned invalid JSON.", 1);
+  }
+  if (!isRecord(decoded) || !isRecord(decoded.measurements) || !isRecord(decoded.fixture)
+    || decoded.fixture.anchors !== 50_000 || decoded.fixture.zones !== 10_000
+    || decoded.fixture.doors !== 5_000 || decoded.fixture.locations !== 1_000
+    || decoded.fixture.total !== 66_000
+    || typeof decoded.checksum !== "number" || !Number.isInteger(decoded.checksum)) {
+    throw new CliError("World Lua benchmark returned an invalid report or scale fixture.", 1);
+  }
+  const measurements: Record<string, BenchmarkMeasurement> = {};
+  for (const [name, workload] of Object.entries(WORLD_LUA_WORKLOADS)) {
+    const raw = decoded.measurements[name];
+    if (!isRecord(raw) || !Array.isArray(raw.samplesMilliseconds)
+      || raw.samplesMilliseconds.length !== SAMPLE_COUNT
+      || typeof raw.checksum !== "number" || !Number.isInteger(raw.checksum)) {
+      throw new CliError(`World Lua benchmark omitted or corrupted ${name}.`, 1);
+    }
+    const samples = raw.samplesMilliseconds;
+    if (!samples.every((value): value is number =>
+      typeof value === "number" && Number.isFinite(value) && value >= 0)) {
+      throw new CliError(`World Lua benchmark returned invalid timings for ${name}.`, 1);
+    }
+    const medianMilliseconds = median(samples);
+    measurements[name] = {
+      workload: `${workload} Uses ${measuredIterations} timed operations per sample (capped at ${MAXIMUM_WORLD_ITERATIONS}).`,
+      execution: "synex_world_lua",
+      medianMilliseconds: Number(medianMilliseconds.toFixed(3)),
+      operationsPerSecond: Math.round((measuredIterations / Math.max(medianMilliseconds, 0.001)) * 1_000),
+      samplesMilliseconds: samples.map((value) => Number(value.toFixed(3))),
+    };
+  }
+  return { measurements, checksum: decoded.checksum >>> 0 };
+}
+
 function measure(
   iterations: number,
   workload: string,
@@ -362,7 +440,7 @@ function measure(
   };
 }
 
-function parseBaseline(value: unknown): { suiteVersion: number; iterations: number; runtime: BenchmarkReport["runtime"]; benchmarks: Record<string, BenchmarkMeasurement> } | null {
+export function parseBenchmarkBaseline(value: unknown): { suiteVersion: number; iterations: number; runtime: BenchmarkReport["runtime"]; benchmarks: Record<string, BenchmarkMeasurement> } | null {
   if (!isRecord(value) || typeof value.suiteVersion !== "number" || typeof value.iterations !== "number"
     || !isRecord(value.runtime) || !isRecord(value.benchmarks)) return null;
   if (typeof value.runtime.node !== "string" || typeof value.runtime.platform !== "string" || typeof value.runtime.architecture !== "string") return null;
@@ -374,6 +452,7 @@ function parseBaseline(value: unknown): { suiteVersion: number; iterations: numb
       workload: raw.workload,
       execution: raw.execution === "synex_groups_lua" || raw.execution === "synex_accounts_lua"
         || raw.execution === "synex_entities_lua" || raw.execution === "synex_bridge_lua"
+        || raw.execution === "synex_world_lua"
         ? raw.execution
         : "node",
       operationsPerSecond: raw.operationsPerSecond,
@@ -472,6 +551,11 @@ export function runDeterministicBenchmark(iterations = 5_000, rawBaseline?: unkn
     measurements[name] = measurement;
   }
   checksum = (checksum + bridgeLua.checksum) >>> 0;
+  const worldLua = measureWorldLua(iterations);
+  for (const [name, measurement] of Object.entries(worldLua.measurements)) {
+    measurements[name] = measurement;
+  }
+  checksum = (checksum + worldLua.checksum) >>> 0;
   add("cache_lookup", "Bounded 512-entry Map cache with a deterministic mixed hit/miss workload.", (index) => {
     const key = index % 5 === 0 ? `miss_${(index + BENCHMARK_SEED) & 1_023}` : `cache_${(index + BENCHMARK_SEED) & 511}`;
     const cached = cache.get(key);
@@ -494,7 +578,7 @@ export function runDeterministicBenchmark(iterations = 5_000, rawBaseline?: unkn
   const regressions: BenchmarkReport["regressions"] = [];
   let baseline = { compared: false, reason: "No baseline supplied; use --output to capture one and --baseline to compare it." };
   if (rawBaseline !== undefined) {
-    const parsed = parseBaseline(rawBaseline);
+    const parsed = parseBenchmarkBaseline(rawBaseline);
     if (!parsed) {
       throw new CliError("Benchmark baseline is not a valid Synex benchmark report.", 2);
     }
@@ -544,6 +628,6 @@ export function runDeterministicBenchmark(iterations = 5_000, rawBaseline?: unkn
     canonicalJson: { milliseconds: canonical.medianMilliseconds, operationsPerSecond: canonical.operationsPerSecond },
     luaScan: { milliseconds: luaScan.medianMilliseconds, operationsPerSecond: luaScan.operationsPerSecond },
     checksum,
-    disclaimer: "Deterministic local headless microbenchmark only. Groups, Accounts, and Entities measurements execute actual Synex Lua service, domain, validation, registry, repository, and spatial-index modules in an embedded Wasmoon VM with deterministic in-memory adapters. Bridge measurements execute its actual projection, validation, resolver, and telemetry kernel modules with deterministic in-memory fixtures. Groups, Accounts, and Bridge exclude FXServer, Cfx networking, and MariaDB I/O. Entity measurements exclude FXServer scheduling, FiveM natives, OneSync entity creation, Cfx networking, MariaDB I/O, and production concurrency. Results are not a FiveM runtime or production performance claim.",
+    disclaimer: "Deterministic local headless microbenchmark only. Groups, Accounts, Entities, and World measurements execute actual Synex Lua service/domain modules in an embedded Wasmoon VM with deterministic in-memory adapters. Bridge measurements execute its actual projection, validation, resolver, and telemetry kernel modules with deterministic in-memory fixtures. Groups, Accounts, and Bridge exclude FXServer, Cfx networking, and MariaDB I/O. Entity measurements exclude FXServer scheduling, FiveM natives, OneSync entity creation, Cfx networking, MariaDB I/O, and production concurrency. World measurements use 50,000 Anchors, 10,000 Zones, 5,000 Doors, and 1,000 Locations, but exclude FXServer scheduling, FiveM natives, OneSync scope/replication, MariaDB I/O/locking, Cfx transport, client rendering, workers, and production concurrency. Results are local regression evidence only, not a FiveM runtime or production performance claim, and not server-capacity, compatibility, concurrency, or competitor evidence.",
   };
 }

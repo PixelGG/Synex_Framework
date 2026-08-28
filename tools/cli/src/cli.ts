@@ -21,6 +21,8 @@ export {
   renderContractArtifacts,
 } from "./contracts.ts";
 export { validateRepository } from "./validation.ts";
+export { loadWorldBundleCatalog, runWorldCommand } from "./world.ts";
+export type { WorldBundleRecord, WorldCatalog, WorldObjectRecord } from "./world.ts";
 export { scanLuaText, scanSecurity, scanTypeScriptText } from "./security.ts";
 export { satisfiesVersionRange } from "./semver.ts";
 export { compareContracts, scanCompatibility } from "./compatibility.ts";

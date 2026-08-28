@@ -74,7 +74,16 @@ factories.resourceManifest = function(deps)
         capability = true,
         action = true,
         integer = true,
+        ['numeric-string'] = true,
+        boolean = true,
         text = true
+    }
+    local controlProviderAccessClasses = {
+        general = true,
+        audit = true,
+        security = true,
+        financial = true,
+        identifiers = true
     }
     local function validControlIdentifier(value, maximum)
         return type(value) == 'string' and #value >= 2 and #value <= maximum
@@ -157,9 +166,9 @@ factories.resourceManifest = function(deps)
                     if field.format ~= 'integer' or field.minLength ~= nil
                         or field.maxLength ~= nil then return false end
                 elseif field.type == 'string' then
-                    if field.format == 'integer' or field.minimum ~= nil
+                    if field.format == 'integer' or field.format == 'boolean' or field.minimum ~= nil
                         or field.maximum ~= nil then return false end
-                elseif field.minLength ~= nil or field.maxLength ~= nil
+                elseif field.format ~= 'boolean' or field.minLength ~= nil or field.maxLength ~= nil
                     or field.minimum ~= nil or field.maximum ~= nil then return false end
                 if field.minLength ~= nil and (type(field.minLength) ~= 'number'
                     or math.type(field.minLength) ~= 'integer' or field.minLength < 1
@@ -185,6 +194,26 @@ factories.resourceManifest = function(deps)
                 return true
             end, function(field) return field.key end, 8)
         return fieldsValid == true and #input.fields >= 1
+    end
+
+    local function validControlSearch(search)
+        local valid = exactObject(search, '$.controlProvider.views[].search', { 'kinds' })
+        if valid ~= true then return false end
+        local kindsValid = validateArray(search.kinds,
+            '$.controlProvider.views[].search.kinds', function(kind)
+                local kindValid = exactObject(kind,
+                    '$.controlProvider.views[].search.kinds[]', {
+                        'id', 'modes', 'accessClass'
+                    })
+                if kindValid ~= true or not validControlIdentifier(kind.id, 32)
+                    or not controlProviderAccessClasses[kind.accessClass] then return false end
+                local modesValid = validateArray(kind.modes,
+                    '$.controlProvider.views[].search.kinds[].modes', function(mode)
+                        return mode == 'exact' or mode == 'prefix'
+                    end, nil, 2)
+                return modesValid == true and #kind.modes >= 1
+            end, function(kind) return kind.id end, 16)
+        return kindsValid == true and #search.kinds >= 1
     end
 
     local validator = {}
@@ -223,7 +252,7 @@ factories.resourceManifest = function(deps)
         local ok, err = exactObject(manifest, '$', {
             'schema', 'name', 'version', 'synex', 'critical', 'capabilities', 'services',
             'contracts', 'events', 'hooks', 'dependencies', 'migrations', 'dataOwnership', 'stateSnapshot'
-        }, { '$schema', 'controlProvider' })
+        }, { '$schema', 'controlProvider', 'worldBundles' })
         if not ok then return nil, err end
         if manifest['$schema'] ~= nil and (type(manifest['$schema']) ~= 'string' or #manifest['$schema'] > 256) then
             return invalid('$.$schema', 'Schema reference must be a bounded string.')
@@ -273,19 +302,23 @@ factories.resourceManifest = function(deps)
             local viewIds = {}
             local function validControlView(view)
                 local valid = exactObject(view, '$.controlProvider.views[]', {
-                    'id', 'label', 'operation', 'presentation'
-                }, { 'order', 'description', 'input' })
+                    'id', 'label', 'operation', 'presentation', 'accessClass'
+                }, { 'order', 'description', 'input', 'search' })
                 if valid ~= true or not validControlIdentifier(view.id, 48)
                     or viewIds[view.id] or not validControlText(view.label, 64)
                     or not operationSet[view.operation]
                     or not controlProviderPresentations[view.presentation]
+                    or not controlProviderAccessClasses[view.accessClass]
                     or (view.order ~= nil and (type(view.order) ~= 'number'
                         or math.type(view.order) ~= 'integer'
                         or view.order < 0 or view.order > 1000))
                     or (view.description ~= nil
                         and not validControlText(view.description, 160))
                     or (view.input ~= nil
-                        and not validControlInput(view.input, view.operation)) then return false end
+                        and not validControlInput(view.input, view.operation))
+                    or (view.operation == 'search'
+                        and not validControlSearch(view.search))
+                    or (view.operation ~= 'search' and view.search ~= nil) then return false end
                 viewIds[view.id] = true
                 return true
             end
@@ -296,6 +329,19 @@ factories.resourceManifest = function(deps)
                 return invalid('$.controlProvider.views',
                     'Control providers require at least one declared view.')
             end
+        end
+
+        if manifest.worldBundles ~= nil then
+            ok, err = validateArray(manifest.worldBundles, '$.worldBundles', function(path)
+                if type(path) ~= 'string' or #path < 18 or #path > 240
+                    or path:match('^world/[A-Za-z0-9%._/-]+%.world%.json$') == nil
+                    or path:find('//', 1, true) ~= nil then return false end
+                for segment in path:gmatch('[^/]+') do
+                    if segment == '.' or segment == '..' then return false end
+                end
+                return true
+            end, nil, 64)
+            if not ok then return nil, err end
         end
 
         ok, err = exactObject(manifest.services, '$.services', { 'provide', 'require', 'optional' })

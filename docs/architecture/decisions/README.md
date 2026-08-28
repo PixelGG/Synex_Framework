@@ -9,3 +9,5 @@
 - [ADR-0005: Source generations and durable identity](0005-source-generations.md)
 - [ADR-0006: Double-entry economy foundation](0006-double-entry-ledger.md)
 - [ADR-0007: Owner-aware lifecycle cleanup](0007-owner-aware-cleanup.md)
+- [ADR-0008: World semantics and spatial-authority boundary](0008-world-domain-boundary.md)
+- [ADR-0009: Build-time UI library and owner-bound runtime](0009-ui-library-runtime-boundary.md)

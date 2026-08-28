@@ -45,7 +45,8 @@ import {
   runDoctor,
   upgradeCheck,
 } from "./operations.ts";
-import { validateRepository } from "./validation.ts";
+import { loadResourceManifests, validateRepository } from "./validation.ts";
+import { loadWorldBundleCatalog, runWorldCommand } from "./world.ts";
 import { runMigratorCli } from "../../migrator/src/migrator.ts";
 import { npmScriptInvocation } from "./package-runner.ts";
 import { prepareCoreLiveTestBundle } from "./live-test-bundle.ts";
@@ -90,6 +91,14 @@ function helpText(): string {
     "  synex contract generate [--check] [--json]",
     "  synex contract check [--against <directory>] [--json]",
     "  synex validate [path] [--json]",
+    "  synex world validate [--json]",
+    "  synex world doctor [--json]",
+    "  synex world bundles [--json]",
+    "  synex world inspect <namespaced-key> [--json]",
+    "  synex world locate <x> <y> <z> [--json]",
+    "  synex world graph <namespaced-key> [--json]",
+    "  synex world overlaps [--json]",
+    "  synex doctor world [--json]",
     "  synex inspect [resource] <path-or-name> [--json]",
     "  synex inspect graph [--json]",
     "  synex create resource <synex_name> [--path <parent>] [--json]",
@@ -259,6 +268,29 @@ export async function runCli(
         printDiagnostics(io, report.diagnostics);
       }
       return report.diagnostics.some((diagnostic) => diagnostic.level === "error") ? 1 : 0;
+    }
+
+    if (command === "world" || (command === "doctor" && subcommand === "world")) {
+      for (const option of parsed.options.keys()) {
+        if (!new Set(["root", "json"]).has(option)) {
+          throw new CliError(`--${option} is not supported by offline world commands.`, 2);
+        }
+      }
+      const worldSubcommand = command === "world" ? subcommand : "doctor";
+      if (!worldSubcommand) {
+        throw new CliError("world requires one of: validate, doctor, inspect, locate, graph, bundles, overlaps.", 2);
+      }
+      const schemas = await loadSchemaRegistry(repositoryRoot);
+      const loaded = await loadResourceManifests(repositoryRoot, repositoryRoot, schemas);
+      const catalog = await loadWorldBundleCatalog(repositoryRoot, loaded.manifests, schemas);
+      catalog.diagnostics = [...loaded.diagnostics, ...catalog.diagnostics];
+      const result = runWorldCommand(
+        catalog,
+        worldSubcommand,
+        parsed.positionals.slice(2),
+      );
+      printJson(io, result.report);
+      return result.exitCode;
     }
 
     if (command === "inspect") {

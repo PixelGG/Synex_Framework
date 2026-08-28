@@ -1,0 +1,467 @@
+{
+  "$schema": "../../../schemas/contract.schema.json",
+  "schema": 1,
+  "domain": "synex.world",
+  "contracts": [
+    {
+      "name": "synex.world.state.set",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_world",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.world.state.write",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "scopeRef", "value", "expectedVersion", "reasonCode", "idempotencyKey"],
+        "properties": {
+          "key": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$" },
+          "scopeRef": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "value": {},
+          "expectedVersion": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "reasonCode": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*[.][a-z0-9_.-]+$" },
+          "idempotencyKey": { "type": "string", "minLength": 8, "maxLength": 36, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "scope", "schemaVersion", "definitionRevision", "valueType", "version", "value", "persistent", "eventId", "provenance", "replayed"],
+        "properties": {
+          "key": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$" },
+          "scope": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "ref"],
+            "properties": {
+              "type": { "enum": ["global", "region", "location", "interior", "room", "instance"] },
+              "ref": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" }
+            }
+          },
+          "schemaVersion": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+          "definitionRevision": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+          "valueType": { "enum": ["boolean", "integer", "number", "string", "enum", "structured"] },
+          "version": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "previousVersion": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "value": {},
+          "persistent": { "type": "boolean" },
+          "defaulted": { "type": "boolean" },
+          "replayed": { "type": "boolean" },
+          "eventId": { "type": "string", "minLength": 8, "maxLength": 36, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+          "provenance": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["actor", "sourceResource", "reasonCode", "traceId", "timestamp"],
+            "properties": {
+              "actor": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["type", "ref"],
+                "properties": {
+                  "type": { "enum": ["resource", "system", "user", "character", "entity"] },
+                  "ref": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" }
+                }
+              },
+              "sourceResource": { "type": "string", "minLength": 7, "maxLength": 64, "pattern": "^synex_[a-z0-9_]+$" },
+              "reasonCode": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*[.][a-z0-9_.-]+$" },
+              "traceId": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+              "timestamp": { "type": "string", "minLength": 20, "maxLength": 32, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}" }
+            }
+          }
+        }
+      },
+      "errors": ["CONCURRENT_MODIFICATION", "CORE_UNAVAILABLE", "FORBIDDEN", "INTERNAL_ERROR", "INVALID_ARGUMENT", "RATE_LIMITED", "STALE_RESOURCE", "STATE_SCHEMA_MISMATCH", "UNAVAILABLE", "WORLD_NOT_FOUND", "WORLD_REFERENCE_INVALID", "WORLD_STATE_CONFLICT", "WORLD_STATE_NOT_FOUND", "WORLD_STATE_SCHEMA_INVALID", "WORLD_STATE_VALUE_INVALID"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 30, "refillPerSecond": 10 }
+    },
+    {
+      "name": "synex.world.door.set_state",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_world",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.world.door.write",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["doorRef", "state", "expectedVersion", "reasonCode", "idempotencyKey"],
+        "properties": {
+          "doorRef": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "key", "revision"],
+            "properties": {
+              "kind": { "const": "door" },
+              "key": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$" },
+              "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 }
+            }
+          },
+          "source": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "instanceId": { "type": "string", "minLength": 8, "maxLength": 64 },
+          "state": { "enum": ["LOCKED", "UNLOCKED", "DISABLED"] },
+          "expectedVersion": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "reasonCode": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*[.][a-z0-9_.-]+$" },
+          "idempotencyKey": { "type": "string", "minLength": 8, "maxLength": 36, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "schemaVersion", "state", "version", "definitionRevision", "persistent", "eventId", "provenance", "replayed"],
+        "properties": {
+          "key": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$" },
+          "schemaVersion": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+          "state": { "enum": ["LOCKED", "UNLOCKED", "DISABLED"] },
+          "version": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "previousVersion": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "definitionRevision": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+          "persistent": { "type": "boolean" },
+          "defaulted": { "type": "boolean" },
+          "replayed": { "type": "boolean" },
+          "eventId": { "type": "string", "minLength": 8, "maxLength": 36, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+          "provenance": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["actor", "sourceResource", "reasonCode", "traceId", "timestamp"],
+            "properties": {
+              "actor": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["type", "ref"],
+                "properties": {
+                  "type": { "enum": ["resource", "system", "user", "character", "entity"] },
+                  "ref": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" }
+                }
+              },
+              "sourceResource": { "type": "string", "minLength": 7, "maxLength": 64, "pattern": "^synex_[a-z0-9_]+$" },
+              "reasonCode": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*[.][a-z0-9_.-]+$" },
+              "traceId": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+              "timestamp": { "type": "string", "minLength": 20, "maxLength": 32, "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}" }
+            }
+          }
+        }
+      },
+      "errors": ["CONCURRENT_MODIFICATION", "CORE_UNAVAILABLE", "DOOR_NOT_FOUND", "DOOR_STATE_INVALID", "FORBIDDEN", "INTERNAL_ERROR", "INVALID_ARGUMENT", "MAP_PACKAGE_UNAVAILABLE", "OUT_OF_CONTEXT", "RATE_LIMITED", "STALE_RESOURCE", "STALE_WORLD_REF", "STATE_SCHEMA_MISMATCH", "UNAVAILABLE", "WORLD_ACCESS_DENIED"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 30, "refillPerSecond": 10 }
+    },
+    {
+      "name": "synex.world.portal.transition",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_world",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.world.transition",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "portalRef", "idempotencyKey"],
+        "properties": {
+          "source": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "portalRef": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "key", "revision"],
+            "properties": {
+              "kind": { "const": "portal" },
+              "key": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$" },
+              "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 }
+            }
+          },
+          "instanceId": { "type": "string", "minLength": 8, "maxLength": 64 },
+          "idempotencyKey": { "type": "string", "minLength": 8, "maxLength": 36, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["portal", "transitioned", "replayed"],
+        "properties": {
+          "portal": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "key", "revision"],
+            "properties": {
+              "kind": { "const": "portal" },
+              "key": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$" },
+              "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 }
+            }
+          },
+          "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "key", "revision"],
+            "properties": {
+              "kind": { "const": "portal" },
+              "key": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$" },
+              "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 }
+            }
+          },
+          "destination": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["target"],
+            "properties": {
+              "target": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$" }
+            }
+          },
+          "grantId": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+          "instanceId": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+          "transitioned": { "const": true },
+          "replayed": { "type": "boolean" }
+        }
+      },
+      "errors": ["CONCURRENT_MODIFICATION", "CORE_UNAVAILABLE", "FORBIDDEN", "INSTANCE_BUCKET_UNAVAILABLE", "INSTANCE_CLOSED", "INSTANCE_FULL", "INSTANCE_NOT_FOUND", "INTERNAL_ERROR", "INVALID_ARGUMENT", "MAP_PACKAGE_UNAVAILABLE", "OUT_OF_CONTEXT", "PORTAL_NOT_FOUND", "PORTAL_TOO_FAR", "PORTAL_UNAVAILABLE", "QUERY_LIMIT_EXCEEDED", "RATE_LIMITED", "STALE_RESOURCE", "STALE_WORLD_REF", "TRANSITION_DENIED", "TRANSITION_GRANT_EXPIRED", "TRANSITION_GRANT_REPLAYED", "UNAVAILABLE", "WORLD_ACCESS_DENIED", "WORLD_NOT_FOUND", "WORLD_REFERENCE_INVALID", "WRONG_INSTANCE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 12, "refillPerSecond": 3 }
+    },
+    {
+      "name": "synex.world.instance.create",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_world",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.world.instance.create",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["templateRef", "idempotencyKey"],
+        "properties": {
+          "templateRef": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "key", "revision"],
+            "properties": {
+              "kind": { "const": "instance_template" },
+              "key": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$" },
+              "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 }
+            }
+          },
+          "capacity": { "type": "integer", "minimum": 1, "maximum": 256 },
+          "idempotencyKey": { "type": "string", "minLength": 8, "maxLength": 36, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["instanceId", "template", "ownerResource", "ownerEpoch", "state",
+          "capacity", "members", "createdAt", "revision", "cleanupPolicy", "replayed"],
+        "properties": {
+          "instanceId": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+          "template": {
+            "type": "object", "additionalProperties": false,
+            "required": ["kind", "key", "revision"],
+            "properties": {
+              "kind": { "const": "instance_template" },
+              "key": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$" },
+              "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 }
+            }
+          },
+          "ownerResource": { "type": "string", "minLength": 7, "maxLength": 64, "pattern": "^synex_[a-z0-9_]+$" },
+          "ownerEpoch": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "state": { "enum": ["CREATING", "READY", "ACTIVE", "DRAINING", "CLOSED", "FAILED"] },
+          "capacity": { "type": "integer", "minimum": 1, "maximum": 256 },
+          "members": { "type": "integer", "minimum": 0, "maximum": 256 },
+          "createdAt": { "type": "string", "minLength": 20, "maxLength": 32 },
+          "expiresAtMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+          "cleanupPolicy": { "enum": ["empty_ttl", "owner_stop", "manual"] },
+          "replayed": { "type": "boolean" },
+          "bucketRef": {
+            "type": "object", "additionalProperties": false,
+            "required": ["bucket", "generation"],
+            "properties": {
+              "bucket": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+              "generation": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" }
+            }
+          }
+        }
+      },
+      "errors": ["CONCURRENT_MODIFICATION", "CORE_UNAVAILABLE", "FORBIDDEN", "INSTANCE_BUCKET_UNAVAILABLE", "INTERNAL_ERROR", "INVALID_ARGUMENT", "MAP_PACKAGE_UNAVAILABLE", "RATE_LIMITED", "STALE_RESOURCE", "STALE_WORLD_REF", "UNAVAILABLE", "WORLD_NOT_FOUND", "WORLD_REFERENCE_INVALID"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 8, "refillPerSecond": 1 }
+    },
+    {
+      "name": "synex.world.instance.join",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_world",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.world.instance.manage",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["instanceId", "source", "idempotencyKey"],
+        "properties": {
+          "instanceId": { "type": "string", "minLength": 8, "maxLength": 64 },
+          "source": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "idempotencyKey": { "type": "string", "minLength": 8, "maxLength": 36, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["instanceId", "template", "ownerResource", "ownerEpoch", "state",
+          "capacity", "members", "createdAt", "revision", "cleanupPolicy", "replayed"],
+        "properties": {
+          "instanceId": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+          "template": {
+            "type": "object", "additionalProperties": false,
+            "required": ["kind", "key", "revision"],
+            "properties": {
+              "kind": { "const": "instance_template" },
+              "key": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$" },
+              "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 }
+            }
+          },
+          "ownerResource": { "type": "string", "minLength": 7, "maxLength": 64, "pattern": "^synex_[a-z0-9_]+$" },
+          "ownerEpoch": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "state": { "enum": ["CREATING", "READY", "ACTIVE", "DRAINING", "CLOSED", "FAILED"] },
+          "capacity": { "type": "integer", "minimum": 1, "maximum": 256 },
+          "members": { "type": "integer", "minimum": 0, "maximum": 256 },
+          "createdAt": { "type": "string", "minLength": 20, "maxLength": 32 },
+          "expiresAtMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+          "cleanupPolicy": { "enum": ["empty_ttl", "owner_stop", "manual"] },
+          "replayed": { "type": "boolean" },
+          "bucketRef": {
+            "type": "object", "additionalProperties": false,
+            "required": ["bucket", "generation"],
+            "properties": {
+              "bucket": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+              "generation": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" }
+            }
+          }
+        }
+      },
+      "errors": ["CONCURRENT_MODIFICATION", "CORE_UNAVAILABLE", "FORBIDDEN", "INSTANCE_BUCKET_UNAVAILABLE", "INSTANCE_CLOSED", "INSTANCE_FULL", "INSTANCE_NOT_FOUND", "INTERNAL_ERROR", "INVALID_ARGUMENT", "MAP_PACKAGE_UNAVAILABLE", "RATE_LIMITED", "STALE_RESOURCE", "STALE_WORLD_REF", "UNAVAILABLE", "WORLD_ACCESS_DENIED", "WRONG_INSTANCE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 20, "refillPerSecond": 5 }
+    },
+    {
+      "name": "synex.world.instance.leave",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_world",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.world.instance.manage",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "idempotencyKey"],
+        "properties": {
+          "instanceId": { "type": "string", "minLength": 8, "maxLength": 64 },
+          "source": { "type": "integer", "minimum": 1, "maximum": 65535 },
+          "idempotencyKey": { "type": "string", "minLength": 8, "maxLength": 36, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["instanceId", "template", "ownerResource", "ownerEpoch", "state",
+          "capacity", "members", "createdAt", "revision", "cleanupPolicy", "transitioned",
+          "grantId", "replayed"],
+        "properties": {
+          "instanceId": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+          "template": {
+            "type": "object", "additionalProperties": false,
+            "required": ["kind", "key", "revision"],
+            "properties": {
+              "kind": { "const": "instance_template" },
+              "key": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$" },
+              "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 }
+            }
+          },
+          "ownerResource": { "type": "string", "minLength": 7, "maxLength": 64, "pattern": "^synex_[a-z0-9_]+$" },
+          "ownerEpoch": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "state": { "enum": ["CREATING", "READY", "ACTIVE", "DRAINING", "CLOSED", "FAILED"] },
+          "capacity": { "type": "integer", "minimum": 1, "maximum": 256 },
+          "members": { "type": "integer", "minimum": 0, "maximum": 256 },
+          "createdAt": { "type": "string", "minLength": 20, "maxLength": 32 },
+          "expiresAtMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+          "cleanupPolicy": { "enum": ["empty_ttl", "owner_stop", "manual"] },
+          "transitioned": { "const": true },
+          "grantId": { "type": "string", "minLength": 8, "maxLength": 36, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+          "replayed": { "type": "boolean" },
+          "bucketRef": {
+            "type": "object", "additionalProperties": false,
+            "required": ["bucket", "generation"],
+            "properties": {
+              "bucket": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+              "generation": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" }
+            }
+          }
+        }
+      },
+      "errors": ["CONCURRENT_MODIFICATION", "CORE_UNAVAILABLE", "FORBIDDEN", "INSTANCE_BUCKET_UNAVAILABLE", "INSTANCE_NOT_FOUND", "INTERNAL_ERROR", "INVALID_ARGUMENT", "MAP_PACKAGE_UNAVAILABLE", "QUERY_LIMIT_EXCEEDED", "RATE_LIMITED", "STALE_RESOURCE", "STALE_WORLD_REF", "TRANSITION_GRANT_REPLAYED", "UNAVAILABLE", "WORLD_ACCESS_DENIED", "WORLD_REFERENCE_INVALID"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 20, "refillPerSecond": 5 }
+    },
+    {
+      "name": "synex.world.instance.close",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_world",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.world.instance.manage",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["instanceId", "idempotencyKey"],
+        "properties": {
+          "instanceId": { "type": "string", "minLength": 8, "maxLength": 64 },
+          "idempotencyKey": { "type": "string", "minLength": 8, "maxLength": 36, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["instanceId", "template", "ownerResource", "ownerEpoch", "state",
+          "capacity", "members", "createdAt", "revision", "cleanupPolicy",
+          "transitionedMembers", "replayed"],
+        "properties": {
+          "instanceId": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+          "template": {
+            "type": "object", "additionalProperties": false,
+            "required": ["kind", "key", "revision"],
+            "properties": {
+              "kind": { "const": "instance_template" },
+              "key": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$" },
+              "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 }
+            }
+          },
+          "ownerResource": { "type": "string", "minLength": 7, "maxLength": 64, "pattern": "^synex_[a-z0-9_]+$" },
+          "ownerEpoch": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "state": { "enum": ["CREATING", "READY", "ACTIVE", "DRAINING", "CLOSED", "FAILED"] },
+          "capacity": { "type": "integer", "minimum": 1, "maximum": 256 },
+          "members": { "type": "integer", "minimum": 0, "maximum": 256 },
+          "createdAt": { "type": "string", "minLength": 20, "maxLength": 32 },
+          "expiresAtMs": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "revision": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+          "cleanupPolicy": { "enum": ["empty_ttl", "owner_stop", "manual"] },
+          "transitionedMembers": { "type": "integer", "minimum": 0, "maximum": 256 },
+          "replayed": { "type": "boolean" },
+          "bucketRef": {
+            "type": "object", "additionalProperties": false,
+            "required": ["bucket", "generation"],
+            "properties": {
+              "bucket": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+              "generation": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" }
+            }
+          }
+        }
+      },
+      "errors": ["CONCURRENT_MODIFICATION", "CORE_UNAVAILABLE", "FORBIDDEN", "INSTANCE_BUCKET_UNAVAILABLE", "INSTANCE_NOT_FOUND", "INTERNAL_ERROR", "INVALID_ARGUMENT", "QUERY_LIMIT_EXCEEDED", "RATE_LIMITED", "STALE_RESOURCE", "STALE_WORLD_REF", "TRANSITION_GRANT_REPLAYED", "UNAVAILABLE", "WORLD_ACCESS_DENIED", "WORLD_REFERENCE_INVALID"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 8, "refillPerSecond": 2 }
+    }
+  ]
+}

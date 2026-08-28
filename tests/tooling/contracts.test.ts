@@ -59,6 +59,7 @@ async function prepareRepository(): Promise<string> {
       "state.schema.json",
       "config.schema.json",
       "capability-policy.schema.json",
+      "world-bundle.schema.json",
     ].map((name) =>
       copyFile(join(process.cwd(), "schemas", name), join(root, "schemas", name)),
     ),

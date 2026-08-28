@@ -8,6 +8,7 @@ const root = process.cwd();
 async function documentationMarkdown(): Promise<string[]> {
   return [
     path.join(root, "README.md"),
+    path.join(root, "libraries", "synex_ui", "README.md"),
     ...await collectMarkdown(path.join(root, "docs")),
     ...await collectMarkdown(path.join(root, "packages")),
   ].sort();
@@ -238,6 +239,7 @@ test("canonical and localized landing pages share the experimental platform boun
     "synex_entities",
     "synex_control",
     "synex_bridge",
+    "synex_ui",
     "oxmysql",
     "OneSync",
     "MariaDB",
@@ -266,9 +268,39 @@ test("framework CI pins official actions and runs the required untrusted-safe ga
   assert.doesNotMatch(workflow, /pull_request_target/gu);
   assert.doesNotMatch(workflow, /\$\{\{\s*secrets\./gu);
   assert.doesNotMatch(workflow, /^\s+[a-z-]+: write$/gmu);
-  assert.equal([...workflow.matchAll(/persist-credentials: false/gu)].length, 2);
+  const workflowLines = workflow.split(/\r?\n/gu);
+  const checkoutIndexes = workflowLines.flatMap((line, index) =>
+    /^\s+uses: actions\/checkout@[0-9a-f]{40}\s+# v\d/u.test(line) ? [index] : [],
+  );
+  assert.ok(checkoutIndexes.length > 0, "framework CI must check out the repository");
+  for (const checkoutIndex of checkoutIndexes) {
+    const usesIndent = workflowLines[checkoutIndex]?.match(/^\s*/u)?.[0].length ?? 0;
+    const stepIndent = Math.max(0, usesIndent - 2);
+    const stepPattern = new RegExp(`^\\s{${stepIndent}}-\\s`, "u");
+    let stepStart = checkoutIndex;
+    while (stepStart > 0 && !stepPattern.test(workflowLines[stepStart] ?? "")) stepStart -= 1;
+    let stepEnd = checkoutIndex + 1;
+    while (stepEnd < workflowLines.length && !stepPattern.test(workflowLines[stepEnd] ?? "")) stepEnd += 1;
+    const checkoutStep = workflowLines.slice(stepStart, stepEnd).join("\n");
+    assert.match(
+      checkoutStep,
+      /^\s+persist-credentials:\s+false\s*$/mu,
+      "every checkout step must disable credential persistence with the literal false value",
+    );
+    assert.doesNotMatch(
+      checkoutStep,
+      /persist-credentials:\s*\$\{\{/u,
+      "checkout credential persistence must not be configured through an expression",
+    );
+  }
   assert.match(workflow, /node-version: "24"/u);
   assert.match(workflow, /run: npm ci/u);
+  assert.match(workflow, /run: npm run check:ui/u);
+  assert.match(workflow, /run: npm run test:ui/u);
+  assert.match(workflow, /run: npm run build:ui/u);
+  assert.match(workflow, /git status --porcelain --untracked-files=all -- libraries\/synex_ui\/dist libraries\/synex_ui\/web\/dist/u);
+  assert.match(workflow, /run: npx playwright install --with-deps chromium/u);
+  assert.match(workflow, /run: npm run test:ui:visual/u);
   assert.match(workflow, /run: npm run generate:check/u);
   assert.match(workflow, /run: npm run test:lua/u);
   assert.match(workflow, /tools\/test-runner\.mjs core/u);

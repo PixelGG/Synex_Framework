@@ -1,5 +1,28 @@
 SynexEntityBootstrapConfig = {}
 
+function SynexEntityBootstrapConfig.monotonicClock(readRaw)
+    assert(type(readRaw) == 'function', 'entity monotonic clock requires a raw timer')
+    local modulo, halfRange = 0x100000000, 0x80000000
+    local previous, elapsedTotal = nil, 0
+    return function()
+        local raw = readRaw()
+        if type(raw) ~= 'number' or raw ~= raw or raw == math.huge
+            or raw == -math.huge or raw % 1 ~= 0 then
+            error('entity raw timer must be an integer', 2)
+        end
+        local current = raw % modulo
+        if previous == nil then
+            previous, elapsedTotal = current, current
+            return elapsedTotal
+        end
+        local elapsed = (current - previous) % modulo
+        if elapsed <= halfRange then
+            previous, elapsedTotal = current, elapsedTotal + elapsed
+        end
+        return elapsedTotal
+    end
+end
+
 function SynexEntityBootstrapConfig.create(coreResource)
     assert(type(coreResource) == 'string', 'entity Core resource is required')
     local config = {
@@ -114,7 +137,7 @@ function SynexEntityBootstrapConfig.create(coreResource)
         getEntityModel = GetEntityModel,
         getEntityRoutingBucket = GetEntityRoutingBucket,
         getEntityType = GetEntityType,
-        getGameTimer = GetGameTimer,
+        getGameTimer = SynexEntityBootstrapConfig.monotonicClock(GetGameTimer),
         getPlayerName = GetPlayerName,
         getPlayerPed = GetPlayerPed,
         getPlayerRoutingBucket = GetPlayerRoutingBucket,

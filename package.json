@@ -4,6 +4,9 @@
   "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "libraries/synex_ui"
+  ],
   "bin": {
     "synex": ".build/tools/cli/src/bin.js"
   },
@@ -15,12 +18,17 @@
     "npm": ">=10.0.0"
   },
   "scripts": {
-    "build": "npm run generate && tsc --build",
-    "check": "npm run generate:check && tsc --build --pretty false && npm run validate",
+    "build": "npm run generate && tsc --build && npm run build:ui",
+    "build:ui": "npm run build --workspace @synex/ui",
+    "check": "npm run generate:check && tsc --build --pretty false && npm run check:ui && npm run validate",
+    "check:ui": "npm run check --workspace @synex/ui",
     "generate": "node --experimental-strip-types tools/cli/src/bin.ts contract generate",
     "generate:check": "node --experimental-strip-types tools/cli/src/bin.ts contract generate --check",
     "validate": "node --experimental-strip-types tools/cli/src/bin.ts validate",
-    "test": "node tools/test-runner.mjs",
+    "test": "node tools/test-runner.mjs && npm run test:ui",
+    "test:ui": "npm run test --workspace @synex/ui",
+    "test:ui:visual": "npm run test:visual --workspace @synex/ui",
+    "test:ui:visual:update": "npm run test:visual:update --workspace @synex/ui",
     "test:lua": "node tools/test-runner.mjs lua",
     "test:database": "node tools/test-runner.mjs database",
     "test:compatibility": "node tools/test-runner.mjs compatibility",

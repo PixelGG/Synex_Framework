@@ -2,7 +2,9 @@
 
 This documentation describes the code present in Synex `0.1.0`. The release is experimental: contracts, schemas, migrations, and operational behavior may change before a stable release. Passing repository tests does not by itself certify a production deployment.
 
-The frozen Production-Beta decision applies to one exact `synex_core` tree only. The current workspace extends Core with additive domain persistence, deletion and Control-provider primitives, so those later Core changes do not inherit that decision. `synex_groups` is an Experimental Alpha Organizations Engine with 71 contracts and 31 owned migrations; its earlier working-tree evidence predates migration `032`, and its current acceptance remains open. `synex_accounts` is a server-only Experimental Alpha Financial Engine with 59 contracts and 17 owned migrations. Its automated implementation is largely complete, while real MariaDB, FXServer, restart/recovery, restored-upgrade, and exact-candidate acceptance are deferred. `synex_entities` is Development / Experimental Alpha until its live MariaDB, FXServer/OneSync, restart/recovery and exact-candidate acceptance is complete. The separate optional `synex_control` read-only operations surface is also Development / Experimental Alpha until its provider-runtime and real CEF client acceptance is complete. `synex_bridge` is an implemented but unaccepted Experimental Alpha Compatibility Platform with separate QB/QBX/ESX providers and fail-closed checked-in configuration. Every later resource, remaining library, integration, and example remains experimental. Every non-Core component is excluded from the frozen Core profile.
+The frozen Production-Beta decision applies to one exact `synex_core` tree only. The current workspace extends Core with additive domain persistence, deletion and Control-provider primitives, so those later Core changes do not inherit that decision. `synex_groups` is an Experimental Alpha Organizations Engine with 71 contracts and 31 owned migrations; its earlier working-tree evidence predates migration `032`, and its current acceptance remains open. `synex_accounts` is a server-only Experimental Alpha Financial Engine with 59 contracts and 17 owned migrations. Its automated implementation is largely complete, while real MariaDB, FXServer, restart/recovery, restored-upgrade, and exact-candidate acceptance are deferred. `synex_entities` is Development / Experimental Alpha until its live MariaDB, FXServer/OneSync, restart/recovery and exact-candidate acceptance is complete. `synex_world` is Development / Experimental Alpha until its MariaDB, FXServer/OneSync, real-client, native Door/IPL/interior, transition and restart acceptance is complete. The separate optional `synex_control` read-only operations surface is also Development / Experimental Alpha until its provider-runtime and real CEF client acceptance is complete. `synex_bridge` is an implemented but unaccepted Experimental Alpha Compatibility Platform with separate QB/QBX/ESX providers and fail-closed checked-in configuration. Every later resource, remaining library, integration, and example remains experimental. Every non-Core component is excluded from the frozen Core profile.
+
+`synex_ui` is an implemented Experimental Alpha UI foundation with a build-time React package and a separately deployable client runtime. Repository type, unit, browser, build, transport, and closed-state checks are development evidence; real FiveM/CEF loading, safe-zone behavior, controller navigation, focus recovery, gameplay-background readability, and performance acceptance remain open. It does not inherit the Core Production-Beta decision.
 
 The documented Core-only profile reached **Production Beta** on 2026-08-25. Commit `7ad4b72ee9bcd0a2a0481cfacfe5f807eb1b3ec5` with Core tree `9f0960f1e27fe43195ae4602cb2ef447cbc0509b` passed its repository, live-database, fresh-boot, public-API, capacity, restart, crash-recovery, stale-facade, database-outage/recovery, automated, real-client, and review gates. The result is a production-oriented beta for that immutable profile, not acceptance of the current working tree, a stable `1.0`, or a framework-wide release.
 
@@ -41,7 +43,9 @@ The tested oxmysql lost-callback condition keeps player admission closed. The do
 
 ## Experimental domain and rework references
 
-`synex_groups`, `synex_accounts`, and `synex_entities` are separate Experimental Alpha domains. The current source catalog contains 171 versioned contract definitions: exactly `synex.groups.self.snapshot` is `client-to-server`; the other 170 are server-only. Entities contributes 33 definitions across 32 names because `synex.entities.bucket.create` retains v1 and adds v2. Accounts and Entities have no client or NUI contract surface. The separate `synex_control` Alpha discovers bounded read-only Core, Groups, Accounts, Entities, Control-self and optional Bridge-compatibility providers; it is operator tooling, not a gameplay or banking UI. Future financial gameplay/UI belongs to `synex_banking`. None is a supported component of the frozen Core Production-Beta profile.
+`synex_groups`, `synex_accounts`, `synex_entities`, and `synex_world` are separate Experimental Alpha domains. The current source catalog contains 178 versioned contract definitions: exactly `synex.groups.self.snapshot` is `client-to-server`; the other 177 are server-only. Entities contributes 33 definitions across 32 names because `synex.entities.bucket.create` retains v1 and adds v2. Accounts, Entities and World have no client-callable contract or NUI contract surface. The separate `synex_control` Alpha discovers bounded read-only Core, Groups, Accounts, Entities, World, Control-self and optional Bridge-compatibility providers; it is operator tooling, not a gameplay or banking UI. Future financial gameplay/UI belongs to `synex_banking`. None is a supported component of the frozen Core Production-Beta profile.
+
+`@synex/ui` provides build-time components, tokens, materials, accessibility primitives, and the browser Design Lab. The `synex_ui` client resource separately provides owner-bound focus leases, bounded input routing, generic shared surfaces, client-local preferences, and a versioned NUI transport. It owns no gameplay state, SQL, or server authority, and `synex_control` does not depend on it at runtime.
 
 - [Database model](reference/database.md)
 - [Organizations Engine guide](groups/overview.md)
@@ -50,6 +54,14 @@ The tested oxmysql lost-callback condition keeps player admission closed. The do
 - [Server-only Accounts consumer example](../examples/synex_accounts-server.md)
 - [Entity Authority Engine guide](entities/overview.md)
 - [Entity contracts and configuration](reference/entities.md)
+- [World Semantics & Spatial Authority guide](world/README.md)
+- [World server API and contracts](world/api.md)
+- [World testing and open acceptance](world/testing.md)
+- [World companion-resource example](../examples/synex_world_companion/README.md)
+- [UI Foundation overview](ui/README.md)
+- [UI architecture and ownership boundary](ui/architecture.md)
+- [UI components](ui/components.md)
+- [UI development and open live acceptance](ui/development.md)
 - [Control overview](control/overview.md)
 - [Read-only control-plane reference](reference/control-plane.md)
 - [Control architecture](control/architecture.md)

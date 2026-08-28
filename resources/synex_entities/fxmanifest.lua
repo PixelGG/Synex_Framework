@@ -40,6 +40,7 @@ server_scripts {
     'server/spawn_admission.lua',
     'server/lifecycle_policy.lua',
     'server/bucket_policy.lua',
+    'server/bucket_idempotency.lua',
     'server/entity_runtime.lua',
     'server/entity_service.lua',
     'server/bucket_lifecycle.lua',

@@ -1,0 +1,296 @@
+{
+  "$schema": "../../schemas/resource.schema.json",
+  "schema": 1,
+  "name": "synex_world",
+  "version": "0.1.0",
+  "synex": "^1.0.0",
+  "critical": false,
+  "capabilities": {
+    "request": [
+      "synex.audit.append",
+      "synex.capabilities.delegate",
+      "synex.control.provider.register",
+      "synex.database.maintenance",
+      "synex.database.read",
+      "synex.database.transaction",
+      "synex.database.write",
+      "synex.entities.bucket.create",
+      "synex.entities.bucket.destroy",
+      "synex.entities.bucket.player.move",
+      "synex.entities.bucket.read",
+      "synex.entities.read",
+      "synex.events.durable",
+      "synex.groups.read",
+      "synex.identity.read",
+      "synex.metrics.write",
+      "synex.runtime.read"
+    ]
+  },
+  "controlProvider": {
+    "schemaVersion": 1,
+    "namespace": "world",
+    "label": "World",
+    "category": "foundation",
+    "version": "1.0.0",
+    "operations": [
+      "summary",
+      "health",
+      "list",
+      "inspect",
+      "search",
+      "metrics",
+      "findings"
+    ],
+    "views": [
+      {
+        "id": "overview",
+        "label": "World overview",
+        "operation": "summary",
+        "presentation": "key-value",
+        "order": 10,
+        "description": "Bounded World registry, map, instance, slice, and persistence totals.",
+        "accessClass": "general"
+      },
+      {
+        "id": "health",
+        "label": "World health",
+        "operation": "health",
+        "presentation": "key-value",
+        "order": 20,
+        "description": "Current World authority and dependency health.",
+        "accessClass": "general"
+      },
+      {
+        "id": "bundles",
+        "label": "Bundles",
+        "operation": "list",
+        "presentation": "table",
+        "order": 30,
+        "description": "Cursor-based active World bundles.",
+        "accessClass": "general"
+      },
+      {
+        "id": "map_packages",
+        "label": "Map packages",
+        "operation": "list",
+        "presentation": "table",
+        "order": 40,
+        "description": "Bounded map availability and semantic outage impact.",
+        "accessClass": "general"
+      },
+      {
+        "id": "regions",
+        "label": "Regions",
+        "operation": "list",
+        "presentation": "table",
+        "order": 50,
+        "description": "Cursor-based semantic regions.",
+        "accessClass": "general"
+      },
+      {
+        "id": "locations",
+        "label": "Locations",
+        "operation": "list",
+        "presentation": "table",
+        "order": 60,
+        "description": "Cursor-based semantic locations.",
+        "accessClass": "general"
+      },
+      {
+        "id": "interiors",
+        "label": "Interiors",
+        "operation": "list",
+        "presentation": "table",
+        "order": 70,
+        "description": "Cursor-based semantic interiors.",
+        "accessClass": "general"
+      },
+      {
+        "id": "rooms",
+        "label": "Rooms",
+        "operation": "list",
+        "presentation": "table",
+        "order": 80,
+        "description": "Cursor-based semantic rooms.",
+        "accessClass": "general"
+      },
+      {
+        "id": "zones",
+        "label": "Zones",
+        "operation": "list",
+        "presentation": "table",
+        "order": 90,
+        "description": "Cursor-based compiled zones.",
+        "accessClass": "general"
+      },
+      {
+        "id": "anchors",
+        "label": "Anchors",
+        "operation": "list",
+        "presentation": "table",
+        "order": 100,
+        "description": "Cursor-based semantic anchors.",
+        "accessClass": "general"
+      },
+      {
+        "id": "doors",
+        "label": "Doors",
+        "operation": "list",
+        "presentation": "table",
+        "order": 110,
+        "description": "Cursor-based logical doors.",
+        "accessClass": "general"
+      },
+      {
+        "id": "portals",
+        "label": "Portals",
+        "operation": "list",
+        "presentation": "table",
+        "order": 120,
+        "description": "Cursor-based World portals.",
+        "accessClass": "general"
+      },
+      {
+        "id": "instances",
+        "label": "Instances",
+        "operation": "list",
+        "presentation": "table",
+        "order": 130,
+        "description": "Bounded semantic instance lifecycle state.",
+        "accessClass": "general"
+      },
+      {
+        "id": "state",
+        "label": "State definitions",
+        "operation": "list",
+        "presentation": "table",
+        "order": 140,
+        "description": "Cursor-based World state schemas without values.",
+        "accessClass": "general"
+      },
+      {
+        "id": "spatial_index",
+        "label": "Spatial index",
+        "operation": "metrics",
+        "presentation": "metrics",
+        "order": 150,
+        "description": "Measured cells, candidates, queries, and slice pressure.",
+        "accessClass": "general"
+      },
+      {
+        "id": "world_object",
+        "label": "World inspector",
+        "operation": "inspect",
+        "presentation": "detail",
+        "order": 160,
+        "description": "Inspect one exact namespaced World object.",
+        "accessClass": "general"
+      },
+      {
+        "id": "world_graph",
+        "label": "World graph",
+        "operation": "inspect",
+        "presentation": "graph",
+        "order": 170,
+        "description": "Bounded parent/child graph for one World object.",
+        "accessClass": "general"
+      },
+      {
+        "id": "point",
+        "label": "Point inspector",
+        "operation": "inspect",
+        "presentation": "detail",
+        "order": 180,
+        "description": "Resolve a bounded semantic context at one point.",
+        "accessClass": "general"
+      },
+      {
+        "id": "search",
+        "label": "World search",
+        "operation": "search",
+        "presentation": "table",
+        "order": 190,
+        "description": "Exact lookup by namespaced World key.",
+        "accessClass": "general",
+        "search": {
+          "kinds": [
+            {
+              "id": "world_object",
+              "modes": ["exact"],
+              "accessClass": "general"
+            }
+          ]
+        }
+      },
+      {
+        "id": "findings",
+        "label": "Findings",
+        "operation": "findings",
+        "presentation": "findings",
+        "order": 200,
+        "description": "Bounded World doctor findings.",
+        "accessClass": "general"
+      }
+    ]
+  },
+  "services": {
+    "provide": ["synex.world@1"],
+    "require": ["synex.runtime@1", "synex.entities@1"],
+    "optional": ["synex.groups@1"]
+  },
+  "contracts": {
+    "provide": [
+      "synex.world.state.set",
+      "synex.world.door.set_state",
+      "synex.world.portal.transition",
+      "synex.world.instance.create",
+      "synex.world.instance.join",
+      "synex.world.instance.leave",
+      "synex.world.instance.close"
+    ],
+    "consume": [
+      "synex.entities.bucket.create",
+      "synex.entities.bucket.destroy",
+      "synex.entities.bucket.move_player",
+      "synex.entities.bucket.get",
+      "synex.entities.get"
+    ]
+  },
+  "events": {
+    "publish": ["synex.world.*"],
+    "subscribe": []
+  },
+  "hooks": {
+    "register": [],
+    "run": []
+  },
+  "dependencies": {
+    "required": [
+      { "name": "synex_core", "version": ">=0.1.0" },
+      { "name": "synex_entities", "version": ">=0.1.0" }
+    ],
+    "optional": [
+      { "name": "synex_groups", "version": ">=0.1.0" }
+    ],
+    "development": []
+  },
+  "migrations": [
+    {
+      "id": "001_world",
+      "path": "migrations/001_world.sql",
+      "transactional": false
+    }
+  ],
+  "dataOwnership": {
+    "tables": [
+      "synex_world_state",
+      "synex_world_door_states",
+      "synex_world_outbox"
+    ],
+    "characterDelete": "none"
+  },
+  "stateSnapshot": {
+    "supported": false,
+    "schemaVersion": 1
+  }
+}
