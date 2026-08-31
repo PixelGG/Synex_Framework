@@ -252,7 +252,7 @@ factories.resourceManifest = function(deps)
         local ok, err = exactObject(manifest, '$', {
             'schema', 'name', 'version', 'synex', 'critical', 'capabilities', 'services',
             'contracts', 'events', 'hooks', 'dependencies', 'migrations', 'dataOwnership', 'stateSnapshot'
-        }, { '$schema', 'controlProvider', 'worldBundles' })
+        }, { '$schema', 'controlProvider', 'worldBundles', 'interactionBundles' })
         if not ok then return nil, err end
         if manifest['$schema'] ~= nil and (type(manifest['$schema']) ~= 'string' or #manifest['$schema'] > 256) then
             return invalid('$.$schema', 'Schema reference must be a bounded string.')
@@ -335,6 +335,19 @@ factories.resourceManifest = function(deps)
             ok, err = validateArray(manifest.worldBundles, '$.worldBundles', function(path)
                 if type(path) ~= 'string' or #path < 18 or #path > 240
                     or path:match('^world/[A-Za-z0-9%._/-]+%.world%.json$') == nil
+                    or path:find('//', 1, true) ~= nil then return false end
+                for segment in path:gmatch('[^/]+') do
+                    if segment == '.' or segment == '..' then return false end
+                end
+                return true
+            end, nil, 64)
+            if not ok then return nil, err end
+        end
+
+        if manifest.interactionBundles ~= nil then
+            ok, err = validateArray(manifest.interactionBundles, '$.interactionBundles', function(path)
+                if type(path) ~= 'string' or #path < 28 or #path > 240
+                    or path:match('^interactions/[A-Za-z0-9%._/-]+%.interact%.json$') == nil
                     or path:find('//', 1, true) ~= nil then return false end
                 for segment in path:gmatch('[^/]+') do
                     if segment == '.' or segment == '..' then return false end

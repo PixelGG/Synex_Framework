@@ -16,19 +16,35 @@
       "deny": []
     },
     "synex_accounts": {
-      "allow": ["synex.audit.append", "synex.capabilities.delegate", "synex.deletions.provider", "synex.events.durable", "synex.metrics.write", "synex.runtime.read", "synex.control.provider.register"],
+      "allow": ["synex.audit.append", "synex.capabilities.delegate", "synex.deletions.provider", "synex.events.durable", "synex.metrics.write", "synex.runtime.read", "synex.security.signal.emit", "synex.control.provider.register"],
       "deny": []
     },
     "synex_entities": {
-      "allow": ["synex.identity.read", "synex.groups.read", "synex.audit.append", "synex.capabilities.delegate", "synex.database.maintenance", "synex.database.read", "synex.database.transaction", "synex.database.write", "synex.deletions.provider", "synex.metrics.write", "synex.runtime.read", "synex.control.provider.register"],
+      "allow": ["synex.identity.read", "synex.groups.read", "synex.audit.append", "synex.capabilities.delegate", "synex.database.maintenance", "synex.database.read", "synex.database.transaction", "synex.database.write", "synex.deletions.provider", "synex.metrics.write", "synex.runtime.read", "synex.security.signal.emit", "synex.control.provider.register"],
       "deny": ["synex.entities.delete_persistent"]
     },
     "synex_world": {
-      "allow": ["synex.audit.append", "synex.capabilities.delegate", "synex.control.provider.register", "synex.database.maintenance", "synex.database.read", "synex.database.transaction", "synex.database.write", "synex.entities.bucket.create", "synex.entities.bucket.destroy", "synex.entities.bucket.player.move", "synex.entities.bucket.read", "synex.entities.read", "synex.events.durable", "synex.groups.read", "synex.identity.read", "synex.metrics.write", "synex.runtime.read"],
+      "allow": ["synex.audit.append", "synex.capabilities.delegate", "synex.control.provider.register", "synex.database.maintenance", "synex.database.read", "synex.database.transaction", "synex.database.write", "synex.entities.bucket.create", "synex.entities.bucket.destroy", "synex.entities.bucket.player.move", "synex.entities.bucket.read", "synex.entities.read", "synex.events.durable", "synex.groups.read", "synex.identity.read", "synex.metrics.write", "synex.runtime.read", "synex.security.expectation.manage"],
       "deny": []
     },
     "synex_world_companion": {
       "allow": ["synex.world.bundle.register"],
+      "deny": []
+    },
+    "synex_interact_companion": {
+      "allow": ["synex.interact.bundle.register", "synex.world.bundle.register"],
+      "deny": []
+    },
+    "synex_notify": {
+      "allow": ["synex.audit.append", "synex.capabilities.delegate", "synex.compat.adapter.register", "synex.control.provider.register", "synex.identity.read", "synex.metrics.write"],
+      "deny": []
+    },
+    "synex_interact": {
+      "allow": ["synex.audit.append", "synex.capabilities.delegate", "synex.compat.adapter.register", "synex.control.provider.register", "synex.entities.context.validate", "synex.entities.query", "synex.entities.read", "synex.identity.read", "synex.metrics.write", "synex.permissions.read", "synex.runtime.read", "synex.security.signal.emit", "synex.world.query", "synex.world.read"],
+      "deny": []
+    },
+    "synex_security": {
+      "allow": ["synex.access.manage", "synex.audit.append", "synex.control.provider.register", "synex.database.maintenance", "synex.database.read", "synex.database.transaction", "synex.database.write", "synex.identity.read", "synex.metrics.write", "synex.security.case.read", "synex.security.diagnostics.read", "synex.security.expectation.manage", "synex.security.signal.emit"],
       "deny": []
     },
     "synex_bridge_qb": {

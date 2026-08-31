@@ -1,0 +1,197 @@
+{
+  "$schema": "../../schemas/resource.schema.json",
+  "schema": 1,
+  "name": "synex_security",
+  "version": "0.1.0",
+  "synex": "^1.0.0",
+  "critical": false,
+  "capabilities": {
+    "request": [
+      "synex.access.manage",
+      "synex.audit.append",
+      "synex.control.provider.register",
+      "synex.database.maintenance",
+      "synex.database.read",
+      "synex.database.transaction",
+      "synex.database.write",
+      "synex.identity.read",
+      "synex.metrics.write",
+      "synex.security.case.read",
+      "synex.security.diagnostics.read",
+      "synex.security.expectation.manage",
+      "synex.security.signal.emit"
+    ]
+  },
+  "controlProvider": {
+    "schemaVersion": 1,
+    "namespace": "security",
+    "label": "Security",
+    "category": "foundation",
+    "version": "1.0.0",
+    "operations": ["summary", "health", "list", "inspect", "metrics", "findings"],
+    "views": [
+      {
+        "id": "overview",
+        "label": "Security overview",
+        "operation": "summary",
+        "presentation": "key-value",
+        "order": 10,
+        "description": "Bounded signal, expectation, case, mitigation, and enforcement totals.",
+        "accessClass": "security"
+      },
+      {
+        "id": "health",
+        "label": "Security health",
+        "operation": "health",
+        "presentation": "key-value",
+        "order": 20,
+        "description": "Detector, Sentinel, persistence, Core, and event-hook health.",
+        "accessClass": "security"
+      },
+      {
+        "id": "detectors",
+        "label": "Detectors",
+        "operation": "list",
+        "presentation": "table",
+        "order": 30,
+        "description": "Configured mode and bounded runtime health for each detector.",
+        "accessClass": "security"
+      },
+      {
+        "id": "cases",
+        "label": "Security cases",
+        "operation": "list",
+        "presentation": "table",
+        "order": 40,
+        "description": "Cursor-bounded case summaries without raw client telemetry.",
+        "accessClass": "security"
+      },
+      {
+        "id": "player",
+        "label": "Player assessment",
+        "operation": "inspect",
+        "presentation": "detail",
+        "order": 50,
+        "description": "Security-authorized subject assessment, expectations, cases, and enforcement history.",
+        "accessClass": "security",
+        "input": {
+          "fields": [{
+            "key": "id",
+            "label": "Subject reference",
+            "source": "id",
+            "type": "string",
+            "format": "identifier",
+            "required": true,
+            "minLength": 3,
+            "maxLength": 128
+          }]
+        }
+      },
+      {
+        "id": "case",
+        "label": "Case inspector",
+        "operation": "inspect",
+        "presentation": "timeline",
+        "order": 60,
+        "description": "Bounded case timeline, evidence classes, policy, and enforcement provenance.",
+        "accessClass": "security",
+        "input": {
+          "fields": [{
+            "key": "id",
+            "label": "Case ID",
+            "source": "id",
+            "type": "string",
+            "format": "identifier",
+            "required": true,
+            "minLength": 8,
+            "maxLength": 64
+          }]
+        }
+      },
+      {
+        "id": "hardening",
+        "label": "Cfx hardening advisor",
+        "operation": "findings",
+        "presentation": "findings",
+        "order": 70,
+        "description": "Read-only Cfx hardening recommendations and compatibility impact.",
+        "accessClass": "security"
+      },
+      {
+        "id": "performance",
+        "label": "Security metrics",
+        "operation": "metrics",
+        "presentation": "metrics",
+        "order": 80,
+        "description": "Bounded detector, case, mitigation, and ingestion measurements.",
+        "accessClass": "security"
+      },
+      {
+        "id": "findings",
+        "label": "Doctor findings",
+        "operation": "findings",
+        "presentation": "findings",
+        "order": 90,
+        "description": "Runtime health, retained pipeline, and Cfx hardening findings.",
+        "accessClass": "security"
+      }
+    ]
+  },
+  "services": {
+    "provide": ["synex.security@1"],
+    "require": ["synex.runtime@1"],
+    "optional": []
+  },
+  "contracts": {
+    "provide": [
+      "synex.security.signal.report",
+      "synex.security.expectation.register",
+      "synex.security.expectation.revoke",
+      "synex.security.expectation.list",
+      "synex.security.assessment.get",
+      "synex.security.case.get",
+      "synex.security.health.get",
+      "synex.security.sentinel.report"
+    ],
+    "consume": []
+  },
+  "events": {
+    "publish": ["synex.security.*"],
+    "subscribe": [
+      "synex.entities.bucket.changed",
+      "synex.entities.created",
+      "synex.entities.deleted",
+      "synex.entities.dematerialized",
+      "synex.entities.materialized",
+      "synex.entities.owner.changed",
+      "synex.world.portal.transitioned"
+    ]
+  },
+  "hooks": {
+    "register": ["synex.entities.before_entity_spawn"],
+    "run": []
+  },
+  "dependencies": {
+    "required": [{ "name": "synex_core", "version": ">=0.1.0" }],
+    "optional": [
+      { "name": "synex_entities", "version": ">=0.1.0" },
+      { "name": "synex_world", "version": ">=0.1.0" }
+    ],
+    "development": []
+  },
+  "migrations": [
+    { "id": "001_security", "path": "migrations/001_security.sql", "transactional": false }
+  ],
+  "dataOwnership": {
+    "tables": [
+      "synex_security_cases",
+      "synex_security_case_signals",
+      "synex_security_enforcements"
+    ],
+    "characterDelete": "retain"
+  },
+  "stateSnapshot": {
+    "supported": false,
+    "schemaVersion": 1
+  }
+}

@@ -29,10 +29,12 @@ local context = exports.synex_world:GetContext()
 local location = exports.synex_world:CurrentLocation()
 local room = exports.synex_world:CurrentRoom()
 local anchors = exports.synex_world:NearbyAnchors({ limit = 16, maxDistance = 30.0 })
+local doors = exports.synex_world:NearbyObjects('door', { limit = 16, maxDistance = 30.0 })
+local portals = exports.synex_world:NearbyObjects('portal', { limit = 16, maxDistance = 30.0 })
 local door = exports.synex_world:ResolveCached('door', 'synex_world_companion:site.front_door')
 ```
 
-All returned tables are copies. `ResolveCached` only searches the current per-kind slice index.
+All returned tables are copies. `NearbyObjects` accepts only `anchor`, `door` or `portal`, reads only the bounded current slice and supports the same `limit`, `tag` and `maxDistance` filters as `NearbyAnchors`. `ResolveCached` only searches the current per-kind slice index.
 
 ## Local events
 

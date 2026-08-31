@@ -1,6 +1,10 @@
-import { readdirSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
+
+const TEST_MODULES_PER_WRAPPER = 24;
 
 const scope = process.argv[2];
 const testRoot = path.resolve('.build', 'tests', scope ?? '');
@@ -44,14 +48,28 @@ if (scope === 'database'
   || (scope === undefined && process.env.SYNEX_TEST_DATABASE_LIVE === '1')) {
   testArguments.push('--test-concurrency=1');
 }
-testArguments.push(...files);
+const wrapperRoot = mkdtempSync(path.join(tmpdir(), 'synex-test-runner-'));
+const wrappers = [];
+for (let offset = 0; offset < files.length; offset += TEST_MODULES_PER_WRAPPER) {
+  const wrapper = path.join(wrapperRoot, `batch-${wrappers.length.toString().padStart(4, '0')}.mjs`);
+  const modules = files.slice(offset, offset + TEST_MODULES_PER_WRAPPER);
+  writeFileSync(wrapper, `${modules.map((file) =>
+    `await import(${JSON.stringify(pathToFileURL(file).href)});`).join('\n')}\n`, 'utf8');
+  wrappers.push(wrapper);
+}
+testArguments.push(...wrappers);
 
-const result = spawnSync(process.execPath, testArguments, {
-  cwd: process.cwd(),
-  env: process.env,
-  stdio: 'inherit',
-  windowsHide: true,
-});
+let result;
+try {
+  result = spawnSync(process.execPath, testArguments, {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: 'inherit',
+    windowsHide: true,
+  });
+} finally {
+  rmSync(wrapperRoot, { recursive: true, force: true });
+}
 
 if (result.error) {
   throw result.error;

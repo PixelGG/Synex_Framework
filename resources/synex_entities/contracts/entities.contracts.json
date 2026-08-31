@@ -4025,6 +4025,12 @@
                       "minimum": 0,
                       "maximum": 4294967295
                     },
+                    "archetype": {
+                      "type": "string",
+                      "minLength": 3,
+                      "maxLength": 128,
+                      "pattern": "^[a-z][a-z0-9_.-]+$"
+                    },
                     "bucket": {
                       "type": "integer",
                       "minimum": 0,

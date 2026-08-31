@@ -195,7 +195,11 @@ test('messaging validation results survive missing or failing diagnostics', asyn
           error('payload validation must precede contract resolution')
         end } },
         security = security, owners = {},
-        players = { getBySource = function() return nil end }, lifecycle = {},
+        players = { getBySource = function(playerSource)
+          return { id = 'session-diagnostics-safe', source = playerSource,
+            sourceGeneration = 7, userId = 'user-diagnostics-safe',
+            characterId = 'character-diagnostics-safe' }
+        end }, lifecycle = {},
         protocol = SynexProtocol,
         config = { burst = 10, rate = 10, maximumPayloadBytes = 1024 },
         coreResource = 'synex_core'
@@ -218,7 +222,11 @@ test('messaging validation results survive missing or failing diagnostics', asyn
       assert(recorded[1].scope == 'synex.fixture.call')
       assert(recorded[1].operation == 'rpc.ingress.validate')
       assert(recorded[1].resource == nil and recorded[1].traceId == nil
-        and recorded[1].requestId == nil and recorded[1].source == nil)
+        and recorded[1].requestId == nil)
+      assert(recorded[1].sessionId == 'session-diagnostics-safe')
+      assert(recorded[1].source == 17 and recorded[1].sourceGeneration == 7)
+      assert(recorded[1].userId == 'user-diagnostics-safe')
+      assert(recorded[1].characterId == 'character-diagnostics-safe')
 
       security.diagnostics.record = function()
         error('diagnostics sink failure must stay isolated')

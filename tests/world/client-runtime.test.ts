@@ -149,7 +149,7 @@ test('world client accepts only server slices and reconciles bounded read models
       assert(#threads == 1)
       assert(clientExports.GetContext and clientExports.CurrentLocation
         and clientExports.CurrentRoom and clientExports.NearbyAnchors
-        and clientExports.ResolveCached)
+        and clientExports.NearbyObjects and clientExports.ResolveCached)
 
       local slice = {
         schemaVersion = 1,
@@ -167,10 +167,14 @@ test('world client accepts only server slices and reconciles bounded read models
           position = { x = 1.0, y = 2.0, z = 3.0 }, distance = 3.0,
           tags = { 'synex.anchor.counter' } }},
         doors = {{ kind = 'door', key = 'fixture:front.door', revision = 2,
+          distance = 4.5, tags = { 'synex.door.entry' },
           state = 'LOCKED', stateVersion = 4,
           leaves = {{ doorHash = 101, modelHash = 202,
             position = { x = 4.0, y = 5.0, z = 6.0 }, openRatio = 0.0,
             automaticDistance = 2.5 }} }},
+        portals = {{ kind = 'portal', key = 'fixture:platform.portal', revision = 3,
+          position = { x = 7.0, y = 8.0, z = 9.0 }, distance = 8.0,
+          tags = { 'synex.portal.transit' }, portalType = 'local', enabled = true }},
         ipls = {{ name = 'fixture_ipl', refCount = 2 }},
         interiorSets = {{ interiorId = 7, name = 'fixture_set', refCount = 1,
           color = 2 }},
@@ -199,6 +203,17 @@ test('world client accepts only server slices and reconciles bounded read models
       local anchors = clientExports.NearbyAnchors({ limit = 1, maxDistance = 10,
         tag = 'synex.anchor.counter' })
       assert(#anchors == 1 and anchors[1].key == 'fixture:reception')
+      local doors = clientExports.NearbyObjects('door', { limit = 1,
+        maxDistance = 5, tag = 'synex.door.entry' })
+      local portals = clientExports.NearbyObjects('portal', { limit = 1,
+        maxDistance = 10, tag = 'synex.portal.transit' })
+      assert(#doors == 1 and doors[1].key == 'fixture:front.door')
+      assert(#portals == 1 and portals[1].key == 'fixture:platform.portal')
+      doors[1].key = 'tampered:door'
+      assert(clientExports.ResolveCached('door', 'fixture:front.door').key
+        == 'fixture:front.door')
+      assert(#clientExports.NearbyObjects('door', { maxDistance = 4 }) == 0)
+      assert(#clientExports.NearbyObjects('room', {}) == 0)
       anchors[1].key = 'tampered:anchor'
       assert(clientExports.ResolveCached('anchor', 'fixture:reception').key
         == 'fixture:reception')

@@ -11,6 +11,13 @@ export const UI_LIMITS = Object.freeze({
   maxSections: 16,
   maxMenuItems: 96,
   maxMenuDepth: 3,
+  maxSignals: 8,
+  maxVisibleSignals: 4,
+  maxSignalActions: 2,
+  maxSignalRevisionFences: 256,
+  maxInteractionIntents: 6,
+  maxInteractionDurationMs: 60 * 60 * 1000,
+  maxInteractionRevisionFences: 64,
 });
 
 export const UI_ERROR_CODES = [
@@ -18,6 +25,8 @@ export const UI_ERROR_CODES = [
   'UI_FOCUS_BUSY',
   'UI_FOCUS_DENIED',
   'UI_FOCUS_LEASE_INVALID',
+  'UI_SIGNAL_DENIED',
+  'UI_INTERACTION_DENIED',
   'UI_OWNER_STOPPED',
   'UI_OWNER_STALE',
   'UI_REQUEST_INVALID',
@@ -47,6 +56,16 @@ export type Density = 'compact' | 'comfortable';
 export type UiScale = 85 | 100 | 115 | 125;
 export type SurfaceKind = 'alert' | 'confirm' | 'input' | 'form' | 'select' | 'menu' | 'contextMenu';
 export type SurfaceTone = 'neutral' | 'accent' | 'info' | 'success' | 'warning' | 'danger';
+export type SignalKind = 'toast' | 'progress' | 'persistent' | 'banner' | 'status';
+export type SignalTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger';
+export type SignalSoundTone = SignalTone | 'critical';
+export type SignalPriority = 'low' | 'normal' | 'high' | 'critical';
+export type SignalPosition = 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left' | 'top-center' | 'bottom-center';
+export type SignalProgressState = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
+export type SignalProgressMode = 'determinate' | 'indeterminate';
+export type SignalActionStyle = 'default' | 'primary' | 'danger';
+export type InteractionMode = 'cue' | 'bloom' | 'progress';
+export type InteractionProgressMode = 'determinate' | 'indeterminate' | 'timed';
 
 export interface UiPreferences {
   schemaVersion: 1;
@@ -56,6 +75,7 @@ export interface UiPreferences {
   reducedMotion: boolean;
   reducedTransparency: boolean;
   highContrast: boolean;
+  interactionAssist: boolean;
 }
 
 export interface ScreenMetrics {
@@ -130,10 +150,114 @@ export interface RuntimeSurface extends SurfaceDescriptor {
   revision: number;
 }
 
+export interface SignalProgress {
+  state: SignalProgressState;
+  mode: SignalProgressMode;
+  value?: number;
+  maximum?: number;
+}
+
+export interface SignalActionHint {
+  token: string;
+  label: string;
+  hint?: string;
+  style?: SignalActionStyle;
+}
+
+export interface SignalDescriptor {
+  signalId: string;
+  revision: number;
+  kind: SignalKind;
+  tone: SignalTone;
+  priority: SignalPriority;
+  title: string;
+  message?: string;
+  iconKey?: (typeof UI_ICON_KEYS)[number];
+  count?: number;
+  progress?: SignalProgress;
+  actions: SignalActionHint[];
+  createdAt: number;
+  expiresAt?: number;
+  position: SignalPosition;
+}
+
+export interface RuntimeSignal extends SignalDescriptor {
+  ownerResource: string;
+  ownerEpoch: number;
+}
+
+export interface SignalSoundPayload {
+  tone: SignalSoundTone;
+  volume: number;
+}
+
+export interface SignalSoundMessagePayload extends SignalSoundPayload {
+  browserBootId: string;
+}
+
+export interface InteractionProjection {
+  visible: boolean;
+  behindCamera: boolean;
+  x: number;
+  y: number;
+}
+
+export interface InteractionInputBinding {
+  keyboard: string;
+  gamepad: string;
+  mouse?: string;
+}
+
+export interface InteractionInputHints {
+  primary?: InteractionInputBinding;
+  more?: InteractionInputBinding;
+  cancel?: InteractionInputBinding;
+}
+
+export interface InteractionIntent {
+  intentId: string;
+  label: string;
+  description?: string;
+  iconKey?: (typeof UI_ICON_KEYS)[number];
+  disabled?: boolean;
+}
+
+export type InteractionProgress =
+  | { mode: 'determinate'; value: number; maximum: number }
+  | { mode: 'indeterminate' }
+  | { mode: 'timed'; elapsedMs: number; durationMs: number };
+
+export interface InteractionDescriptor {
+  interactionId: string;
+  revision: number;
+  mode: InteractionMode;
+  label: string;
+  targetLabel?: string;
+  projection?: InteractionProjection;
+  intents: InteractionIntent[];
+  selectedIntentId?: string;
+  moreCount?: number;
+  pointer: boolean;
+  input: InteractionInputHints;
+  progress?: InteractionProgress;
+  cancellable: boolean;
+}
+
+export interface RuntimeInteraction extends InteractionDescriptor {
+  ownerResource: string;
+  ownerEpoch: number;
+}
+
 export interface RuntimeSnapshot {
   browserBootId: string;
   ready: boolean;
   surfaces: RuntimeSurface[];
+  signals: RuntimeSignal[];
+  signalGeneration: number;
+  signalRevisions: Record<string, number>;
+  interaction: RuntimeInteraction | null;
+  interactionGeneration: number;
+  interactionRevisions: Record<string, number>;
   preferences: UiPreferences;
   screen: ScreenMetrics;
   inputDevice: InputDevice;
@@ -146,6 +270,11 @@ export type GameMessageType =
   | 'surface:open'
   | 'surface:update'
   | 'surface:close'
+  | 'signal:upsert'
+  | 'signal:remove'
+  | 'signal:sound'
+  | 'interaction:upsert'
+  | 'interaction:remove'
   | 'input:intent'
   | 'preferences:sync';
 
@@ -174,12 +303,32 @@ const allowedMessageTypes = new Set<GameMessageType>([
   'surface:open',
   'surface:update',
   'surface:close',
+  'signal:upsert',
+  'signal:remove',
+  'signal:sound',
+  'interaction:upsert',
+  'interaction:remove',
   'input:intent',
   'preferences:sync',
 ]);
 
 const surfaceKinds = new Set<SurfaceKind>(['alert', 'confirm', 'input', 'form', 'select', 'menu', 'contextMenu']);
 const surfaceTones = new Set<SurfaceTone>(['neutral', 'accent', 'info', 'success', 'warning', 'danger']);
+const signalKinds = new Set<SignalKind>(['toast', 'progress', 'persistent', 'banner', 'status']);
+const signalTones = new Set<SignalTone>(['neutral', 'info', 'success', 'warning', 'danger']);
+const signalSoundTones = new Set<SignalSoundTone>([
+  'neutral', 'info', 'success', 'warning', 'danger', 'critical',
+]);
+const signalPriorities = new Set<SignalPriority>(['low', 'normal', 'high', 'critical']);
+const signalPositions = new Set<SignalPosition>([
+  'top-right', 'top-left', 'bottom-right', 'bottom-left', 'top-center', 'bottom-center',
+]);
+const signalProgressStates = new Set<SignalProgressState>(['PENDING', 'RUNNING', 'SUCCESS', 'FAILED', 'CANCELLED']);
+const signalProgressModes = new Set<SignalProgressMode>(['determinate', 'indeterminate']);
+const signalActionStyles = new Set<SignalActionStyle>(['default', 'primary', 'danger']);
+const interactionModes = new Set<InteractionMode>(['cue', 'bloom', 'progress']);
+const interactionProgressModes = new Set<InteractionProgressMode>(['determinate', 'indeterminate', 'timed']);
+const unsafeSignalTextPattern = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
 const forbiddenPayloadKeys = new Set(['html', 'svg', 'url', 'href', 'src', 'iframe', 'script']);
 const safeIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/;
 export const UI_ICON_KEYS = [
@@ -236,6 +385,11 @@ export function isBoundedPayload(value: unknown): boolean {
 
 function readText(value: unknown, maximum: number): string | undefined {
   return typeof value === 'string' && value.length > 0 && value.length <= maximum ? value : undefined;
+}
+
+function readSignalText(value: unknown, maximum: number, allowEmpty = false): string | undefined {
+  return typeof value === 'string' && value.length <= maximum && (allowEmpty || value.length > 0)
+    && !unsafeSignalTextPattern.test(value) ? value : undefined;
 }
 
 function readId(value: unknown, maximum = 96): string | undefined {
@@ -459,6 +613,256 @@ export function parseSurfaceDescriptor(value: unknown): SurfaceDescriptor | null
   return descriptor;
 }
 
+function parseSignalProgress(value: unknown): SignalProgress | null {
+  if (!isPlainRecord(value) || Object.keys(value).some((key) => !['state', 'mode', 'value', 'maximum'].includes(key))) {
+    return null;
+  }
+  if (typeof value.state !== 'string' || !signalProgressStates.has(value.state as SignalProgressState)
+    || typeof value.mode !== 'string' || !signalProgressModes.has(value.mode as SignalProgressMode)) return null;
+  const mode = value.mode as SignalProgressMode;
+  if (mode === 'indeterminate') {
+    if (value.value !== undefined || value.maximum !== undefined) return null;
+    return { state: value.state as SignalProgressState, mode };
+  }
+  const current = readFinite(value.value);
+  const maximum = readFinite(value.maximum);
+  if (current === undefined || maximum === undefined || current < 0 || maximum <= 0 || current > maximum
+    || current > Number.MAX_SAFE_INTEGER || maximum > Number.MAX_SAFE_INTEGER) return null;
+  return { state: value.state as SignalProgressState, mode, value: current, maximum };
+}
+
+function parseSignalAction(value: unknown): SignalActionHint | null {
+  if (!isPlainRecord(value) || Object.keys(value).some((key) => !['token', 'label', 'hint', 'style'].includes(key))) {
+    return null;
+  }
+  const token = readId(value.token, 96);
+  const label = readSignalText(value.label, 64);
+  if (!token || !label) return null;
+  if (value.hint !== undefined && !readSignalText(value.hint, 24)) return null;
+  if (value.style !== undefined && (typeof value.style !== 'string'
+    || !signalActionStyles.has(value.style as SignalActionStyle))) return null;
+  const action: SignalActionHint = { token, label };
+  const hint = readSignalText(value.hint, 24);
+  if (hint) action.hint = hint;
+  if (typeof value.style === 'string') action.style = value.style as SignalActionStyle;
+  return action;
+}
+
+function parseInteractionProjection(value: unknown): InteractionProjection | null {
+  if (!isPlainRecord(value)
+    || Object.keys(value).some((key) => !['visible', 'behindCamera', 'x', 'y'].includes(key))
+    || typeof value.visible !== 'boolean' || typeof value.behindCamera !== 'boolean') return null;
+  const x = readFinite(value.x);
+  const y = readFinite(value.y);
+  if (x === undefined || y === undefined || x < 0 || x > 1 || y < 0 || y > 1) return null;
+  return { visible: value.visible, behindCamera: value.behindCamera, x, y };
+}
+
+function parseInteractionInputBinding(value: unknown): InteractionInputBinding | null {
+  if (!isPlainRecord(value)
+    || Object.keys(value).some((key) => !['keyboard', 'gamepad', 'mouse'].includes(key))) return null;
+  const keyboard = readSignalText(value.keyboard, 24);
+  const gamepad = readSignalText(value.gamepad, 24);
+  if (!keyboard || !gamepad) return null;
+  if (value.mouse !== undefined && !readSignalText(value.mouse, 24)) return null;
+  const binding: InteractionInputBinding = { keyboard, gamepad };
+  const mouse = readSignalText(value.mouse, 24);
+  if (mouse) binding.mouse = mouse;
+  return binding;
+}
+
+function parseInteractionInputHints(value: unknown): InteractionInputHints | null {
+  if (!isPlainRecord(value)
+    || Object.keys(value).some((key) => !['primary', 'more', 'cancel'].includes(key))) return null;
+  const primary = value.primary === undefined ? undefined : parseInteractionInputBinding(value.primary);
+  const more = value.more === undefined ? undefined : parseInteractionInputBinding(value.more);
+  const cancel = value.cancel === undefined ? undefined : parseInteractionInputBinding(value.cancel);
+  if ((value.primary !== undefined && !primary) || (value.more !== undefined && !more)
+    || (value.cancel !== undefined && !cancel)) return null;
+  const hints: InteractionInputHints = {};
+  if (primary) hints.primary = primary;
+  if (more) hints.more = more;
+  if (cancel) hints.cancel = cancel;
+  return hints;
+}
+
+function parseInteractionIntent(value: unknown): InteractionIntent | null {
+  if (!isPlainRecord(value)
+    || Object.keys(value).some((key) => !['intentId', 'label', 'description', 'iconKey', 'disabled'].includes(key))) {
+    return null;
+  }
+  const intentId = readId(value.intentId, 96);
+  const label = readSignalText(value.label, 96);
+  if (!intentId || !label) return null;
+  if (value.description !== undefined && !readSignalText(value.description, 180)) return null;
+  if (value.iconKey !== undefined && (typeof value.iconKey !== 'string' || !iconKeys.has(value.iconKey))) return null;
+  if (value.disabled !== undefined && typeof value.disabled !== 'boolean') return null;
+  const intent: InteractionIntent = { intentId, label };
+  const description = readSignalText(value.description, 180);
+  if (description) intent.description = description;
+  if (typeof value.iconKey === 'string') intent.iconKey = value.iconKey as InteractionIntent['iconKey'];
+  if (value.disabled === true) intent.disabled = true;
+  return intent;
+}
+
+function parseInteractionProgress(value: unknown): InteractionProgress | null {
+  if (!isPlainRecord(value)
+    || Object.keys(value).some((key) => !['mode', 'value', 'maximum', 'elapsedMs', 'durationMs'].includes(key))
+    || typeof value.mode !== 'string'
+    || !interactionProgressModes.has(value.mode as InteractionProgressMode)) return null;
+  if (value.mode === 'indeterminate') {
+    if (Object.keys(value).length !== 1) return null;
+    return { mode: 'indeterminate' };
+  }
+  if (value.mode === 'determinate') {
+    if (Object.keys(value).some((key) => !['mode', 'value', 'maximum'].includes(key))) return null;
+    const current = readFinite(value.value);
+    const maximum = readFinite(value.maximum);
+    if (current === undefined || maximum === undefined || current < 0 || maximum <= 0 || current > maximum
+      || current > Number.MAX_SAFE_INTEGER || maximum > Number.MAX_SAFE_INTEGER) return null;
+    return { mode: 'determinate', value: current, maximum };
+  }
+  if (Object.keys(value).some((key) => !['mode', 'elapsedMs', 'durationMs'].includes(key))) return null;
+  const elapsedMs = readFinite(value.elapsedMs);
+  const durationMs = readFinite(value.durationMs);
+  if (!Number.isSafeInteger(elapsedMs) || !Number.isSafeInteger(durationMs)
+    || (elapsedMs as number) < 0 || (durationMs as number) < 1
+    || (durationMs as number) > UI_LIMITS.maxInteractionDurationMs
+    || (elapsedMs as number) > (durationMs as number)) return null;
+  return { mode: 'timed', elapsedMs: elapsedMs as number, durationMs: durationMs as number };
+}
+
+export function parseInteractionDescriptor(value: unknown): InteractionDescriptor | null {
+  if (!isPlainRecord(value) || !isBoundedPayload(value)) return null;
+  const allowed = [
+    'interactionId', 'revision', 'mode', 'label', 'targetLabel', 'projection', 'intents',
+    'selectedIntentId', 'moreCount', 'pointer', 'input', 'progress', 'cancellable',
+  ];
+  if (Object.keys(value).some((key) => !allowed.includes(key))) return null;
+  const interactionId = readId(value.interactionId, 96);
+  const revision = readFinite(value.revision);
+  const label = readSignalText(value.label, 120);
+  if (!interactionId || !Number.isSafeInteger(revision) || (revision as number) < 1 || !label
+    || typeof value.mode !== 'string' || !interactionModes.has(value.mode as InteractionMode)
+    || typeof value.pointer !== 'boolean' || typeof value.cancellable !== 'boolean') return null;
+  if (value.targetLabel !== undefined && !readSignalText(value.targetLabel, 80)) return null;
+  const projection = value.projection === undefined ? undefined : parseInteractionProjection(value.projection);
+  if (value.projection !== undefined && !projection) return null;
+  const input = parseInteractionInputHints(value.input);
+  if (!input || !Array.isArray(value.intents)
+    || value.intents.length > UI_LIMITS.maxInteractionIntents) return null;
+  const parsedIntents = value.intents.map(parseInteractionIntent);
+  if (parsedIntents.some((intent) => intent === null)) return null;
+  const intents = parsedIntents as InteractionIntent[];
+  if (new Set(intents.map((intent) => intent.intentId)).size !== intents.length) return null;
+  const selectedIntentId = value.selectedIntentId === undefined ? undefined : readId(value.selectedIntentId, 96);
+  if (value.selectedIntentId !== undefined && !selectedIntentId) return null;
+  const selected = selectedIntentId
+    ? intents.find((intent) => intent.intentId === selectedIntentId && intent.disabled !== true)
+    : undefined;
+  const progress = value.progress === undefined ? undefined : parseInteractionProgress(value.progress);
+  if (value.progress !== undefined && !progress) return null;
+  if (value.moreCount !== undefined && (!Number.isSafeInteger(value.moreCount)
+    || (value.moreCount as number) < 0 || (value.moreCount as number) > 99)) return null;
+
+  const mode = value.mode as InteractionMode;
+  if (mode === 'cue') {
+    const moreCount = typeof value.moreCount === 'number' ? value.moreCount : 0;
+    if (intents.length !== 1 || value.pointer !== false || value.cancellable !== false || progress
+      || (selectedIntentId !== undefined && selectedIntentId !== intents[0]?.intentId)
+      || !input.primary || input.cancel || (moreCount > 0) !== Boolean(input.more)) return null;
+  } else if (mode === 'bloom') {
+    if (intents.length < 2 || intents.length > UI_LIMITS.maxInteractionIntents || !selected
+      || progress || value.moreCount !== undefined || !input.primary || !input.cancel || input.more
+      || value.cancellable !== true) return null;
+  } else if (intents.length !== 0 || selectedIntentId !== undefined || value.moreCount !== undefined
+    || value.pointer !== false || !progress || input.primary || input.more
+    || value.cancellable !== Boolean(input.cancel)) return null;
+
+  const descriptor: InteractionDescriptor = {
+    interactionId,
+    revision: revision as number,
+    mode,
+    label,
+    intents,
+    pointer: value.pointer,
+    input,
+    cancellable: value.cancellable,
+  };
+  const targetLabel = readSignalText(value.targetLabel, 80);
+  if (targetLabel) descriptor.targetLabel = targetLabel;
+  if (projection) descriptor.projection = projection;
+  if (selectedIntentId) descriptor.selectedIntentId = selectedIntentId;
+  if (typeof value.moreCount === 'number') descriptor.moreCount = value.moreCount;
+  if (progress) descriptor.progress = progress;
+  return descriptor;
+}
+
+export function parseSignalDescriptor(value: unknown): SignalDescriptor | null {
+  if (!isPlainRecord(value) || !isBoundedPayload(value)) return null;
+  const allowed = [
+    'signalId', 'revision', 'kind', 'tone', 'priority', 'title', 'message', 'iconKey', 'count',
+    'progress', 'actions', 'createdAt', 'expiresAt', 'position',
+  ];
+  if (Object.keys(value).some((key) => !allowed.includes(key))) return null;
+  const signalId = readId(value.signalId);
+  const revision = readFinite(value.revision);
+  const title = readSignalText(value.title, 120);
+  const createdAt = readFinite(value.createdAt);
+  if (!signalId || !Number.isSafeInteger(revision) || (revision as number) < 1 || !title
+    || !Number.isSafeInteger(createdAt) || (createdAt as number) < 0
+    || typeof value.kind !== 'string' || !signalKinds.has(value.kind as SignalKind)
+    || typeof value.tone !== 'string' || !signalTones.has(value.tone as SignalTone)
+    || typeof value.priority !== 'string' || !signalPriorities.has(value.priority as SignalPriority)
+    || typeof value.position !== 'string' || !signalPositions.has(value.position as SignalPosition)) return null;
+  if (value.message !== undefined && readSignalText(value.message, 720, true) === undefined) return null;
+  if (value.iconKey !== undefined && (typeof value.iconKey !== 'string' || !iconKeys.has(value.iconKey))) return null;
+  if (value.count !== undefined && (!Number.isSafeInteger(value.count) || (value.count as number) < 1
+    || (value.count as number) > 9_999)) return null;
+  if (value.expiresAt !== undefined && (!Number.isSafeInteger(value.expiresAt)
+    || (value.expiresAt as number) <= (createdAt as number))) return null;
+  const progress = value.progress === undefined ? undefined : parseSignalProgress(value.progress);
+  if (value.progress !== undefined && progress === null) return null;
+  const rawActions = value.actions ?? [];
+  if (!Array.isArray(rawActions) || rawActions.length > UI_LIMITS.maxSignalActions) return null;
+  const parsedActions = rawActions.map(parseSignalAction);
+  if (parsedActions.some((action) => action === null)) return null;
+  const actions = parsedActions as SignalActionHint[];
+  if (new Set(actions.map((action) => action.token)).size !== actions.length) return null;
+  const descriptor: SignalDescriptor = {
+    signalId,
+    revision: revision as number,
+    kind: value.kind as SignalKind,
+    tone: value.tone as SignalTone,
+    priority: value.priority as SignalPriority,
+    title,
+    actions,
+    createdAt: createdAt as number,
+    position: value.position as SignalPosition,
+  };
+  if (typeof value.message === 'string' && value.message.length > 0) descriptor.message = value.message;
+  if (typeof value.iconKey === 'string') descriptor.iconKey = value.iconKey as SignalDescriptor['iconKey'];
+  if (typeof value.count === 'number') descriptor.count = value.count;
+  if (progress) descriptor.progress = progress;
+  if (typeof value.expiresAt === 'number') descriptor.expiresAt = value.expiresAt;
+  return descriptor;
+}
+
+export function parseSignalSoundPayload(value: unknown): SignalSoundMessagePayload | null {
+  if (!isPlainRecord(value) || Object.keys(value).length !== 3
+    || Object.keys(value).some((key) => !['tone', 'volume', 'browserBootId'].includes(key))
+    || typeof value.tone !== 'string' || !signalSoundTones.has(value.tone as SignalSoundTone)
+    || !Number.isSafeInteger(value.volume) || (value.volume as number) < 1
+    || (value.volume as number) > 100) return null;
+  const browserBootId = readId(value.browserBootId);
+  if (!browserBootId) return null;
+  return {
+    tone: value.tone as SignalSoundTone,
+    volume: value.volume as number,
+    browserBootId,
+  };
+}
+
 export function parseGameEnvelope(value: unknown): GameEnvelope | null {
   if (!isPlainRecord(value) || !isBoundedPayload(value)) return null;
   if (Object.keys(value).some((key) => ![
@@ -473,6 +877,27 @@ export function parseGameEnvelope(value: unknown): GameEnvelope | null {
     || !Number.isInteger(revision) || (revision as number) < 0
     || typeof value.type !== 'string' || !allowedMessageTypes.has(value.type as GameMessageType)
     || !isPlainRecord(value.payload)) return null;
+  let payload: Record<string, unknown> = value.payload;
+  if (value.type === 'signal:sound') {
+    const sound = parseSignalSoundPayload(value.payload);
+    if (!sound || ownerResource !== 'synex_notify' || revision !== 0) return null;
+    payload = { tone: sound.tone, volume: sound.volume, browserBootId: sound.browserBootId };
+  } else if (value.type === 'interaction:upsert') {
+    if (ownerResource !== 'synex_interact') return null;
+    const { generation, ...rawDescriptor } = value.payload;
+    const descriptor = parseInteractionDescriptor(rawDescriptor);
+    if (!descriptor || descriptor.revision !== revision || !Number.isSafeInteger(generation)
+      || (generation as number) < 1) return null;
+    payload = { ...descriptor, generation: generation as number };
+  } else if (value.type === 'interaction:remove') {
+    if (ownerResource !== 'synex_interact'
+      || Object.keys(value.payload).some((key) => !['interactionId', 'generation'].includes(key))) return null;
+    const interactionId = readId(value.payload.interactionId, 96);
+    const generation = readFinite(value.payload.generation);
+    if (!interactionId || !Number.isSafeInteger(generation) || (generation as number) < 1
+      || (revision as number) < 1) return null;
+    payload = { interactionId, generation: generation as number };
+  }
   return {
     protocolVersion: 1,
     messageId,
@@ -480,7 +905,7 @@ export function parseGameEnvelope(value: unknown): GameEnvelope | null {
     ownerResource,
     ownerEpoch: ownerEpoch as number,
     revision: revision as number,
-    payload: value.payload,
+    payload,
   };
 }
 

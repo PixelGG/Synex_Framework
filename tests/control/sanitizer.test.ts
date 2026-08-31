@@ -21,6 +21,11 @@ test('Control sanitizer redacts composed secrets and masks identifiers by defaul
         actor_character_id = 'character_private_actor',
         parent_group_id = 'group_private_parent',
         entityId = 'entity_private_0001',
+        subjectKey = 'session:session-private:7',
+        subjectUser = 'user_private_0001',
+        subjectSession = 'session_private_0001',
+        subjectCharacter = 'character_private_0001',
+        subjectSource = 42,
         amountMinor = '9007199254740991',
       })
       assert(value.api_key == '[REDACTED]')
@@ -36,9 +41,14 @@ test('Control sanitizer redacts composed secrets and masks identifiers by defaul
       assert(value.actor_character_id == 'char...ctor')
       assert(value.parent_group_id == 'grou...rent')
       assert(value.entityId == 'enti...0001')
+      assert(value.subjectKey ~= 'session:session-private:7')
+      assert(value.subjectUser == 'user...0001')
+      assert(value.subjectSession == 'sess...0001')
+      assert(value.subjectCharacter == 'char...0001')
+      assert(value.subjectSource == '[MASKED]')
       assert(value.amountMinor == '9007199254740991')
       assert(report.redactions == 8)
-      assert(report.masked == 5)
+      assert(report.masked == 10)
       return value.account_id .. ':' .. value.entityId
     `);
     assert.equal(result, '1111...1111:enti...0001');

@@ -144,6 +144,7 @@ test('entity manifest and descriptor cover modules, schema ownership, Core ports
     'synex.identity.read',
     'synex.metrics.write',
     'synex.runtime.read',
+    'synex.security.signal.emit',
   ];
   assert.deepEqual([...descriptor.capabilities.request].sort(), requiredCapabilities.sort());
   const grants = policy.resources.synex_entities.allow;

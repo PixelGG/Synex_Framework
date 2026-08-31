@@ -1,6 +1,6 @@
 # Synex Contract Reference
 
-Source hash: `d221dcd6ed86651cadea6bed9fed5ab2d92470d4727475fa81e9454a194f7d19`
+Source hash: `ed52744d1b75972bf22cd978612b61f88fbe1885ad3deb223e75474b0b0183e9`
 
 > [!WARNING]
 > This generated catalog aggregates source declarations from `synex_core` and downstream rework snapshots. A listed contract, provider, version, or stability value is source metadata, not release support or runtime acceptance. Only Core belongs to the accepted Production-Beta profile; do not deploy against downstream entries until their rework receives separate acceptance.
@@ -176,8 +176,34 @@ Source hash: `d221dcd6ed86651cadea6bed9fed5ab2d92470d4727475fa81e9454a194f7d19`
 | `synex.identity.characters.list` | `1.0.0` | service | `synex_core` | none | experimental | `synex.identity.read` |
 | `synex.identity.characters.select` | `1.0.0` | service | `synex_core` | none | experimental | `synex.characters.select` |
 | `synex.identity.session.by_source` | `1.0.0` | service | `synex_core` | none | experimental | `synex.identity.read` |
+| `synex.interact.bundle.register` | `1.0.0` | service | `synex_interact` | none | experimental | `synex.interact.bundle.register` |
+| `synex.interact.bundle.replace` | `1.0.0` | service | `synex_interact` | none | experimental | `synex.interact.bundle.register` |
+| `synex.interact.bundle.unregister` | `1.0.0` | service | `synex_interact` | none | experimental | `synex.interact.bundle.register` |
+| `synex.interact.discovery.entities` | `1.0.0` | rpc | `synex_interact` | client-to-server | internal | — |
+| `synex.interact.discovery.snapshot` | `1.0.0` | rpc | `synex_interact` | client-to-server | internal | — |
+| `synex.interact.graph.ack` | `1.0.0` | rpc | `synex_interact` | client-to-server | internal | — |
+| `synex.interact.lease.activate` | `1.0.0` | rpc | `synex_interact` | client-to-server | experimental | — |
+| `synex.interact.lease.request` | `1.0.0` | rpc | `synex_interact` | client-to-server | experimental | — |
+| `synex.interact.metrics.report` | `1.0.0` | rpc | `synex_interact` | client-to-server | internal | — |
+| `synex.interact.session.cancel` | `1.0.0` | rpc | `synex_interact` | client-to-server | experimental | — |
+| `synex.interact.session.join` | `1.0.0` | rpc | `synex_interact` | client-to-server | experimental | — |
+| `synex.interact.session.leave` | `1.0.0` | rpc | `synex_interact` | client-to-server | experimental | — |
+| `synex.notify.action.invoke` | `1.0.0` | rpc | `synex_notify` | client-to-server | experimental | — |
+| `synex.notify.command.pull` | `1.0.0` | rpc | `synex_notify` | client-to-server | internal | — |
+| `synex.notify.dismiss` | `1.0.0` | service | `synex_notify` | none | experimental | `synex.notify.update` |
+| `synex.notify.metrics.report` | `1.0.0` | rpc | `synex_notify` | client-to-server | internal | — |
+| `synex.notify.send` | `1.0.0` | service | `synex_notify` | none | experimental | `synex.notify.send` |
+| `synex.notify.update` | `1.0.0` | service | `synex_notify` | none | experimental | `synex.notify.update` |
 | `synex.runtime.status` | `1.0.0` | service | `synex_core` | none | experimental | `synex.runtime.read` |
 | `synex.runtime.status` | `2.0.0` | service | `synex_core` | none | experimental | `synex.runtime.read` |
+| `synex.security.assessment.get` | `1.0.0` | rpc | `synex_security` | none | experimental | `synex.security.case.read` |
+| `synex.security.case.get` | `1.0.0` | rpc | `synex_security` | none | experimental | `synex.security.case.read` |
+| `synex.security.expectation.list` | `1.0.0` | rpc | `synex_security` | none | experimental | `synex.security.case.read` |
+| `synex.security.expectation.register` | `1.0.0` | rpc | `synex_security` | none | experimental | `synex.security.expectation.manage` |
+| `synex.security.expectation.revoke` | `1.0.0` | rpc | `synex_security` | none | experimental | `synex.security.expectation.manage` |
+| `synex.security.health.get` | `1.0.0` | rpc | `synex_security` | none | experimental | `synex.security.diagnostics.read` |
+| `synex.security.sentinel.report` | `1.0.0` | rpc | `synex_security` | client-to-server | internal | — |
+| `synex.security.signal.report` | `1.0.0` | rpc | `synex_security` | none | experimental | `synex.security.signal.emit` |
 | `synex.world.door.set_state` | `1.0.0` | rpc | `synex_world` | none | experimental | `synex.world.door.write` |
 | `synex.world.instance.close` | `1.0.0` | rpc | `synex_world` | none | experimental | `synex.world.instance.manage` |
 | `synex.world.instance.create` | `1.0.0` | rpc | `synex_world` | none | experimental | `synex.world.instance.create` |
@@ -13382,6 +13408,12 @@ Source hash: `d221dcd6ed86651cadea6bed9fed5ab2d92470d4727475fa81e9454a194f7d19`
           "entity": {
             "additionalProperties": false,
             "properties": {
+              "archetype": {
+                "maxLength": 128,
+                "minLength": 3,
+                "pattern": "^[a-z][a-z0-9_.-]+$",
+                "type": "string"
+              },
               "binding": {
                 "additionalProperties": false,
                 "properties": {
@@ -23398,6 +23430,2297 @@ Source hash: `d221dcd6ed86651cadea6bed9fed5ab2d92470d4727475fa81e9454a194f7d19`
 }
 ```
 
+## `synex.interact.bundle.register`
+
+- Version: `1.0.0`
+- Provider: `synex_interact`
+- Idempotent: no
+- Errors: `INTERACT_BUNDLE_INVALID`, `INTERACT_BUNDLE_CONFLICT`, `INTERACT_OWNER_STALE`, `INTERACT_RATE_LIMITED`, `INTERACT_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "bundle": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "bundle"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "activated": {
+      "const": true
+    },
+    "key": {
+      "maxLength": 128,
+      "minLength": 3,
+      "type": "string"
+    },
+    "ownerEpoch": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "ownerResource": {
+      "maxLength": 64,
+      "minLength": 3,
+      "type": "string"
+    },
+    "revision": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "key",
+    "revision",
+    "ownerResource",
+    "ownerEpoch",
+    "activated"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.interact.bundle.replace`
+
+- Version: `1.0.0`
+- Provider: `synex_interact`
+- Idempotent: no
+- Errors: `INTERACT_BUNDLE_INVALID`, `INTERACT_BUNDLE_CONFLICT`, `INTERACT_BUNDLE_STALE`, `INTERACT_OWNER_STALE`, `INTERACT_RATE_LIMITED`, `INTERACT_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "bundle": {
+      "type": "object"
+    },
+    "expectedRevision": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "bundle",
+    "expectedRevision"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "activated": {
+      "const": true
+    },
+    "key": {
+      "type": "string"
+    },
+    "ownerEpoch": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "ownerResource": {
+      "type": "string"
+    },
+    "revision": {
+      "minimum": 2,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "key",
+    "revision",
+    "ownerResource",
+    "ownerEpoch",
+    "activated"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.interact.bundle.unregister`
+
+- Version: `1.0.0`
+- Provider: `synex_interact`
+- Idempotent: yes
+- Errors: `INTERACT_BUNDLE_NOT_FOUND`, `INTERACT_BUNDLE_STALE`, `INTERACT_OWNER_STALE`, `INTERACT_RATE_LIMITED`, `INTERACT_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "key": {
+      "maxLength": 128,
+      "minLength": 3,
+      "type": "string"
+    },
+    "revision": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "key",
+    "revision"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "key": {
+      "type": "string"
+    },
+    "removed": {
+      "const": true
+    }
+  },
+  "required": [
+    "key",
+    "removed"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.interact.discovery.entities`
+
+- Version: `1.0.0`
+- Provider: `synex_interact`
+- Idempotent: yes
+- Errors: `INTERACT_INVALID_REQUEST`, `INTERACT_DISCOVERY_STALE`, `INTERACT_LEASE_STALE`, `INTERACT_TARGET_STALE`, `INTERACT_RATE_LIMITED`, `INTERACT_PAYLOAD_TOO_LARGE`, `INTERACT_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "discoveryRevision": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "discoveryRevision"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "bucket": {
+      "maximum": 2147483647,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "discoveryRevision": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "entities": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "archetype": {
+            "maxLength": 128,
+            "minLength": 3,
+            "pattern": "^[a-z][a-z0-9_.-]+$",
+            "type": "string"
+          },
+          "bucket": {
+            "maximum": 2147483647,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "entityRef": {
+            "additionalProperties": false,
+            "properties": {
+              "entityId": {
+                "maxLength": 64,
+                "minLength": 8,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+                "type": "string"
+              },
+              "generation": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "entityId",
+              "generation"
+            ],
+            "type": "object"
+          },
+          "entityType": {
+            "enum": [
+              "vehicle",
+              "ped",
+              "object"
+            ]
+          },
+          "heading": {
+            "maximum": 360000,
+            "minimum": -360000,
+            "type": "number"
+          },
+          "model": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "netId": {
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "position": {
+            "additionalProperties": false,
+            "properties": {
+              "x": {
+                "maximum": 20000,
+                "minimum": -20000,
+                "type": "number"
+              },
+              "y": {
+                "maximum": 20000,
+                "minimum": -20000,
+                "type": "number"
+              },
+              "z": {
+                "maximum": 20000,
+                "minimum": -20000,
+                "type": "number"
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "z"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "entityRef",
+          "netId",
+          "entityType",
+          "model",
+          "bucket",
+          "position",
+          "heading"
+        ],
+        "type": "object"
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "projectionRevision": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "sourceGeneration": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "truncated": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "discoveryRevision",
+    "projectionRevision",
+    "sourceGeneration",
+    "bucket",
+    "truncated",
+    "entities"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.interact.discovery.snapshot`
+
+- Version: `1.0.0`
+- Provider: `synex_interact`
+- Idempotent: yes
+- Errors: `INTERACT_NOT_READY`, `INTERACT_INVALID_REQUEST`, `INTERACT_DISCOVERY_STALE`, `INTERACT_RATE_LIMITED`, `INTERACT_PAYLOAD_TOO_LARGE`, `INTERACT_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "knownRevision": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "page": {
+      "maximum": 24,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "snapshotRevision": {
+      "maximum": 9007199254740991,
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "knownRevision",
+    "snapshotRevision",
+    "page"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "complete": {
+      "type": "boolean"
+    },
+    "objectCount": {
+      "maximum": 2048,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "page": {
+      "maximum": 24,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "pageCount": {
+      "maximum": 24,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "payload": {
+      "maxLength": 14000,
+      "type": "string"
+    },
+    "revision": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "totalBytes": {
+      "maximum": 262144,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "unchanged": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "revision",
+    "unchanged",
+    "page",
+    "pageCount",
+    "complete",
+    "objectCount",
+    "totalBytes",
+    "payload"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.interact.graph.ack`
+
+- Version: `1.0.0`
+- Provider: `synex_interact`
+- Idempotent: yes
+- Errors: `INTERACT_GRAPH_INVALID`, `INTERACT_SESSION_NOT_FOUND`, `INTERACT_LEASE_STALE`, `INTERACT_RATE_LIMITED`, `INTERACT_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "code": {
+      "maxLength": 64,
+      "minLength": 3,
+      "type": "string"
+    },
+    "executionId": {
+      "maxLength": 96,
+      "minLength": 8,
+      "type": "string"
+    },
+    "nodeKey": {
+      "maxLength": 64,
+      "minLength": 1,
+      "type": "string"
+    },
+    "result": {
+      "enum": [
+        "COMPLETED",
+        "CANCELLED",
+        "FAILED"
+      ]
+    },
+    "sequence": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "sessionId": {
+      "maxLength": 96,
+      "minLength": 8,
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "executionId",
+    "nodeKey",
+    "sequence",
+    "result"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "accepted": {
+      "const": true
+    },
+    "duplicate": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "accepted",
+    "duplicate"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.interact.lease.activate`
+
+- Version: `1.0.0`
+- Provider: `synex_interact`
+- Idempotent: no
+- Errors: `INTERACT_LEASE_EXPIRED`, `INTERACT_LEASE_REVOKED`, `INTERACT_LEASE_REPLAYED`, `INTERACT_LEASE_STALE`, `INTERACT_ACTOR_BUSY`, `INTERACT_RATE_LIMITED`, `INTERACT_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "leaseId": {
+      "maxLength": 96,
+      "minLength": 8,
+      "type": "string"
+    },
+    "nonce": {
+      "maxLength": 96,
+      "minLength": 8,
+      "type": "string"
+    }
+  },
+  "required": [
+    "leaseId",
+    "nonce"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "accepted": {
+      "const": true
+    },
+    "leaseId": {
+      "type": "string"
+    },
+    "sessionId": {
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "READY",
+        "RUNNING",
+        "WAITING"
+      ]
+    }
+  },
+  "required": [
+    "accepted",
+    "leaseId",
+    "sessionId",
+    "state"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.interact.lease.request`
+
+- Version: `1.0.0`
+- Provider: `synex_interact`
+- Idempotent: no
+- Errors: `INTERACT_NOT_READY`, `INTERACT_INTENT_NOT_FOUND`, `INTERACT_INTENT_STALE`, `INTERACT_TARGET_INVALID`, `INTERACT_TARGET_STALE`, `INTERACT_SLOT_NOT_FOUND`, `INTERACT_SLOT_BUSY`, `INTERACT_SLOT_DISABLED`, `INTERACT_LEASE_DENIED`, `INTERACT_ACTOR_BUSY`, `INTERACT_RATE_LIMITED`, `INTERACT_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "clientRevision": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "intent": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "maxLength": 128,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$",
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "key",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "slotKey": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z][A-Za-z0-9_.-]*$",
+      "type": "string"
+    },
+    "target": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "world"
+            },
+            "worldRef": {
+              "additionalProperties": false,
+              "properties": {
+                "key": {
+                  "maxLength": 128,
+                  "minLength": 3,
+                  "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$",
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": [
+                    "anchor",
+                    "door",
+                    "portal"
+                  ]
+                },
+                "revision": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "key",
+                "revision"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "worldRef"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "entityRef": {
+              "additionalProperties": false,
+              "properties": {
+                "entityId": {
+                  "maxLength": 64,
+                  "minLength": 8,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+                  "type": "string"
+                },
+                "generation": {
+                  "maximum": 9007199254740991,
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "entityId",
+                "generation"
+              ],
+              "type": "object"
+            },
+            "kind": {
+              "const": "entity"
+            }
+          },
+          "required": [
+            "kind",
+            "entityRef"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "bone": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "kind": {
+              "const": "ambient"
+            },
+            "model": {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "netId": {
+              "maximum": 65535,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "netId",
+            "model"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "bindingKey": {
+              "maxLength": 128,
+              "minLength": 3,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+              "type": "string"
+            },
+            "kind": {
+              "const": "static"
+            },
+            "position": {
+              "additionalProperties": false,
+              "properties": {
+                "x": {
+                  "maximum": 20000,
+                  "minimum": -20000,
+                  "type": "number"
+                },
+                "y": {
+                  "maximum": 20000,
+                  "minimum": -20000,
+                  "type": "number"
+                },
+                "z": {
+                  "maximum": 20000,
+                  "minimum": -20000,
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "bindingKey"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "bindingKey": {
+              "maxLength": 128,
+              "minLength": 3,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+              "type": "string"
+            },
+            "kind": {
+              "const": "dynamic"
+            },
+            "position": {
+              "additionalProperties": false,
+              "properties": {
+                "x": {
+                  "maximum": 20000,
+                  "minimum": -20000,
+                  "type": "number"
+                },
+                "y": {
+                  "maximum": 20000,
+                  "minimum": -20000,
+                  "type": "number"
+                },
+                "z": {
+                  "maximum": 20000,
+                  "minimum": -20000,
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "kind",
+            "bindingKey"
+          ],
+          "type": "object"
+        }
+      ],
+      "properties": {
+        "bindingKey": {
+          "maxLength": 128,
+          "minLength": 3,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+          "type": "string"
+        },
+        "bone": {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "entityRef": {
+          "additionalProperties": false,
+          "properties": {
+            "entityId": {
+              "maxLength": 64,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+              "type": "string"
+            },
+            "generation": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "entityId",
+            "generation"
+          ],
+          "type": "object"
+        },
+        "kind": {
+          "enum": [
+            "world",
+            "entity",
+            "ambient",
+            "static",
+            "dynamic"
+          ]
+        },
+        "model": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "netId": {
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "position": {
+          "additionalProperties": false,
+          "properties": {
+            "x": {
+              "maximum": 20000,
+              "minimum": -20000,
+              "type": "number"
+            },
+            "y": {
+              "maximum": 20000,
+              "minimum": -20000,
+              "type": "number"
+            },
+            "z": {
+              "maximum": 20000,
+              "minimum": -20000,
+              "type": "number"
+            }
+          },
+          "required": [
+            "x",
+            "y",
+            "z"
+          ],
+          "type": "object"
+        },
+        "worldRef": {
+          "additionalProperties": false,
+          "properties": {
+            "key": {
+              "maxLength": 128,
+              "minLength": 3,
+              "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$",
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "anchor",
+                "door",
+                "portal"
+              ]
+            },
+            "revision": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "key",
+            "revision"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "intent",
+    "target",
+    "clientRevision"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "expiresAt": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "intent": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "maxLength": 128,
+          "minLength": 3,
+          "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$",
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "key",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "leaseId": {
+      "maxLength": 96,
+      "minLength": 8,
+      "type": "string"
+    },
+    "nonce": {
+      "maxLength": 96,
+      "minLength": 8,
+      "type": "string"
+    },
+    "requiredParticipants": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 8,
+      "type": "array"
+    },
+    "sessionId": {
+      "maxLength": 96,
+      "minLength": 8,
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "ISSUED",
+        "WAITING"
+      ]
+    }
+  },
+  "required": [
+    "leaseId",
+    "nonce",
+    "state",
+    "intent",
+    "expiresAt",
+    "sessionId"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.interact.metrics.report`
+
+- Version: `1.0.0`
+- Provider: `synex_interact`
+- Idempotent: yes
+- Errors: `INTERACT_INVALID_REQUEST`, `INTERACT_RATE_LIMITED`, `INTERACT_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "clientEpoch": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "counters": {
+      "additionalProperties": false,
+      "properties": {
+        "bloomOpened": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "candidatesSeen": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "expensiveChecks": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "intentChanges": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "leaseRequests": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "promptsShown": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "providerTimeouts": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sensorTicks": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "transportFailures": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "gauges": {
+      "additionalProperties": false,
+      "properties": {
+        "candidateCount": {
+          "maximum": 128,
+          "minimum": 0,
+          "type": "number"
+        },
+        "expensiveCandidateCount": {
+          "maximum": 8,
+          "minimum": 0,
+          "type": "number"
+        },
+        "intentScoringDurationMs": {
+          "maximum": 60000,
+          "minimum": 0,
+          "type": "number"
+        },
+        "providerDurationMs": {
+          "maximum": 60000,
+          "minimum": 0,
+          "type": "number"
+        },
+        "sensorDurationMs": {
+          "maximum": 60000,
+          "minimum": 0,
+          "type": "number"
+        },
+        "sensorIntervalMs": {
+          "maximum": 10000,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "sequence": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "clientEpoch",
+    "sequence",
+    "counters",
+    "gauges"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "accepted": {
+      "const": true
+    },
+    "duplicate": {
+      "type": "boolean"
+    },
+    "nextReportAfterMs": {
+      "maximum": 60000,
+      "minimum": 5000,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "accepted",
+    "duplicate",
+    "nextReportAfterMs"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.interact.session.cancel`
+
+- Version: `1.0.0`
+- Provider: `synex_interact`
+- Idempotent: yes
+- Errors: `INTERACT_SESSION_NOT_FOUND`, `INTERACT_LEASE_STALE`, `INTERACT_RATE_LIMITED`, `INTERACT_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "reason": {
+      "enum": [
+        "USER_CANCELLED",
+        "ACTOR_MOVED",
+        "ACTOR_DIED",
+        "ACTOR_RAGDOLL",
+        "ACTOR_DAMAGED",
+        "TARGET_MOVED",
+        "TARGET_GONE",
+        "OUT_OF_RANGE",
+        "WORLD_CHANGED",
+        "ENTITY_REF_STALE",
+        "SLOT_LOST",
+        "TARGET_STATE_CHANGED",
+        "TIMEOUT"
+      ]
+    },
+    "sessionId": {
+      "maxLength": 96,
+      "minLength": 8,
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "reason"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "cancelled": {
+      "const": true
+    },
+    "sessionId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "cancelled"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.interact.session.join`
+
+- Version: `1.0.0`
+- Provider: `synex_interact`
+- Idempotent: no
+- Errors: `INTERACT_INVALID_REQUEST`, `INTERACT_SESSION_NOT_FOUND`, `INTERACT_SESSION_EXPIRED`, `INTERACT_PARTICIPANT_DENIED`, `INTERACT_LEASE_STALE`, `INTERACT_ACTOR_BUSY`, `INTERACT_INTENT_NOT_FOUND`, `INTERACT_INTENT_STALE`, `INTERACT_BUNDLE_INVALID`, `INTERACT_TARGET_INVALID`, `INTERACT_TARGET_STALE`, `INTERACT_SLOT_NOT_FOUND`, `INTERACT_SLOT_BUSY`, `INTERACT_SLOT_DISABLED`, `INTERACT_SLOT_LOST`, `INTERACT_RESERVATION_INVALID`, `INTERACT_LEASE_DENIED`, `INTERACT_PROVIDER_UNAVAILABLE`, `INTERACT_PROVIDER_TIMEOUT`, `INTERACT_EVALUATOR_UNAVAILABLE`, `INTERACT_EVALUATOR_TIMEOUT`, `INTERACT_EVALUATOR_INVALID`, `INTERACT_ADAPTER_MISSING`, `INTERACT_DOMAIN_REJECTED`, `INTERACT_RATE_LIMITED`, `INTERACT_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "invitationId": {
+      "maxLength": 96,
+      "minLength": 8,
+      "type": "string"
+    },
+    "role": {
+      "maxLength": 32,
+      "minLength": 1,
+      "type": "string"
+    },
+    "sessionId": {
+      "maxLength": 96,
+      "minLength": 8,
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "role",
+    "invitationId"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "leaseId": {
+      "type": "string"
+    },
+    "nonce": {
+      "type": "string"
+    },
+    "role": {
+      "type": "string"
+    },
+    "sessionId": {
+      "type": "string"
+    },
+    "state": {
+      "const": "WAITING"
+    }
+  },
+  "required": [
+    "sessionId",
+    "leaseId",
+    "nonce",
+    "role",
+    "state"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.interact.session.leave`
+
+- Version: `1.0.0`
+- Provider: `synex_interact`
+- Idempotent: yes
+- Errors: `INTERACT_SESSION_NOT_FOUND`, `INTERACT_PARTICIPANT_DENIED`, `INTERACT_LEASE_STALE`, `INTERACT_RATE_LIMITED`, `INTERACT_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "sessionId": {
+      "maxLength": 96,
+      "minLength": 8,
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "left": {
+      "const": true
+    },
+    "sessionId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "sessionId",
+    "left"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.notify.action.invoke`
+
+- Version: `1.0.0`
+- Provider: `synex_notify`
+- Idempotent: no
+- Errors: `NOTIFY_INVALID_REQUEST`, `NOTIFY_ACTION_NOT_FOUND`, `NOTIFY_ACTION_EXPIRED`, `NOTIFY_ACTION_REPLAYED`, `NOTIFY_NOTIFICATION_STALE`, `NOTIFY_TARGET_STALE`, `NOTIFY_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "notificationId": {
+      "maxLength": 96,
+      "minLength": 8,
+      "type": "string"
+    },
+    "revision": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "token": {
+      "maxLength": 96,
+      "minLength": 16,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "token",
+    "notificationId",
+    "revision"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "accepted": {
+      "const": true
+    },
+    "actionId": {
+      "maxLength": 64,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "accepted",
+    "actionId"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.notify.command.pull`
+
+- Version: `1.0.0`
+- Provider: `synex_notify`
+- Idempotent: no
+- Errors: `NOTIFY_INVALID_REQUEST`, `NOTIFY_COMMAND_NOT_FOUND`, `NOTIFY_TARGET_STALE`, `NOTIFY_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "commandId": {
+      "maxLength": 96,
+      "minLength": 16,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+      "type": "string"
+    }
+  },
+  "required": [
+    "commandId"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "command": {
+      "enum": [
+        "show",
+        "update",
+        "dismiss",
+        "owner_stop"
+      ]
+    },
+    "commandId": {
+      "maxLength": 96,
+      "minLength": 16,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+      "type": "string"
+    },
+    "notificationId": {
+      "maxLength": 96,
+      "minLength": 8,
+      "type": "string"
+    },
+    "ownerEpoch": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "ownerResource": {
+      "maxLength": 64,
+      "minLength": 3,
+      "type": "string"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "revision": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "target": {
+      "additionalProperties": false,
+      "properties": {
+        "sessionId": {
+          "maxLength": 64,
+          "minLength": 8,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+          "type": "string"
+        },
+        "source": {
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "sourceGeneration": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "source",
+        "sessionId",
+        "sourceGeneration"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "command",
+    "commandId",
+    "ownerResource",
+    "ownerEpoch",
+    "notificationId",
+    "revision",
+    "target"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.notify.dismiss`
+
+- Version: `1.0.0`
+- Provider: `synex_notify`
+- Idempotent: no
+- Errors: `NOTIFY_INVALID_REQUEST`, `NOTIFY_OWNER_INVALID`, `NOTIFY_OWNER_STALE`, `NOTIFY_RATE_LIMITED`, `NOTIFY_NOTIFICATION_NOT_FOUND`, `NOTIFY_NOTIFICATION_STALE`, `NOTIFY_TARGET_STALE`, `NOTIFY_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "handle": {
+      "additionalProperties": false,
+      "properties": {
+        "notificationId": {
+          "maxLength": 96,
+          "minLength": 8,
+          "type": "string"
+        },
+        "ownerEpoch": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "ownerResource": {
+          "maxLength": 64,
+          "minLength": 3,
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "notificationId",
+        "ownerResource",
+        "ownerEpoch",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "reason": {
+      "enum": [
+        "dismissed",
+        "cancelled",
+        "superseded"
+      ]
+    }
+  },
+  "required": [
+    "handle"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "dismissed": {
+      "const": true
+    },
+    "notificationId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "notificationId",
+    "dismissed"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.notify.metrics.report`
+
+- Version: `1.0.0`
+- Provider: `synex_notify`
+- Idempotent: yes
+- Errors: `NOTIFY_INVALID_REQUEST`, `NOTIFY_RATE_LIMITED`, `NOTIFY_QUEUE_FULL`, `NOTIFY_TARGET_STALE`, `NOTIFY_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "clientEpoch": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "counters": {
+      "additionalProperties": false,
+      "properties": {
+        "coalesced": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "created": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "deduplicated": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "displayed": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "grouped": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "nativeFallbacks": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "presentationExpired": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "queueEvictions": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "queuePromotions": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "queueWaitTotalMs": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "quietDeferred": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "removed": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "renderAckSamples": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "renderAckTotalMs": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "renderDispatchSamples": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "renderDispatchTotalMs": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "suppressed": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "transportFailures": {
+          "maximum": 1000000000000,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "created",
+        "displayed",
+        "removed",
+        "deduplicated",
+        "grouped",
+        "suppressed",
+        "coalesced",
+        "queuePromotions",
+        "queueEvictions",
+        "queueWaitTotalMs",
+        "renderDispatchSamples",
+        "renderDispatchTotalMs",
+        "renderAckSamples",
+        "renderAckTotalMs",
+        "transportFailures",
+        "nativeFallbacks",
+        "presentationExpired",
+        "quietDeferred"
+      ],
+      "type": "object"
+    },
+    "gauges": {
+      "additionalProperties": false,
+      "properties": {
+        "pendingVisibilityAcks": {
+          "maximum": 128,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "queued": {
+          "maximum": 128,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "visible": {
+          "maximum": 4,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "visible",
+        "queued",
+        "pendingVisibilityAcks"
+      ],
+      "type": "object"
+    },
+    "sequence": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "clientEpoch",
+    "sequence",
+    "counters",
+    "gauges"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "accepted": {
+      "const": true
+    },
+    "duplicate": {
+      "type": "boolean"
+    },
+    "nextReportAfterMs": {
+      "maximum": 60000,
+      "minimum": 5000,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "accepted",
+    "duplicate",
+    "nextReportAfterMs"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.notify.send`
+
+- Version: `1.0.0`
+- Provider: `synex_notify`
+- Idempotent: no
+- Errors: `NOTIFY_INVALID_REQUEST`, `NOTIFY_OWNER_STALE`, `NOTIFY_RATE_LIMITED`, `NOTIFY_QUEUE_FULL`, `NOTIFY_INVALID_PRIORITY`, `NOTIFY_PRIORITY_DENIED`, `NOTIFY_UI_UNAVAILABLE`, `NOTIFY_PAYLOAD_TOO_LARGE`, `NOTIFY_TARGET_STALE`, `NOTIFY_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "payload": {
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "hint": {
+                "maxLength": 24,
+                "minLength": 1,
+                "type": "string"
+              },
+              "id": {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "style": {
+                "enum": [
+                  "primary",
+                  "quiet",
+                  "danger"
+                ]
+              },
+              "ttlMs": {
+                "maximum": 30000,
+                "minimum": 1000,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "label"
+            ],
+            "type": "object"
+          },
+          "maxItems": 2,
+          "type": "array"
+        },
+        "dedupeKey": {
+          "maxLength": 96,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+          "type": "string"
+        },
+        "dedupePolicy": {
+          "enum": [
+            "suppress",
+            "count",
+            "replace",
+            "refresh"
+          ]
+        },
+        "durationMs": {
+          "maximum": 30000,
+          "minimum": 1500,
+          "type": "integer"
+        },
+        "groupKey": {
+          "maxLength": 96,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+          "type": "string"
+        },
+        "history": {
+          "type": "boolean"
+        },
+        "iconKey": {
+          "enum": [
+            "check",
+            "close",
+            "chevron-down",
+            "chevron-right",
+            "arrow-left",
+            "arrow-right",
+            "search",
+            "plus",
+            "minus",
+            "more",
+            "copy",
+            "eye",
+            "eye-off",
+            "info",
+            "warning",
+            "error",
+            "success",
+            "menu",
+            "command",
+            "signal"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "toast",
+            "progress",
+            "persistent",
+            "banner",
+            "status"
+          ]
+        },
+        "maxLifetimeMs": {
+          "maximum": 120000,
+          "minimum": 3000,
+          "type": "integer"
+        },
+        "maxRefreshCount": {
+          "maximum": 32,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "message": {
+          "maxLength": 720,
+          "type": "string"
+        },
+        "position": {
+          "enum": [
+            "top-right",
+            "top-left",
+            "bottom-right",
+            "bottom-left",
+            "top-center",
+            "bottom-center"
+          ]
+        },
+        "priority": {
+          "enum": [
+            "low",
+            "normal",
+            "high",
+            "critical"
+          ]
+        },
+        "progress": {
+          "additionalProperties": false,
+          "properties": {
+            "maximum": {
+              "exclusiveMinimum": 0,
+              "maximum": 1000000000,
+              "type": "number"
+            },
+            "mode": {
+              "enum": [
+                "determinate",
+                "indeterminate"
+              ]
+            },
+            "state": {
+              "enum": [
+                "PENDING",
+                "RUNNING",
+                "SUCCESS",
+                "FAILED",
+                "CANCELLED"
+              ]
+            },
+            "value": {
+              "maximum": 1000000000,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "state",
+            "mode"
+          ],
+          "type": "object"
+        },
+        "sound": {
+          "type": "boolean"
+        },
+        "title": {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string"
+        },
+        "tone": {
+          "enum": [
+            "neutral",
+            "info",
+            "success",
+            "warning",
+            "danger"
+          ]
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "type": "object"
+    },
+    "target": {
+      "additionalProperties": false,
+      "properties": {
+        "sessionId": {
+          "maxLength": 64,
+          "minLength": 8,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+          "type": "string"
+        },
+        "source": {
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "sourceGeneration": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "source",
+        "sessionId",
+        "sourceGeneration"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "target",
+    "payload"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "notificationId": {
+      "maxLength": 96,
+      "minLength": 8,
+      "type": "string"
+    },
+    "ownerEpoch": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "ownerResource": {
+      "maxLength": 64,
+      "minLength": 3,
+      "type": "string"
+    },
+    "revision": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "notificationId",
+    "ownerResource",
+    "ownerEpoch",
+    "revision"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.notify.update`
+
+- Version: `1.0.0`
+- Provider: `synex_notify`
+- Idempotent: no
+- Errors: `NOTIFY_INVALID_REQUEST`, `NOTIFY_OWNER_INVALID`, `NOTIFY_OWNER_STALE`, `NOTIFY_RATE_LIMITED`, `NOTIFY_NOTIFICATION_NOT_FOUND`, `NOTIFY_NOTIFICATION_STALE`, `NOTIFY_ACTION_EXPIRED`, `NOTIFY_PAYLOAD_TOO_LARGE`, `NOTIFY_TARGET_STALE`, `NOTIFY_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "handle": {
+      "additionalProperties": false,
+      "properties": {
+        "notificationId": {
+          "maxLength": 96,
+          "minLength": 8,
+          "type": "string"
+        },
+        "ownerEpoch": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "ownerResource": {
+          "maxLength": 64,
+          "minLength": 3,
+          "type": "string"
+        },
+        "revision": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "notificationId",
+        "ownerResource",
+        "ownerEpoch",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "patch": {
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "hint": {
+                "maxLength": 24,
+                "minLength": 1,
+                "type": "string"
+              },
+              "id": {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$",
+                "type": "string"
+              },
+              "label": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              "style": {
+                "enum": [
+                  "primary",
+                  "quiet",
+                  "danger"
+                ]
+              },
+              "ttlMs": {
+                "maximum": 30000,
+                "minimum": 1000,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "label"
+            ],
+            "type": "object"
+          },
+          "maxItems": 2,
+          "type": "array"
+        },
+        "durationMs": {
+          "maximum": 30000,
+          "minimum": 1500,
+          "type": "integer"
+        },
+        "message": {
+          "maxLength": 720,
+          "type": "string"
+        },
+        "progress": {
+          "additionalProperties": false,
+          "properties": {
+            "maximum": {
+              "exclusiveMinimum": 0,
+              "maximum": 1000000000,
+              "type": "number"
+            },
+            "mode": {
+              "enum": [
+                "determinate",
+                "indeterminate"
+              ]
+            },
+            "state": {
+              "enum": [
+                "PENDING",
+                "RUNNING",
+                "SUCCESS",
+                "FAILED",
+                "CANCELLED"
+              ]
+            },
+            "value": {
+              "maximum": 1000000000,
+              "minimum": 0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "state",
+            "mode"
+          ],
+          "type": "object"
+        },
+        "title": {
+          "maxLength": 120,
+          "minLength": 1,
+          "type": "string"
+        },
+        "tone": {
+          "enum": [
+            "neutral",
+            "info",
+            "success",
+            "warning",
+            "danger"
+          ]
+        }
+      },
+      "type": "object"
+    }
+  },
+  "required": [
+    "handle",
+    "patch"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "notificationId": {
+      "type": "string"
+    },
+    "ownerEpoch": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "ownerResource": {
+      "type": "string"
+    },
+    "revision": {
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "notificationId",
+    "ownerResource",
+    "ownerEpoch",
+    "revision"
+  ],
+  "type": "object"
+}
+```
+
 ## `synex.runtime.status`
 
 - Version: `1.0.0`
@@ -23509,6 +25832,1104 @@ Source hash: `d221dcd6ed86651cadea6bed9fed5ab2d92470d4727475fa81e9454a194f7d19`
     "playerAdmission",
     "reasons",
     "recentTransitions"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.security.assessment.get`
+
+- Version: `1.0.0`
+- Provider: `synex_security`
+- Idempotent: yes
+- Errors: `SECURITY_SUBJECT_INVALID`, `SECURITY_INVALID_REQUEST`, `SECURITY_RATE_LIMITED`, `SECURITY_VALUE_INVALID`, `SECURITY_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "subjectKey": {
+      "maxLength": 160,
+      "minLength": 3,
+      "type": "string"
+    }
+  },
+  "required": [
+    "subjectKey"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "activeExpectations": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "confidence": {
+      "maximum": 1,
+      "minimum": 0,
+      "type": "number"
+    },
+    "hypothesesJson": {
+      "maxLength": 16384,
+      "type": "string"
+    },
+    "severity": {
+      "enum": [
+        "INFO",
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+        "CRITICAL"
+      ]
+    },
+    "status": {
+      "enum": [
+        "CLEAR",
+        "OBSERVE",
+        "REVIEW",
+        "ACTION"
+      ]
+    },
+    "subjectKey": {
+      "maxLength": 160,
+      "minLength": 3,
+      "type": "string"
+    }
+  },
+  "required": [
+    "subjectKey",
+    "severity",
+    "confidence",
+    "status",
+    "activeExpectations",
+    "hypothesesJson"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.security.case.get`
+
+- Version: `1.0.0`
+- Provider: `synex_security`
+- Idempotent: yes
+- Errors: `SECURITY_CASE_NOT_FOUND`, `SECURITY_INVALID_REQUEST`, `SECURITY_RATE_LIMITED`, `SECURITY_PERSISTENCE_INVALID`, `SECURITY_VALUE_INVALID`, `SECURITY_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "caseId": {
+      "maxLength": 64,
+      "minLength": 8,
+      "type": "string"
+    }
+  },
+  "required": [
+    "caseId"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "caseId": {
+      "maxLength": 64,
+      "minLength": 8,
+      "type": "string"
+    },
+    "category": {
+      "enum": [
+        "transport",
+        "economy",
+        "inventory",
+        "interaction",
+        "movement",
+        "combat",
+        "player_integrity",
+        "entity",
+        "weapon",
+        "world",
+        "client_integrity",
+        "resource_integrity",
+        "connection"
+      ]
+    },
+    "confidence": {
+      "maximum": 1,
+      "minimum": 0,
+      "type": "number"
+    },
+    "detailJson": {
+      "maxLength": 16384,
+      "type": "string"
+    },
+    "enforcementCount": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "openedAt": {
+      "maxLength": 32,
+      "minLength": 20,
+      "type": "string"
+    },
+    "severity": {
+      "enum": [
+        "INFO",
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+        "CRITICAL"
+      ]
+    },
+    "signalCount": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "status": {
+      "enum": [
+        "OPEN",
+        "MONITORING",
+        "REVIEW",
+        "ENFORCED",
+        "CLOSED"
+      ]
+    },
+    "updatedAt": {
+      "maxLength": 32,
+      "minLength": 20,
+      "type": "string"
+    }
+  },
+  "required": [
+    "caseId",
+    "status",
+    "category",
+    "severity",
+    "confidence",
+    "signalCount",
+    "enforcementCount",
+    "openedAt",
+    "updatedAt",
+    "detailJson"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.security.expectation.list`
+
+- Version: `1.0.0`
+- Provider: `synex_security`
+- Idempotent: yes
+- Errors: `SECURITY_INVALID_REQUEST`, `SECURITY_EXPECTATION_INVALID`, `SECURITY_RATE_LIMITED`, `SECURITY_VALUE_INVALID`, `SECURITY_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "cursor": {
+      "maximum": 4096,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "limit": {
+      "maximum": 50,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "subjectKey": {
+      "maxLength": 256,
+      "minLength": 3,
+      "type": "string"
+    }
+  },
+  "required": [
+    "subjectKey",
+    "limit"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "itemsJson": {
+      "maxLength": 16384,
+      "type": "string"
+    },
+    "nextCursor": {
+      "maximum": 4096,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "total": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "truncated": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "itemsJson",
+    "total",
+    "truncated"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.security.expectation.register`
+
+- Version: `1.0.0`
+- Provider: `synex_security`
+- Idempotent: no
+- Errors: `SECURITY_EXPECTATION_INVALID`, `SECURITY_EXPECTATION_STALE`, `SECURITY_EXPECTATION_LIMIT`, `SECURITY_EXPECTATION_CONFLICT`, `SECURITY_EXPECTATION_DENIED`, `SECURITY_OWNER_STALE`, `SECURITY_ID_INVALID`, `SECURITY_VALUE_INVALID`, `SECURITY_RATE_LIMITED`, `SECURITY_UNAVAILABLE`, `STALE_RESOURCE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "constraintsJson": {
+      "maxLength": 4096,
+      "minLength": 2,
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "combat.invulnerable",
+        "combat.passive",
+        "visibility.hidden",
+        "movement.teleport",
+        "movement.noclip",
+        "camera.spectate",
+        "camera.freecam",
+        "player.model",
+        "weapon.grant",
+        "entity.spawn"
+      ]
+    },
+    "namespace": {
+      "maxLength": 96,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9_.-]+$",
+      "type": "string"
+    },
+    "reason": {
+      "maxLength": 128,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9_.-]+$",
+      "type": "string"
+    },
+    "subject": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "properties": {
+            "sessionId": {
+              "maxLength": 96,
+              "minLength": 3,
+              "type": "string"
+            },
+            "sourceGeneration": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "sessionId",
+            "sourceGeneration"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "anyOf": [
+            {
+              "properties": {
+                "userId": {
+                  "maxLength": 96,
+                  "minLength": 3,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "userId"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "characterId": {
+                  "maxLength": 96,
+                  "minLength": 3,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "characterId"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "resourceName": {
+                  "maxLength": 64,
+                  "minLength": 3,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "resourceName"
+              ],
+              "type": "object"
+            }
+          ],
+          "properties": {
+            "characterId": {
+              "maxLength": 96,
+              "minLength": 3,
+              "type": "string"
+            },
+            "resourceName": {
+              "maxLength": 64,
+              "minLength": 3,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+              "type": "string"
+            },
+            "userId": {
+              "maxLength": 96,
+              "minLength": 3,
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "properties": {
+        "characterId": {
+          "maxLength": 96,
+          "minLength": 3,
+          "type": "string"
+        },
+        "resourceName": {
+          "maxLength": 64,
+          "minLength": 3,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "type": "string"
+        },
+        "sessionId": {
+          "maxLength": 96,
+          "minLength": 3,
+          "type": "string"
+        },
+        "source": {
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "sourceGeneration": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "userId": {
+          "maxLength": 96,
+          "minLength": 3,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "traceId": {
+      "maxLength": 64,
+      "minLength": 8,
+      "type": "string"
+    },
+    "ttlMs": {
+      "maximum": 300000,
+      "minimum": 100,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "namespace",
+    "kind",
+    "subject",
+    "reason",
+    "ttlMs",
+    "constraintsJson"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "expectationId": {
+      "maxLength": 64,
+      "minLength": 8,
+      "type": "string"
+    },
+    "expiresAtMs": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "kind": {
+      "enum": [
+        "combat.invulnerable",
+        "combat.passive",
+        "visibility.hidden",
+        "movement.teleport",
+        "movement.noclip",
+        "camera.spectate",
+        "camera.freecam",
+        "player.model",
+        "weapon.grant",
+        "entity.spawn"
+      ]
+    },
+    "ownerEpoch": {
+      "minimum": 1,
+      "type": "integer"
+    },
+    "ownerResource": {
+      "maxLength": 64,
+      "minLength": 3,
+      "type": "string"
+    },
+    "revision": {
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "expectationId",
+    "kind",
+    "ownerResource",
+    "ownerEpoch",
+    "revision",
+    "expiresAtMs"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.security.expectation.revoke`
+
+- Version: `1.0.0`
+- Provider: `synex_security`
+- Idempotent: yes
+- Errors: `SECURITY_EXPECTATION_NOT_FOUND`, `SECURITY_EXPECTATION_INVALID`, `SECURITY_EXPECTATION_DENIED`, `SECURITY_EXPECTATION_STALE`, `SECURITY_OWNER_STALE`, `SECURITY_RATE_LIMITED`, `SECURITY_UNAVAILABLE`, `STALE_RESOURCE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "expectationId": {
+      "maxLength": 64,
+      "minLength": 8,
+      "type": "string"
+    },
+    "reason": {
+      "maxLength": 128,
+      "minLength": 3,
+      "type": "string"
+    },
+    "revision": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "expectationId",
+    "revision"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "expectationId": {
+      "maxLength": 64,
+      "minLength": 8,
+      "type": "string"
+    },
+    "revoked": {
+      "const": true
+    }
+  },
+  "required": [
+    "expectationId",
+    "revoked"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.security.health.get`
+
+- Version: `1.0.0`
+- Provider: `synex_security`
+- Idempotent: yes
+- Errors: `SECURITY_RATE_LIMITED`, `SECURITY_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {},
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "activeExpectations": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "detectors": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "openCases": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "persistenceBacklog": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "reasonsJson": {
+      "maxLength": 2048,
+      "minLength": 2,
+      "type": "string"
+    },
+    "sentinelSources": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "state": {
+      "enum": [
+        "READY",
+        "DEGRADED",
+        "UNHEALTHY"
+      ]
+    }
+  },
+  "required": [
+    "state",
+    "detectors",
+    "openCases",
+    "activeExpectations",
+    "sentinelSources",
+    "persistenceBacklog",
+    "reasonsJson"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.security.sentinel.report`
+
+- Version: `1.0.0`
+- Provider: `synex_security`
+- Idempotent: no
+- Errors: `SECURITY_SENTINEL_INVALID`, `SECURITY_SENTINEL_REPLAY`, `SECURITY_SENTINEL_STALE`, `SECURITY_RATE_LIMITED`, `SECURITY_UNAVAILABLE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "challengeRef": {
+      "maxLength": 64,
+      "minLength": 1,
+      "type": "string"
+    },
+    "clientEpoch": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "sample": {
+      "additionalProperties": false,
+      "properties": {
+        "alpha": {
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "armor": {
+          "maximum": 1000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "camera": {
+          "items": {
+            "maximum": 20000,
+            "minimum": -20000,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "health": {
+          "maximum": 1000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "model": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "movement": {
+          "additionalProperties": false,
+          "properties": {
+            "falling": {
+              "type": "boolean"
+            },
+            "inVehicle": {
+              "type": "boolean"
+            },
+            "parachute": {
+              "maximum": 3,
+              "minimum": -1,
+              "type": "integer"
+            },
+            "ragdoll": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "inVehicle",
+            "ragdoll",
+            "falling",
+            "parachute"
+          ],
+          "type": "object"
+        },
+        "position": {
+          "items": {
+            "maximum": 20000,
+            "minimum": -20000,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "velocity": {
+          "items": {
+            "maximum": 1000,
+            "minimum": -1000,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "visible": {
+          "type": "boolean"
+        },
+        "weapon": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "position",
+        "velocity",
+        "camera",
+        "health",
+        "armor",
+        "visible",
+        "alpha",
+        "model",
+        "weapon",
+        "movement"
+      ],
+      "type": "object"
+    },
+    "sampledAtMs": {
+      "maximum": 4294967295,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "sequence": {
+      "maximum": 9007199254740991,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "clientEpoch",
+    "sequence",
+    "sampledAtMs",
+    "challengeRef",
+    "sample"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "accepted": {
+      "const": true
+    },
+    "duplicate": {
+      "type": "boolean"
+    },
+    "nextChallengeRef": {
+      "maxLength": 64,
+      "minLength": 8,
+      "type": "string"
+    },
+    "nextReportAfterMs": {
+      "maximum": 30000,
+      "minimum": 1000,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "accepted",
+    "duplicate",
+    "nextChallengeRef",
+    "nextReportAfterMs"
+  ],
+  "type": "object"
+}
+```
+
+## `synex.security.signal.report`
+
+- Version: `1.0.0`
+- Provider: `synex_security`
+- Idempotent: no
+- Errors: `SECURITY_SIGNAL_INVALID`, `SECURITY_SUBJECT_INVALID`, `SECURITY_SUBJECT_STALE`, `SECURITY_NAMESPACE_DENIED`, `SECURITY_OWNER_STALE`, `SECURITY_RATE_LIMITED`, `SECURITY_PAYLOAD_TOO_LARGE`, `SECURITY_VALUE_INVALID`, `SECURITY_ID_INVALID`, `SECURITY_CLOCK_INVALID`, `SECURITY_UNAVAILABLE`, `STALE_RESOURCE`
+
+### Input
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "category": {
+      "enum": [
+        "transport",
+        "economy",
+        "inventory",
+        "interaction",
+        "movement",
+        "combat",
+        "player_integrity",
+        "entity",
+        "weapon",
+        "world",
+        "client_integrity",
+        "resource_integrity",
+        "connection"
+      ]
+    },
+    "code": {
+      "maxLength": 64,
+      "minLength": 3,
+      "pattern": "^[A-Z][A-Z0-9_]+$",
+      "type": "string"
+    },
+    "confidence": {
+      "maximum": 1,
+      "minimum": 0,
+      "type": "number"
+    },
+    "correlationKey": {
+      "maxLength": 128,
+      "minLength": 3,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "type": "string"
+    },
+    "detector": {
+      "maxLength": 64,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9_.-]+$",
+      "type": "string"
+    },
+    "entityRefJson": {
+      "maxLength": 1024,
+      "minLength": 2,
+      "type": "string"
+    },
+    "evidenceClass": {
+      "const": "DOMAIN_AUTHORITATIVE"
+    },
+    "evidenceJson": {
+      "maxLength": 4096,
+      "minLength": 2,
+      "type": "string"
+    },
+    "namespace": {
+      "maxLength": 96,
+      "minLength": 3,
+      "pattern": "^[a-z][a-z0-9_.-]+$",
+      "type": "string"
+    },
+    "requestId": {
+      "maxLength": 64,
+      "minLength": 8,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "type": "string"
+    },
+    "rootEventId": {
+      "maxLength": 64,
+      "minLength": 8,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "type": "string"
+    },
+    "severity": {
+      "enum": [
+        "INFO",
+        "LOW",
+        "MEDIUM",
+        "HIGH",
+        "CRITICAL"
+      ]
+    },
+    "subject": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "properties": {
+            "sessionId": {
+              "maxLength": 96,
+              "minLength": 3,
+              "type": "string"
+            },
+            "sourceGeneration": {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "sessionId",
+            "sourceGeneration"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "anyOf": [
+            {
+              "properties": {
+                "userId": {
+                  "maxLength": 96,
+                  "minLength": 3,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "userId"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "characterId": {
+                  "maxLength": 96,
+                  "minLength": 3,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "characterId"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "resourceName": {
+                  "maxLength": 64,
+                  "minLength": 3,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "resourceName"
+              ],
+              "type": "object"
+            }
+          ],
+          "properties": {
+            "characterId": {
+              "maxLength": 96,
+              "minLength": 3,
+              "type": "string"
+            },
+            "resourceName": {
+              "maxLength": 64,
+              "minLength": 3,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+              "type": "string"
+            },
+            "userId": {
+              "maxLength": 96,
+              "minLength": 3,
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+      ],
+      "properties": {
+        "characterId": {
+          "maxLength": 96,
+          "minLength": 3,
+          "type": "string"
+        },
+        "resourceName": {
+          "maxLength": 64,
+          "minLength": 3,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$",
+          "type": "string"
+        },
+        "sessionId": {
+          "maxLength": 96,
+          "minLength": 3,
+          "type": "string"
+        },
+        "source": {
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "sourceGeneration": {
+          "maximum": 9007199254740991,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "userId": {
+          "maxLength": 96,
+          "minLength": 3,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "summary": {
+      "maxLength": 192,
+      "minLength": 3,
+      "type": "string"
+    },
+    "traceId": {
+      "maxLength": 64,
+      "minLength": 8,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+      "type": "string"
+    },
+    "worldRefJson": {
+      "maxLength": 1024,
+      "minLength": 2,
+      "type": "string"
+    }
+  },
+  "required": [
+    "namespace",
+    "category",
+    "detector",
+    "code",
+    "subject",
+    "severity",
+    "confidence",
+    "evidenceClass",
+    "correlationKey",
+    "summary"
+  ],
+  "type": "object"
+}
+```
+
+### Output
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "accepted": {
+      "const": true
+    },
+    "caseId": {
+      "maxLength": 64,
+      "minLength": 8,
+      "type": "string"
+    },
+    "deduplicated": {
+      "type": "boolean"
+    },
+    "signalId": {
+      "maxLength": 64,
+      "minLength": 8,
+      "type": "string"
+    }
+  },
+  "required": [
+    "signalId",
+    "accepted",
+    "deduplicated"
   ],
   "type": "object"
 }

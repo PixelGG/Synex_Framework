@@ -94,6 +94,60 @@ test('runtime resource manifest validation matches world bundle path constraints
   }
 });
 
+test('runtime resource manifest validation matches interaction bundle path constraints', async () => {
+  const engine = await createEngine();
+  try {
+    const result = await engine.doString(`
+      local foundation = SynexCoreFactories.foundation({ platform = FakePlatform })
+      local validator = SynexCoreFactories.resourceManifest({ foundation = foundation })
+
+      local valid = ValidManifest()
+      valid.interactionBundles = {
+        'interactions/terminal.interact.json',
+        'interactions/vehicles/trunk-1.interact.json'
+      }
+      assert(validator:validate('synex_fixture', valid))
+
+      local traversal = ValidManifest()
+      traversal.interactionBundles = { 'interactions/../outside.interact.json' }
+      local _, traversalError = validator:validate('synex_fixture', traversal)
+      assert(traversalError.code == 'INVALID_RESOURCE_MANIFEST')
+
+      local dotSegment = ValidManifest()
+      dotSegment.interactionBundles = { 'interactions/vehicles/./trunk.interact.json' }
+      local _, dotSegmentError = validator:validate('synex_fixture', dotSegment)
+      assert(dotSegmentError.code == 'INVALID_RESOURCE_MANIFEST')
+
+      local duplicateSeparator = ValidManifest()
+      duplicateSeparator.interactionBundles = { 'interactions/vehicles//trunk.interact.json' }
+      local _, duplicateSeparatorError = validator:validate('synex_fixture', duplicateSeparator)
+      assert(duplicateSeparatorError.code == 'INVALID_RESOURCE_MANIFEST')
+
+      local wrongRoot = ValidManifest()
+      wrongRoot.interactionBundles = { 'world/terminal.interact.json' }
+      local _, wrongRootError = validator:validate('synex_fixture', wrongRoot)
+      assert(wrongRootError.code == 'INVALID_RESOURCE_MANIFEST')
+
+      local wrongSuffix = ValidManifest()
+      wrongSuffix.interactionBundles = { 'interactions/terminal.json' }
+      local _, wrongSuffixError = validator:validate('synex_fixture', wrongSuffix)
+      assert(wrongSuffixError.code == 'INVALID_RESOURCE_MANIFEST')
+
+      local duplicate = ValidManifest()
+      duplicate.interactionBundles = {
+        'interactions/terminal.interact.json',
+        'interactions/terminal.interact.json'
+      }
+      local _, duplicateError = validator:validate('synex_fixture', duplicate)
+      assert(duplicateError.code == 'INVALID_RESOURCE_MANIFEST')
+      return true
+    `);
+    assert.equal(result, true);
+  } finally {
+    engine.global.close();
+  }
+});
+
 test('runtime control provider validation accepts canonical access, search, numeric-string, and boolean fields', async () => {
   const engine = await createEngine();
   try {

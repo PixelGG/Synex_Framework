@@ -601,7 +601,13 @@ local function publishClientProjection(context, playerDataValue)
     local access = type(context.publication) == 'table'
         and context.publication.clientAccess or nil
     local playerDataConsumers = type(access) == 'table' and access.playerData or nil
-    if type(playerDataConsumers) == 'table' and next(playerDataConsumers) ~= nil then
+    local notificationConsumers = type(access) == 'table'
+        and access.notifications or nil
+    if notificationConsumers == nil then notificationConsumers = {} end
+    if type(playerDataConsumers) == 'table'
+        and type(notificationConsumers) == 'table'
+        and (next(playerDataConsumers) ~= nil
+            or next(notificationConsumers) ~= nil) then
         TriggerClientEvent(CLIENT_PROJECTION_EVENT, context.source,
             'replace', copy(playerDataValue), copy(access))
     else

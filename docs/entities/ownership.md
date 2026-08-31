@@ -50,4 +50,4 @@ Every operator surface must label it as transport-only.
 
 ## Current user and interactions
 
-Entities does not store a generic current-user lease. `synex.entities.context.validate` can verify an active source, current generation, existence, same bucket, server-observed distance and required owner/tags/components for a consuming server resource. A future interaction lease belongs to `synex_interact`, not to the Entity authority lease system.
+Entities does not store a generic current-user lease. `synex.entities.context.validate` can verify an active source, current generation, existence, same bucket, server-observed distance and required owner/tags/components for a consuming server resource. A gameplay interaction lease belongs to `synex_interact`, not to the Entity authority lease system.

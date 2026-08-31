@@ -1,0 +1,356 @@
+{
+  "$schema": "../../../schemas/contract.schema.json",
+  "schema": 1,
+  "domain": "synex.notify",
+  "contracts": [
+    {
+      "name": "synex.notify.send",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_notify",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.notify.send",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["target", "payload"],
+        "properties": {
+          "target": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "sessionId", "sourceGeneration"],
+            "properties": {
+              "source": { "type": "integer", "minimum": 1, "maximum": 65535 },
+              "sessionId": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+              "sourceGeneration": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+            }
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["title"],
+            "properties": {
+              "kind": { "enum": ["toast", "progress", "persistent", "banner", "status"] },
+              "tone": { "enum": ["neutral", "info", "success", "warning", "danger"] },
+              "priority": { "enum": ["low", "normal", "high", "critical"] },
+              "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "message": { "type": "string", "maxLength": 720 },
+              "iconKey": { "enum": ["check", "close", "chevron-down", "chevron-right", "arrow-left", "arrow-right", "search", "plus", "minus", "more", "copy", "eye", "eye-off", "info", "warning", "error", "success", "menu", "command", "signal"] },
+              "dedupeKey": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+              "dedupePolicy": { "enum": ["suppress", "count", "replace", "refresh"] },
+              "maxRefreshCount": { "type": "integer", "minimum": 1, "maximum": 32 },
+              "groupKey": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+              "durationMs": { "type": "integer", "minimum": 1500, "maximum": 30000 },
+              "maxLifetimeMs": { "type": "integer", "minimum": 3000, "maximum": 120000 },
+              "history": { "type": "boolean" },
+              "sound": { "type": "boolean" },
+              "position": { "enum": ["top-right", "top-left", "bottom-right", "bottom-left", "top-center", "bottom-center"] },
+              "progress": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["state", "mode"],
+                "properties": {
+                  "state": { "enum": ["PENDING", "RUNNING", "SUCCESS", "FAILED", "CANCELLED"] },
+                  "mode": { "enum": ["determinate", "indeterminate"] },
+                  "value": { "type": "number", "minimum": 0, "maximum": 1000000000 },
+                  "maximum": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000000000 }
+                }
+              },
+              "actions": {
+                "type": "array",
+                "maxItems": 2,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["id", "label"],
+                  "properties": {
+                    "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+                    "label": { "type": "string", "minLength": 1, "maxLength": 64 },
+                    "hint": { "type": "string", "minLength": 1, "maxLength": 24 },
+                    "style": { "enum": ["primary", "quiet", "danger"] },
+                    "ttlMs": { "type": "integer", "minimum": 1000, "maximum": 30000 }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["notificationId", "ownerResource", "ownerEpoch", "revision"],
+        "properties": {
+          "notificationId": { "type": "string", "minLength": 8, "maxLength": 96 },
+          "ownerResource": { "type": "string", "minLength": 3, "maxLength": 64 },
+          "ownerEpoch": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+        }
+      },
+      "errors": ["NOTIFY_INVALID_REQUEST", "NOTIFY_OWNER_STALE", "NOTIFY_RATE_LIMITED", "NOTIFY_QUEUE_FULL", "NOTIFY_INVALID_PRIORITY", "NOTIFY_PRIORITY_DENIED", "NOTIFY_UI_UNAVAILABLE", "NOTIFY_PAYLOAD_TOO_LARGE", "NOTIFY_TARGET_STALE", "NOTIFY_UNAVAILABLE"],
+      "idempotent": false,
+      "rateLimit": { "capacity": 24, "refillPerSecond": 6 }
+    },
+    {
+      "name": "synex.notify.update",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_notify",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.notify.update",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["handle", "patch"],
+        "properties": {
+          "handle": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["notificationId", "ownerResource", "ownerEpoch", "revision"],
+            "properties": {
+              "notificationId": { "type": "string", "minLength": 8, "maxLength": 96 },
+              "ownerResource": { "type": "string", "minLength": 3, "maxLength": 64 },
+              "ownerEpoch": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+              "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+            }
+          },
+          "patch": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+              "message": { "type": "string", "maxLength": 720 },
+              "tone": { "enum": ["neutral", "info", "success", "warning", "danger"] },
+              "durationMs": { "type": "integer", "minimum": 1500, "maximum": 30000 },
+              "progress": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["state", "mode"],
+                "properties": {
+                  "state": { "enum": ["PENDING", "RUNNING", "SUCCESS", "FAILED", "CANCELLED"] },
+                  "mode": { "enum": ["determinate", "indeterminate"] },
+                  "value": { "type": "number", "minimum": 0, "maximum": 1000000000 },
+                  "maximum": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000000000 }
+                }
+              },
+              "actions": {
+                "type": "array",
+                "maxItems": 2,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["id", "label"],
+                  "properties": {
+                    "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+                    "label": { "type": "string", "minLength": 1, "maxLength": 64 },
+                    "hint": { "type": "string", "minLength": 1, "maxLength": 24 },
+                    "style": { "enum": ["primary", "quiet", "danger"] },
+                    "ttlMs": { "type": "integer", "minimum": 1000, "maximum": 30000 }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["notificationId", "ownerResource", "ownerEpoch", "revision"],
+        "properties": {
+          "notificationId": { "type": "string" },
+          "ownerResource": { "type": "string" },
+          "ownerEpoch": { "type": "integer", "minimum": 1 },
+          "revision": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "errors": ["NOTIFY_INVALID_REQUEST", "NOTIFY_OWNER_INVALID", "NOTIFY_OWNER_STALE", "NOTIFY_RATE_LIMITED", "NOTIFY_NOTIFICATION_NOT_FOUND", "NOTIFY_NOTIFICATION_STALE", "NOTIFY_ACTION_EXPIRED", "NOTIFY_PAYLOAD_TOO_LARGE", "NOTIFY_TARGET_STALE", "NOTIFY_UNAVAILABLE"],
+      "idempotent": false,
+      "rateLimit": { "capacity": 48, "refillPerSecond": 16 }
+    },
+    {
+      "name": "synex.notify.dismiss",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_notify",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.notify.update",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["handle"],
+        "properties": {
+          "handle": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["notificationId", "ownerResource", "ownerEpoch", "revision"],
+            "properties": {
+              "notificationId": { "type": "string", "minLength": 8, "maxLength": 96 },
+              "ownerResource": { "type": "string", "minLength": 3, "maxLength": 64 },
+              "ownerEpoch": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+              "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+            }
+          },
+          "reason": { "enum": ["dismissed", "cancelled", "superseded"] }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["notificationId", "dismissed"],
+        "properties": {
+          "notificationId": { "type": "string" },
+          "dismissed": { "const": true }
+        }
+      },
+      "errors": ["NOTIFY_INVALID_REQUEST", "NOTIFY_OWNER_INVALID", "NOTIFY_OWNER_STALE", "NOTIFY_RATE_LIMITED", "NOTIFY_NOTIFICATION_NOT_FOUND", "NOTIFY_NOTIFICATION_STALE", "NOTIFY_TARGET_STALE", "NOTIFY_UNAVAILABLE"],
+      "idempotent": false,
+      "rateLimit": { "capacity": 48, "refillPerSecond": 16 }
+    },
+    {
+      "name": "synex.notify.command.pull",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_notify",
+      "stability": "internal",
+      "network": "client-to-server",
+      "sessionStates": ["ACTIVE"],
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["commandId"],
+        "properties": {
+          "commandId": { "type": "string", "minLength": 16, "maxLength": 96, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schemaVersion", "command", "commandId", "ownerResource", "ownerEpoch", "notificationId", "revision", "target"],
+        "properties": {
+          "schemaVersion": { "const": 1 },
+          "command": { "enum": ["show", "update", "dismiss", "owner_stop"] },
+          "commandId": { "type": "string", "minLength": 16, "maxLength": 96, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+          "ownerResource": { "type": "string", "minLength": 3, "maxLength": 64 },
+          "ownerEpoch": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "notificationId": { "type": "string", "minLength": 8, "maxLength": 96 },
+          "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "target": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "sessionId", "sourceGeneration"],
+            "properties": {
+              "source": { "type": "integer", "minimum": 1, "maximum": 65535 },
+              "sessionId": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+              "sourceGeneration": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+            }
+          },
+          "payload": { "type": "object" }
+        }
+      },
+      "errors": ["NOTIFY_INVALID_REQUEST", "NOTIFY_COMMAND_NOT_FOUND", "NOTIFY_TARGET_STALE", "NOTIFY_UNAVAILABLE"],
+      "idempotent": false,
+      "rateLimit": { "capacity": 32, "refillPerSecond": 16 }
+    },
+    {
+      "name": "synex.notify.action.invoke",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_notify",
+      "stability": "experimental",
+      "network": "client-to-server",
+      "sessionStates": ["ACTIVE"],
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["token", "notificationId", "revision"],
+        "properties": {
+          "token": { "type": "string", "minLength": 16, "maxLength": 96, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+          "notificationId": { "type": "string", "minLength": 8, "maxLength": 96 },
+          "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["accepted", "actionId"],
+        "properties": {
+          "accepted": { "const": true },
+          "actionId": { "type": "string", "minLength": 1, "maxLength": 64 }
+        }
+      },
+      "errors": ["NOTIFY_INVALID_REQUEST", "NOTIFY_ACTION_NOT_FOUND", "NOTIFY_ACTION_EXPIRED", "NOTIFY_ACTION_REPLAYED", "NOTIFY_NOTIFICATION_STALE", "NOTIFY_TARGET_STALE", "NOTIFY_UNAVAILABLE"],
+      "idempotent": false,
+      "rateLimit": { "capacity": 8, "refillPerSecond": 2 }
+    },
+    {
+      "name": "synex.notify.metrics.report",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_notify",
+      "stability": "internal",
+      "network": "client-to-server",
+      "sessionStates": ["ACTIVE"],
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["clientEpoch", "sequence", "counters", "gauges"],
+        "properties": {
+          "clientEpoch": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "sequence": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "counters": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["created", "displayed", "removed", "deduplicated", "grouped", "suppressed", "coalesced", "queuePromotions", "queueEvictions", "queueWaitTotalMs", "renderDispatchSamples", "renderDispatchTotalMs", "renderAckSamples", "renderAckTotalMs", "transportFailures", "nativeFallbacks", "presentationExpired", "quietDeferred"],
+            "properties": {
+              "created": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "displayed": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "removed": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "deduplicated": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "grouped": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "suppressed": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "coalesced": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "queuePromotions": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "queueEvictions": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "queueWaitTotalMs": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "renderDispatchSamples": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "renderDispatchTotalMs": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "renderAckSamples": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "renderAckTotalMs": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "transportFailures": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "nativeFallbacks": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "presentationExpired": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "quietDeferred": { "type": "integer", "minimum": 0, "maximum": 1000000000000 }
+            }
+          },
+          "gauges": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["visible", "queued", "pendingVisibilityAcks"],
+            "properties": {
+              "visible": { "type": "integer", "minimum": 0, "maximum": 4 },
+              "queued": { "type": "integer", "minimum": 0, "maximum": 128 },
+              "pendingVisibilityAcks": { "type": "integer", "minimum": 0, "maximum": 128 }
+            }
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["accepted", "duplicate", "nextReportAfterMs"],
+        "properties": {
+          "accepted": { "const": true },
+          "duplicate": { "type": "boolean" },
+          "nextReportAfterMs": { "type": "integer", "minimum": 5000, "maximum": 60000 }
+        }
+      },
+      "errors": ["NOTIFY_INVALID_REQUEST", "NOTIFY_RATE_LIMITED", "NOTIFY_QUEUE_FULL", "NOTIFY_TARGET_STALE", "NOTIFY_UNAVAILABLE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 2, "refillPerSecond": 0.2 }
+    }
+  ]
+}

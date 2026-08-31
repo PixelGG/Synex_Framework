@@ -1,0 +1,596 @@
+{
+  "$schema": "../../../schemas/contract.schema.json",
+  "schema": 1,
+  "domain": "synex.interact",
+  "contracts": [
+    {
+      "name": "synex.interact.bundle.register",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_interact",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.interact.bundle.register",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["bundle"],
+        "properties": { "bundle": { "type": "object" } }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "revision", "ownerResource", "ownerEpoch", "activated"],
+        "properties": {
+          "key": { "type": "string", "minLength": 3, "maxLength": 128 },
+          "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "ownerResource": { "type": "string", "minLength": 3, "maxLength": 64 },
+          "ownerEpoch": { "type": "integer", "minimum": 1 },
+          "activated": { "const": true }
+        }
+      },
+      "errors": ["INTERACT_BUNDLE_INVALID", "INTERACT_BUNDLE_CONFLICT", "INTERACT_OWNER_STALE", "INTERACT_RATE_LIMITED", "INTERACT_UNAVAILABLE"],
+      "idempotent": false,
+      "rateLimit": { "capacity": 8, "refillPerSecond": 1 }
+    },
+    {
+      "name": "synex.interact.bundle.replace",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_interact",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.interact.bundle.register",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["bundle", "expectedRevision"],
+        "properties": {
+          "bundle": { "type": "object" },
+          "expectedRevision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "revision", "ownerResource", "ownerEpoch", "activated"],
+        "properties": {
+          "key": { "type": "string" },
+          "revision": { "type": "integer", "minimum": 2 },
+          "ownerResource": { "type": "string" },
+          "ownerEpoch": { "type": "integer", "minimum": 1 },
+          "activated": { "const": true }
+        }
+      },
+      "errors": ["INTERACT_BUNDLE_INVALID", "INTERACT_BUNDLE_CONFLICT", "INTERACT_BUNDLE_STALE", "INTERACT_OWNER_STALE", "INTERACT_RATE_LIMITED", "INTERACT_UNAVAILABLE"],
+      "idempotent": false,
+      "rateLimit": { "capacity": 8, "refillPerSecond": 1 }
+    },
+    {
+      "name": "synex.interact.bundle.unregister",
+      "version": "1.0.0",
+      "kind": "service",
+      "provider": "synex_interact",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.interact.bundle.register",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "revision"],
+        "properties": {
+          "key": { "type": "string", "minLength": 3, "maxLength": 128 },
+          "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "removed"],
+        "properties": {
+          "key": { "type": "string" },
+          "removed": { "const": true }
+        }
+      },
+      "errors": ["INTERACT_BUNDLE_NOT_FOUND", "INTERACT_BUNDLE_STALE", "INTERACT_OWNER_STALE", "INTERACT_RATE_LIMITED", "INTERACT_UNAVAILABLE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 8, "refillPerSecond": 1 }
+    },
+    {
+      "name": "synex.interact.discovery.snapshot",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_interact",
+      "stability": "internal",
+      "network": "client-to-server",
+      "sessionStates": ["ACTIVE"],
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["knownRevision", "snapshotRevision", "page"],
+        "properties": {
+          "knownRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "snapshotRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "page": { "type": "integer", "minimum": 1, "maximum": 24 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schemaVersion", "revision", "unchanged", "page", "pageCount", "complete", "objectCount", "totalBytes", "payload"],
+        "properties": {
+          "schemaVersion": { "const": 1 },
+          "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "unchanged": { "type": "boolean" },
+          "page": { "type": "integer", "minimum": 1, "maximum": 24 },
+          "pageCount": { "type": "integer", "minimum": 1, "maximum": 24 },
+          "complete": { "type": "boolean" },
+          "objectCount": { "type": "integer", "minimum": 0, "maximum": 2048 },
+          "totalBytes": { "type": "integer", "minimum": 0, "maximum": 262144 },
+          "payload": { "type": "string", "maxLength": 14000 }
+        }
+      },
+      "errors": ["INTERACT_NOT_READY", "INTERACT_INVALID_REQUEST", "INTERACT_DISCOVERY_STALE", "INTERACT_RATE_LIMITED", "INTERACT_PAYLOAD_TOO_LARGE", "INTERACT_UNAVAILABLE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 28, "refillPerSecond": 6 }
+    },
+    {
+      "name": "synex.interact.discovery.entities",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_interact",
+      "stability": "internal",
+      "network": "client-to-server",
+      "sessionStates": ["ACTIVE"],
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["discoveryRevision"],
+        "properties": {
+          "discoveryRevision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schemaVersion", "discoveryRevision", "projectionRevision", "sourceGeneration", "bucket", "truncated", "entities"],
+        "properties": {
+          "schemaVersion": { "const": 1 },
+          "discoveryRevision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "projectionRevision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "sourceGeneration": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "bucket": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+          "truncated": { "type": "boolean" },
+          "entities": {
+            "type": "array",
+            "maxItems": 64,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["entityRef", "netId", "entityType", "model", "bucket", "position", "heading"],
+              "properties": {
+                "entityRef": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["entityId", "generation"],
+                  "properties": {
+                    "entityId": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+                    "generation": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+                  }
+                },
+                "netId": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "entityType": { "enum": ["vehicle", "ped", "object"] },
+                "model": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+                "archetype": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_.-]+$" },
+                "bucket": { "type": "integer", "minimum": 0, "maximum": 2147483647 },
+                "position": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["x", "y", "z"],
+                  "properties": {
+                    "x": { "type": "number", "minimum": -20000, "maximum": 20000 },
+                    "y": { "type": "number", "minimum": -20000, "maximum": 20000 },
+                    "z": { "type": "number", "minimum": -20000, "maximum": 20000 }
+                  }
+                },
+                "heading": { "type": "number", "minimum": -360000, "maximum": 360000 }
+              }
+            }
+          }
+        }
+      },
+      "errors": ["INTERACT_INVALID_REQUEST", "INTERACT_DISCOVERY_STALE", "INTERACT_LEASE_STALE", "INTERACT_TARGET_STALE", "INTERACT_RATE_LIMITED", "INTERACT_PAYLOAD_TOO_LARGE", "INTERACT_UNAVAILABLE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 2, "refillPerSecond": 0.5 }
+    },
+    {
+      "name": "synex.interact.lease.request",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_interact",
+      "stability": "experimental",
+      "network": "client-to-server",
+      "sessionStates": ["ACTIVE"],
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["intent", "target", "clientRevision"],
+        "properties": {
+          "intent": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "revision"],
+            "properties": {
+              "key": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$" },
+              "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+            }
+          },
+          "target": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind"],
+            "properties": {
+              "kind": { "enum": ["world", "entity", "ambient", "static", "dynamic"] },
+              "worldRef": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["key", "revision"],
+                "properties": {
+                  "key": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$" },
+                  "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+                  "kind": { "enum": ["anchor", "door", "portal"] }
+                }
+              },
+              "entityRef": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["entityId", "generation"],
+                "properties": {
+                  "entityId": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+                  "generation": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+                }
+              },
+              "netId": { "type": "integer", "minimum": 1, "maximum": 65535 },
+              "bindingKey": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+              "position": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["x", "y", "z"],
+                "properties": {
+                  "x": { "type": "number", "minimum": -20000, "maximum": 20000 },
+                  "y": { "type": "number", "minimum": -20000, "maximum": 20000 },
+                  "z": { "type": "number", "minimum": -20000, "maximum": 20000 }
+                }
+              },
+              "model": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+              "bone": { "type": "string", "minLength": 1, "maxLength": 64 }
+            },
+            "anyOf": [
+              {
+                "type": "object",
+                "required": ["kind", "worldRef"],
+                "properties": {
+                  "kind": { "const": "world" },
+                  "worldRef": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["key", "revision"],
+                    "properties": {
+                      "key": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$" },
+                      "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+                      "kind": { "enum": ["anchor", "door", "portal"] }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": ["kind", "entityRef"],
+                "properties": {
+                  "kind": { "const": "entity" },
+                  "entityRef": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["entityId", "generation"],
+                    "properties": {
+                      "entityId": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+                      "generation": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": ["kind", "netId", "model"],
+                "properties": {
+                  "kind": { "const": "ambient" },
+                  "netId": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                  "model": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+                  "bone": { "type": "string", "minLength": 1, "maxLength": 64 }
+                }
+              },
+              {
+                "type": "object",
+                "required": ["kind", "bindingKey"],
+                "properties": {
+                  "kind": { "const": "static" },
+                  "bindingKey": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+                  "position": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["x", "y", "z"],
+                    "properties": {
+                      "x": { "type": "number", "minimum": -20000, "maximum": 20000 },
+                      "y": { "type": "number", "minimum": -20000, "maximum": 20000 },
+                      "z": { "type": "number", "minimum": -20000, "maximum": 20000 }
+                    }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": ["kind", "bindingKey"],
+                "properties": {
+                  "kind": { "const": "dynamic" },
+                  "bindingKey": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$" },
+                  "position": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["x", "y", "z"],
+                    "properties": {
+                      "x": { "type": "number", "minimum": -20000, "maximum": 20000 },
+                      "y": { "type": "number", "minimum": -20000, "maximum": 20000 },
+                      "z": { "type": "number", "minimum": -20000, "maximum": 20000 }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "slotKey": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z][A-Za-z0-9_.-]*$" },
+          "clientRevision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["leaseId", "nonce", "state", "intent", "expiresAt", "sessionId"],
+        "properties": {
+          "leaseId": { "type": "string", "minLength": 8, "maxLength": 96 },
+          "nonce": { "type": "string", "minLength": 8, "maxLength": 96 },
+          "state": { "enum": ["ISSUED", "WAITING"] },
+          "intent": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "revision"],
+            "properties": {
+              "key": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$" },
+              "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+            }
+          },
+          "expiresAt": { "type": "integer", "minimum": 1 },
+          "sessionId": { "type": "string", "minLength": 8, "maxLength": 96 },
+          "requiredParticipants": { "type": "array", "maxItems": 8, "items": { "type": "string" } }
+        }
+      },
+      "errors": ["INTERACT_NOT_READY", "INTERACT_INTENT_NOT_FOUND", "INTERACT_INTENT_STALE", "INTERACT_TARGET_INVALID", "INTERACT_TARGET_STALE", "INTERACT_SLOT_NOT_FOUND", "INTERACT_SLOT_BUSY", "INTERACT_SLOT_DISABLED", "INTERACT_LEASE_DENIED", "INTERACT_ACTOR_BUSY", "INTERACT_RATE_LIMITED", "INTERACT_UNAVAILABLE"],
+      "idempotent": false,
+      "rateLimit": { "capacity": 6, "refillPerSecond": 2 }
+    },
+    {
+      "name": "synex.interact.lease.activate",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_interact",
+      "stability": "experimental",
+      "network": "client-to-server",
+      "sessionStates": ["ACTIVE"],
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["leaseId", "nonce"],
+        "properties": {
+          "leaseId": { "type": "string", "minLength": 8, "maxLength": 96 },
+          "nonce": { "type": "string", "minLength": 8, "maxLength": 96 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["accepted", "leaseId", "sessionId", "state"],
+        "properties": {
+          "accepted": { "const": true },
+          "leaseId": { "type": "string" },
+          "sessionId": { "type": "string" },
+          "state": { "enum": ["READY", "RUNNING", "WAITING"] }
+        }
+      },
+      "errors": ["INTERACT_LEASE_EXPIRED", "INTERACT_LEASE_REVOKED", "INTERACT_LEASE_REPLAYED", "INTERACT_LEASE_STALE", "INTERACT_ACTOR_BUSY", "INTERACT_RATE_LIMITED", "INTERACT_UNAVAILABLE"],
+      "idempotent": false,
+      "rateLimit": { "capacity": 6, "refillPerSecond": 2 }
+    },
+    {
+      "name": "synex.interact.session.cancel",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_interact",
+      "stability": "experimental",
+      "network": "client-to-server",
+      "sessionStates": ["ACTIVE"],
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sessionId", "reason"],
+        "properties": {
+          "sessionId": { "type": "string", "minLength": 8, "maxLength": 96 },
+          "reason": { "enum": ["USER_CANCELLED", "ACTOR_MOVED", "ACTOR_DIED", "ACTOR_RAGDOLL", "ACTOR_DAMAGED", "TARGET_MOVED", "TARGET_GONE", "OUT_OF_RANGE", "WORLD_CHANGED", "ENTITY_REF_STALE", "SLOT_LOST", "TARGET_STATE_CHANGED", "TIMEOUT"] }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sessionId", "cancelled"],
+        "properties": {
+          "sessionId": { "type": "string" },
+          "cancelled": { "const": true }
+        }
+      },
+      "errors": ["INTERACT_SESSION_NOT_FOUND", "INTERACT_LEASE_STALE", "INTERACT_RATE_LIMITED", "INTERACT_UNAVAILABLE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 12, "refillPerSecond": 4 }
+    },
+    {
+      "name": "synex.interact.session.join",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_interact",
+      "stability": "experimental",
+      "network": "client-to-server",
+      "sessionStates": ["ACTIVE"],
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sessionId", "role", "invitationId"],
+        "properties": {
+          "sessionId": { "type": "string", "minLength": 8, "maxLength": 96 },
+          "role": { "type": "string", "minLength": 1, "maxLength": 32 },
+          "invitationId": { "type": "string", "minLength": 8, "maxLength": 96 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sessionId", "leaseId", "nonce", "role", "state"],
+        "properties": {
+          "sessionId": { "type": "string" },
+          "leaseId": { "type": "string" },
+          "nonce": { "type": "string" },
+          "role": { "type": "string" },
+          "state": { "const": "WAITING" }
+        }
+      },
+      "errors": ["INTERACT_INVALID_REQUEST", "INTERACT_SESSION_NOT_FOUND", "INTERACT_SESSION_EXPIRED", "INTERACT_PARTICIPANT_DENIED", "INTERACT_LEASE_STALE", "INTERACT_ACTOR_BUSY", "INTERACT_INTENT_NOT_FOUND", "INTERACT_INTENT_STALE", "INTERACT_BUNDLE_INVALID", "INTERACT_TARGET_INVALID", "INTERACT_TARGET_STALE", "INTERACT_SLOT_NOT_FOUND", "INTERACT_SLOT_BUSY", "INTERACT_SLOT_DISABLED", "INTERACT_SLOT_LOST", "INTERACT_RESERVATION_INVALID", "INTERACT_LEASE_DENIED", "INTERACT_PROVIDER_UNAVAILABLE", "INTERACT_PROVIDER_TIMEOUT", "INTERACT_EVALUATOR_UNAVAILABLE", "INTERACT_EVALUATOR_TIMEOUT", "INTERACT_EVALUATOR_INVALID", "INTERACT_ADAPTER_MISSING", "INTERACT_DOMAIN_REJECTED", "INTERACT_RATE_LIMITED", "INTERACT_UNAVAILABLE"],
+      "idempotent": false,
+      "rateLimit": { "capacity": 4, "refillPerSecond": 1 }
+    },
+    {
+      "name": "synex.interact.session.leave",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_interact",
+      "stability": "experimental",
+      "network": "client-to-server",
+      "sessionStates": ["ACTIVE"],
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sessionId"],
+        "properties": { "sessionId": { "type": "string", "minLength": 8, "maxLength": 96 } }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sessionId", "left"],
+        "properties": {
+          "sessionId": { "type": "string" },
+          "left": { "const": true }
+        }
+      },
+      "errors": ["INTERACT_SESSION_NOT_FOUND", "INTERACT_PARTICIPANT_DENIED", "INTERACT_LEASE_STALE", "INTERACT_RATE_LIMITED", "INTERACT_UNAVAILABLE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 8, "refillPerSecond": 2 }
+    },
+    {
+      "name": "synex.interact.graph.ack",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_interact",
+      "stability": "internal",
+      "network": "client-to-server",
+      "sessionStates": ["ACTIVE"],
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sessionId", "executionId", "nodeKey", "sequence", "result"],
+        "properties": {
+          "sessionId": { "type": "string", "minLength": 8, "maxLength": 96 },
+          "executionId": { "type": "string", "minLength": 8, "maxLength": 96 },
+          "nodeKey": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "sequence": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "result": { "enum": ["COMPLETED", "CANCELLED", "FAILED"] },
+          "code": { "type": "string", "minLength": 3, "maxLength": 64 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["accepted", "duplicate"],
+        "properties": {
+          "accepted": { "const": true },
+          "duplicate": { "type": "boolean" }
+        }
+      },
+      "errors": ["INTERACT_GRAPH_INVALID", "INTERACT_SESSION_NOT_FOUND", "INTERACT_LEASE_STALE", "INTERACT_RATE_LIMITED", "INTERACT_UNAVAILABLE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 16, "refillPerSecond": 8 }
+    },
+    {
+      "name": "synex.interact.metrics.report",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_interact",
+      "stability": "internal",
+      "network": "client-to-server",
+      "sessionStates": ["ACTIVE"],
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["clientEpoch", "sequence", "counters", "gauges"],
+        "properties": {
+          "clientEpoch": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "sequence": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "counters": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "sensorTicks": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "candidatesSeen": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "expensiveChecks": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "intentChanges": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "promptsShown": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "bloomOpened": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "leaseRequests": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "transportFailures": { "type": "integer", "minimum": 0, "maximum": 1000000000000 },
+              "providerTimeouts": { "type": "integer", "minimum": 0, "maximum": 1000000000000 }
+            }
+          },
+          "gauges": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "candidateCount": { "type": "number", "minimum": 0, "maximum": 128 },
+              "sensorIntervalMs": { "type": "number", "minimum": 0, "maximum": 10000 },
+              "expensiveCandidateCount": { "type": "number", "minimum": 0, "maximum": 8 },
+              "sensorDurationMs": { "type": "number", "minimum": 0, "maximum": 60000 },
+              "providerDurationMs": { "type": "number", "minimum": 0, "maximum": 60000 },
+              "intentScoringDurationMs": { "type": "number", "minimum": 0, "maximum": 60000 }
+            }
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["accepted", "duplicate", "nextReportAfterMs"],
+        "properties": {
+          "accepted": { "const": true },
+          "duplicate": { "type": "boolean" },
+          "nextReportAfterMs": { "type": "integer", "minimum": 5000, "maximum": 60000 }
+        }
+      },
+      "errors": ["INTERACT_INVALID_REQUEST", "INTERACT_RATE_LIMITED", "INTERACT_UNAVAILABLE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 2, "refillPerSecond": 0.2 }
+    }
+  ]
+}

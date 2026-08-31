@@ -126,6 +126,7 @@ local NATIVE_CAPABILITIES_BY_OPERATION = {
         'synex.identity.read', 'synex.accounts.read', 'synex.groups.read',
     },
     ['client.callback.invoke'] = { 'synex.identity.read' },
+    ['client.notification.send'] = { 'synex.notify.send' },
     ['lifecycle.publish'] = {
         'synex.identity.read', 'synex.accounts.read', 'synex.groups.read',
     },
@@ -153,15 +154,18 @@ local PUBLICATION_AUTHORIZATION_BY_PROVIDER = {
         ['lifecycle.publish'] = 'read',
         ['client.player_data.read'] = 'read',
         ['client.callback.invoke'] = 'callbacks',
+        ['client.notification.send'] = 'read',
     },
     qbx = {
         ['lifecycle.publish'] = 'read',
         ['client.player_data.read'] = 'read',
+        ['client.notification.send'] = 'read',
     },
     esx = {
         ['lifecycle.publish'] = 'read',
         ['client.player_data.read'] = 'read',
         ['client.callback.invoke'] = 'callbacks',
+        ['client.notification.send'] = 'read',
     },
 }
 
@@ -2983,7 +2987,8 @@ function Native.create(options)
             end
         end
         for key in pairs(clientAccess) do
-            if key ~= 'playerData' and key ~= 'callbacks' then
+            if key ~= 'playerData' and key ~= 'callbacks'
+                and key ~= 'notifications' then
                 return nil, bridgeError('COMPAT_AUTHORIZATION_INVALID',
                     'The lifecycle client authorization result is invalid.', true),
                     false, nil
@@ -2991,7 +2996,10 @@ function Native.create(options)
         end
         local playerDataConsumers = copyClientConsumerList(clientAccess.playerData)
         local callbackConsumers = copyClientConsumerList(clientAccess.callbacks)
+        local notificationConsumers = copyClientConsumerList(
+            clientAccess.notifications or {})
         if not playerDataConsumers or not callbackConsumers
+            or not notificationConsumers
             or authorizationOperations['client.callback.invoke'] == nil
                 and #callbackConsumers > 0 then
             return nil, bridgeError('COMPAT_AUTHORIZATION_INVALID',
@@ -3030,6 +3038,7 @@ function Native.create(options)
             clientAccess = {
                 playerData = playerDataConsumers,
                 callbacks = callbackConsumers,
+                notifications = notificationConsumers,
             },
         }, nil, false, nil
     end

@@ -33,7 +33,8 @@ test('security diagnostics are immutable, bounded and keyset paginated', async (
       local foundation = SynexCoreFactories.foundation({ platform = platform })
       local security = SynexCoreFactories.security({
         platform = platform, foundation = foundation, coreResource = 'synex_core',
-        securityDiagnosticsMaximum = 32
+        securityDiagnosticsMaximum = 32,
+        securityDiagnosticsStreamId = 'sdiag_test_primary'
       })
 
       local first = nil
@@ -55,6 +56,7 @@ test('security diagnostics are immutable, bounded and keyset paginated', async (
       assert(snapshot.retained == 32 and snapshot.maximumRetained == 32)
       assert(snapshot.dropped == 8 and snapshot.retentionTruncated == true)
       assert(snapshot.latestId == 40 and snapshot.categories.contract_validation == 32)
+      assert(snapshot.oldestId == 9 and snapshot.streamId == 'sdiag_test_primary')
       assert(#snapshot.items == 32 and snapshot.items[1].id == 40
         and snapshot.items[32].id == 9)
       assert(snapshot.items[1].summary == 'Contract validation rejected.')
@@ -63,6 +65,8 @@ test('security diagnostics are immutable, bounded and keyset paginated', async (
       local cursor, total, previousId, previousTimestamp = nil, 0, 41, math.huge
       repeat
         local page = assert(security.diagnostics:page({ cursor = cursor, limit = 7 }))
+        assert(page.streamId == snapshot.streamId and page.oldestId == 9
+          and page.latestId == 40)
         for _, finding in ipairs(page.items) do
           assert(finding.id < previousId and finding.timestampMs < previousTimestamp)
           assert(finding.cursor == tostring(finding.id))
@@ -74,6 +78,23 @@ test('security diagnostics are immutable, bounded and keyset paginated', async (
         if page.hasMore then assert(type(cursor) == 'string') end
       until cursor == nil
       assert(total == 32 and previousId == 9)
+
+      local subjectFinding = assert(security.diagnostics:record({
+        category = 'transport_abuse', severity = 'WARNING', code = 'RPC_PAYLOAD_INVALID',
+        scope = 'synex.fixture.call', operation = 'rpc.ingress.validate',
+        summary = 'RPC ingress payload validation rejected.',
+        sessionId = 'session-safe-1', source = 17, sourceGeneration = 9,
+        userId = 'user-safe-1', characterId = 'character-safe-1'
+      }))
+      assert(subjectFinding.sessionId == 'session-safe-1' and subjectFinding.source == 17
+        and subjectFinding.sourceGeneration == 9 and subjectFinding.userId == 'user-safe-1'
+        and subjectFinding.characterId == 'character-safe-1')
+      local detached, detachedError = security.diagnostics:record({
+        category = 'transport_abuse', severity = 'WARNING', code = 'RPC_PAYLOAD_INVALID',
+        scope = 'synex.fixture.call', operation = 'rpc.ingress.validate',
+        summary = 'RPC ingress payload validation rejected.', source = 17
+      })
+      assert(detached == nil and detachedError.code == 'INVALID_SECURITY_DIAGNOSTIC_FINDING')
 
       local invalidPayload, payloadError = security.diagnostics:record({
         category = 'contract_validation', severity = 'WARNING', code = 'INVALID_FIXTURE',
@@ -92,7 +113,7 @@ test('security diagnostics are immutable, bounded and keyset paginated', async (
         summary = 'Rejected cfxk_123456789012345678901234567890.'
       })
       assert(invalidSecret == nil and secretError.code == 'INVALID_SECURITY_DIAGNOSTIC_FINDING')
-      local invalidCursor, cursorError = security.diagnostics:page({ cursor = '42', limit = 1 })
+      local invalidCursor, cursorError = security.diagnostics:page({ cursor = '999', limit = 1 })
       assert(invalidCursor == nil and cursorError.code == 'INVALID_CURSOR')
       local invalidLimit, limitError = security.diagnostics:snapshot(51)
       assert(invalidLimit == nil and limitError.code == 'INVALID_ARGUMENT')

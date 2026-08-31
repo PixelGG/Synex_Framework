@@ -42,6 +42,7 @@ local OPERATION_SURFACES = {
         ['callback.invoke'] = 'qb.server.callback_registration',
         ['client.player_data.read'] = 'qb.client.player_data',
         ['client.callback.invoke'] = 'qb.client.callback_invocation',
+        ['client.notification.send'] = 'qb.client.notification',
         ['telemetry.read'] = 'qb.server.core_object',
         ['permissions.read'] = 'qb.server.permission_view',
         ['lifecycle.publish'] = 'qb.shared.lifecycle_events',
@@ -69,6 +70,7 @@ local OPERATION_SURFACES = {
         ['callback.register'] = 'qbx.server.callback_registration',
         ['callback.invoke'] = 'qbx.server.callback_registration',
         ['client.player_data.read'] = 'qbx.client.player_data',
+        ['client.notification.send'] = 'qbx.client.notification',
         ['groups.read'] = 'qbx.server.groups_read',
         ['telemetry.read'] = 'qbx.server.player_lookup',
         ['permissions.read'] = 'qbx.server.permission_admin',
@@ -95,6 +97,7 @@ local OPERATION_SURFACES = {
         ['callback.invoke'] = 'esx.server.callback_registration',
         ['client.player_data.read'] = 'esx.client.player_data',
         ['client.callback.invoke'] = 'esx.client.callback_invocation',
+        ['client.notification.send'] = 'esx.client.notification',
         ['groups.read'] = 'esx.xplayer.job_read',
         ['telemetry.read'] = 'esx.server.shared_object',
         ['permissions.read'] = 'esx.xplayer.permission_group',
@@ -129,6 +132,7 @@ local OPERATION_SUFFIXES = {
     ['callback.invoke'] = 'callbacks',
     ['client.player_data.read'] = 'read',
     ['client.callback.invoke'] = 'callbacks',
+    ['client.notification.send'] = 'read',
     ['lifecycle.publish'] = 'read',
     ['events.job.publish'] = 'read',
     ['events.gang.publish'] = 'read',
@@ -197,6 +201,7 @@ local NATIVE_CAPABILITIES_BY_OPERATION = {
         'synex.identity.read', 'synex.accounts.read', 'synex.groups.read',
     },
     ['client.callback.invoke'] = { 'synex.identity.read' },
+    ['client.notification.send'] = { 'synex.notify.send' },
     ['lifecycle.publish'] = {
         'synex.identity.read', 'synex.accounts.read', 'synex.groups.read',
     },
@@ -228,13 +233,16 @@ local CLIENT_ACCESS_OPERATIONS = {
     qb = {
         playerData = 'client.player_data.read',
         callbacks = 'client.callback.invoke',
+        notifications = 'client.notification.send',
     },
     qbx = {
         playerData = 'client.player_data.read',
+        notifications = 'client.notification.send',
     },
     esx = {
         playerData = 'client.player_data.read',
         callbacks = 'client.callback.invoke',
+        notifications = 'client.notification.send',
     },
 }
 local SURFACE_DEPENDENCIES = {
@@ -1666,10 +1674,15 @@ local function activeClientProjectionCandidate(provider, candidates)
     if type(operations) ~= 'table' then
         return nil, Foundation.error('COMPAT_API_UNSUPPORTED')
     end
-    if not operations.playerData then
-        return nil, Foundation.error('COMPAT_PROVIDER_DISABLED')
+    for _, kind in ipairs({ 'playerData', 'notifications' }) do
+        if operations[kind] then
+            local authorized, authorizationError = authorizeFirstConsumer(
+                provider, candidates, operations[kind])
+            if authorized then return authorized, nil end
+            if kind == 'notifications' then return nil, authorizationError end
+        end
     end
-    return authorizeFirstConsumer(provider, candidates, operations.playerData)
+    return nil, Foundation.error('COMPAT_PROVIDER_DISABLED')
 end
 
 local function authorizedClientConsumers(provider, candidates)
@@ -1677,9 +1690,9 @@ local function authorizedClientConsumers(provider, candidates)
     if type(operations) ~= 'table' then
         return nil, Foundation.error('COMPAT_API_UNSUPPORTED')
     end
-    local access = { playerData = {}, callbacks = {} }
+    local access = { playerData = {}, callbacks = {}, notifications = {} }
     local playerDataAccess = {}
-    for _, kind in ipairs({ 'playerData', 'callbacks' }) do
+    for _, kind in ipairs({ 'playerData', 'callbacks', 'notifications' }) do
         local operation = operations[kind]
         if operation ~= nil then
             local suffix = OPERATION_SUFFIXES[operation]

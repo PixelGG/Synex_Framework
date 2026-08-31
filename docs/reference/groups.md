@@ -12,7 +12,7 @@ Detailed architecture and integration guidance starts at [Organizations Engine o
 - Required runtime dependency: `synex_core` only. Database access is caller-bound through Core's ownership-checked `api.Database` DataPort; Groups has no direct oxmysql dependency.
 - Resource criticality: `critical: false`. This discovery setting is not a maturity or production-readiness claim.
 - Provided service: `synex.groups@1`.
-- Public surface: 71 Groups contracts in the current 178-definition source catalog; these counts describe the current revision and are not an API invariant.
+- Public surface: 71 Groups contracts in the current 204-definition source catalog; these counts describe the current revision and are not an API invariant.
 - Stability: every current contract is `experimental`.
 - Transport: 70 Groups contracts are `network: none`; exactly `synex.groups.self.snapshot` is `client-to-server`. No standalone Groups NetEvent is registered.
 - Persistence: Groups-owned relational tables, transactional idempotency/history/audit/outbox, and bounded expiry maintenance.

@@ -34,9 +34,21 @@ React hiding alone never releases native focus.
 
 ## Work while closed
 
-There is no permanent frame loop for an inactive UI. Controller polling is
-enabled only while an applicable focus lease exists, and listeners/timers are
-cleaned up when surfaces close or the runtime stops.
+There is no permanent frame loop for an inactive UI. Full navigation-control
+polling is enabled only while an applicable focus lease exists. A separate
+250 ms input-source sample runs while at least one passive Notify signal is
+retained and stops with the final signal or runtime shutdown.
+
+Passive Notify actions use the same central device state without acquiring a
+focus lease. The caller-bound `synex_notify` UI facade accepts only the exact
+`keyboard` and `gamepad` reports emitted by its registered F9/F10 and D-pad
+command paths. In addition, the central runtime reads `IsUsingKeyboard` during
+the bounded passive-signal sample so the first hint can distinguish keyboard
+from gamepad before a player invokes an action. A changed state is sent to the
+shared browser as a bounded `runtime:sync`; a state observed before browser
+readiness is carried by the next ready snapshot. Duplicate states do not send
+another message. This path never disables or captures controls, focuses the
+NUI, shows a cursor, or enables keep-input.
 
 ## Consumer guidance
 
@@ -44,6 +56,8 @@ cleaned up when surfaces close or the runtime stops.
 - Do not bind product semantics directly to raw key codes in package components.
 - Do not show controller-only or keyboard-only paths for required operations.
 - Do not interpret a client-side input result as authorization.
+- Do not use passive device reports for gameplay authority. They select
+  presentation hints only.
 
 Input switching, key repeat, text entry, pause-menu interaction, and resource
 restart behavior in FiveM/CEF are **NOT YET VERIFIED**.

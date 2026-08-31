@@ -1,8 +1,8 @@
 # Development and verification
 
-The current UI package and runtime are **Experimental Alpha implementation
-candidates**. The automated gates below protect this development boundary; they
-do not constitute a live-support or production-maturity decision.
+The current UI package and runtime are **Experimental Alpha**. The automated
+gates below protect this development boundary; they do not constitute a
+live-support or production-maturity decision.
 
 ## Install and build
 
@@ -33,6 +33,12 @@ large bounded data, owner restart, reduced motion, reduced transparency, high
 contrast, and quality profiles. Representative viewports include 1080p, 1440p,
 4K, 21:9, and 32:9.
 
+The Notify fixture additionally covers all five tones, running/success/failed
+progress, persistent and banner kinds, grouped/count forms, action hints, all
+quality profiles and reduced-motion/transparency variants. Dedicated Signal
+baselines are retained for mobile, 720p, 1080p, 1440p, 4K, 2560x1080,
+3440x1440 and 5120x1440. They remain browser evidence, not a FiveM screenshot.
+
 ## Static review
 
 Before live acceptance:
@@ -54,6 +60,13 @@ production build must still pass:
 
 - browser ready and initial synchronization;
 - generic alert, confirm, input, form, select, menu, and context-menu flows;
+- passive Notify show/update/dismiss/expire, queue promotion, action hints,
+  exact active-surface ACK/retry, dismissing-surface exclusion, fail-closed
+  F9/F10, quiet-context/reservation behavior, owner stop and UI-runtime
+  reconciliation;
+- accepted-but-`delivered = false` signal retention, later ready/full-sync
+  recovery, no Notify sound, and critical-only once-per-content-generation
+  fallback after immediate delivery failure or the 1,250 ms visibility-ACK gate;
 - mouse, keyboard, controller, device switching, and adaptive hints;
 - all close paths, owner stop, runtime stop/restart, browser reload, and
   reconnect;
@@ -64,5 +77,6 @@ production build must still pass:
 - console/network errors, missing assets, focus leaks, listener growth, and
   retained browser work.
 
-These real FiveM/CEF, safe-zone, glass-on-gameplay, controller/focus, and
-performance checks are **NOT YET VERIFIED**.
+These real FiveM/CEF, safe-zone, glass-on-gameplay, controller/focus,
+screen-reader/accessibility, and measured Resmon/performance checks are **NOT YET
+VERIFIED**.

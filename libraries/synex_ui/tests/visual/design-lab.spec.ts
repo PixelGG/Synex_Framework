@@ -94,6 +94,185 @@ test.describe('Synex Design Lab visual regression', () => {
     });
   });
 
+  test('Signal Surface remains passive and composed at the configured viewport', async ({ page }) => {
+    await openDesignLab(page, 'section=feedback');
+    const preview = page.getByTestId('signal-rail-preview');
+    const surfaces = preview.locator('.sx-signal-surface');
+    await expect(preview).toBeVisible();
+    await expect(surfaces).toHaveCount(4);
+    await expect(preview.locator('.sx-signal-surface[role="group"]')).toHaveCount(4);
+    await expect(preview.locator('[role="alert"]')).toHaveCount(1);
+    await expect(preview.locator('[role="status"]')).toHaveCount(1);
+    await expect(preview.locator('[data-sx-signal-announcer="true"]')).toHaveCount(1);
+    await expect(preview.locator('button')).toHaveCount(0);
+
+    const geometry = await preview.evaluate((element) => {
+      const rail = element.querySelector<HTMLElement>('.sx-signal-rail');
+      const surface = element.querySelector<HTMLElement>('.sx-signal-surface');
+      const previewRect = element.getBoundingClientRect();
+      const railRect = rail?.getBoundingClientRect();
+      return {
+        previewLeft: previewRect.left,
+        previewRight: previewRect.right,
+        railLeft: railRect?.left ?? -1,
+        railRight: railRect?.right ?? Number.POSITIVE_INFINITY,
+        pointerEvents: surface ? getComputedStyle(surface).pointerEvents : '',
+      };
+    });
+    expect(geometry.pointerEvents).toBe('none');
+    expect(geometry.railLeft).toBeGreaterThanOrEqual(geometry.previewLeft - 1);
+    expect(geometry.railRight).toBeLessThanOrEqual(geometry.previewRight + 1);
+
+    await expect(preview).toHaveScreenshot('signal-surface-configured.png');
+  });
+
+  test('notification simulator exposes every planned development scenario', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== '1080p', 'Interactive simulator coverage runs once at 1080p.');
+
+    await openDesignLab(page, 'section=feedback&reducedMotion=true');
+    const simulator = page.locator('.lab-signal-simulator');
+    const preview = page.getByTestId('signal-rail-preview');
+    const readout = page.getByTestId('signal-simulator-state');
+    const readoutValues = readout.locator('dd');
+    const surfaces = preview.locator('.sx-signal-surface');
+    await expect(surfaces).toHaveCount(4);
+
+    await simulator.getByRole('button', { name: 'Spawn toast' }).click();
+    await expect(readout).toContainText('Spawn toast');
+    await expect(surfaces).toHaveCount(1);
+    await expect(preview).toContainText('Vehicle access updated');
+
+    await simulator.getByRole('button', { name: 'Spawn progress' }).click();
+    await expect(readout).toContainText('Spawn progress');
+    await expect(preview.locator('[data-sx-state="RUNNING"]')).toHaveCount(1);
+    await expect(preview).toContainText('15%');
+
+    await simulator.getByRole('button', { name: 'Advance progress' }).click();
+    await expect(readout).toContainText('Advance progress');
+    await expect(preview).toContainText('35%');
+
+    await simulator.getByRole('button', { name: 'Fail progress' }).click();
+    await expect(readout).toContainText('Fail progress');
+    await expect(preview.locator('[data-sx-state="FAILED"]')).toHaveCount(1);
+
+    await simulator.getByRole('button', { name: 'Group burst' }).click();
+    await expect(readoutValues.nth(0)).toHaveText('Group burst');
+    await expect(readoutValues.nth(1)).toHaveText('20');
+    await expect(readoutValues.nth(2)).toHaveText('1');
+    await expect(readoutValues.nth(3)).toHaveText('1');
+    await expect(surfaces).toHaveCount(1);
+    await expect(preview).toContainText('×20');
+
+    await simulator.getByRole('button', { name: 'Dedupe burst' }).click();
+    await expect(readoutValues.nth(0)).toHaveText('Dedupe burst');
+    await expect(readoutValues.nth(1)).toHaveText('10');
+    await expect(readoutValues.nth(2)).toHaveText('1');
+    await expect(surfaces).toHaveCount(1);
+    await expect(preview).toContainText('Latest duplicate revision 10');
+    await expect(preview).toContainText('×10');
+
+    await simulator.getByRole('button', { name: 'Critical' }).click();
+    await expect(readout).toContainText('Critical');
+    await expect(preview.locator('[role="alert"]')).toHaveCount(1);
+
+    await simulator.getByRole('button', { name: 'Spam test' }).click();
+    await expect(readoutValues.nth(0)).toHaveText('Spam test');
+    await expect(readoutValues.nth(1)).toHaveText('1,000');
+    await expect(readoutValues.nth(2)).toHaveText('8');
+    await expect(readoutValues.nth(3)).toHaveText('4');
+    await expect(surfaces).toHaveCount(4);
+
+    await simulator.getByRole('button', { name: 'Action test' }).click();
+    await expect(readout).toContainText('Action test');
+    await expect(preview.locator('.sx-signal-action')).toHaveCount(2);
+    await expect(preview.locator('button')).toHaveCount(0);
+
+    await simulator.getByRole('button', { name: 'Clear' }).click();
+    await expect(readoutValues.nth(0)).toHaveText('Clear');
+    await expect(readoutValues.nth(1)).toHaveText('0');
+    await expect(readoutValues.nth(2)).toHaveText('0');
+    await expect(readoutValues.nth(3)).toHaveText('0');
+    await expect(surfaces).toHaveCount(0);
+  });
+
+  test('interaction surfaces stay contained and visually stable', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== '1080p', 'Interaction geometry and baseline are captured at 1080p.');
+
+    await openDesignLab(page, 'section=runtime&reducedMotion=true');
+    const preview = page.getByTestId('interaction-surface-preview').locator('.lab-interaction-preview');
+    await expect(preview).toBeVisible();
+    await expect(preview.locator('.sx-interaction[data-sx-mode="cue"]')).toHaveCount(1);
+    await expect(preview.locator('.sx-interaction[data-sx-mode="bloom"]')).toHaveCount(1);
+    await expect(preview.locator('.sx-interaction[data-sx-mode="progress"]')).toHaveCount(1);
+
+    const geometry = await page.evaluate(() => {
+      const bounds = document.documentElement.getBoundingClientRect();
+      return Array.from(document.querySelectorAll<HTMLElement>('.lab-interaction-preview .sx-interaction')).map((surface) => {
+        const rect = surface.getBoundingClientRect();
+        return {
+          left: rect.left,
+          right: rect.right - bounds.width,
+          top: rect.top,
+          bottom: rect.bottom - bounds.height,
+          pointerEvents: getComputedStyle(surface).pointerEvents,
+        };
+      });
+    });
+    for (const surface of geometry) {
+      expect(surface.left).toBeGreaterThanOrEqual(-1);
+      expect(surface.right).toBeLessThanOrEqual(1);
+      expect(surface.top).toBeGreaterThanOrEqual(-1);
+      expect(surface.bottom).toBeLessThanOrEqual(1);
+      expect(surface.pointerEvents).toBe('none');
+    }
+
+    await expect(page).toHaveScreenshot('interaction-surface-contracts.png', { fullPage: false });
+  });
+
+  test('maximum notification copy remains bounded and visually stable', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== '1080p', 'Boundary geometry and baseline are captured at 1080p.');
+
+    await openDesignLab(page, 'section=feedback&reducedMotion=true');
+    const boundary = page.getByTestId('signal-copy-boundary');
+    const title = boundary.locator('.sx-signal-surface__heading strong');
+    const message = boundary.locator('.sx-signal-surface__message');
+    await expect(boundary).toBeVisible();
+    expect(await title.textContent()).toHaveLength(120);
+    expect(await message.textContent()).toHaveLength(512);
+
+    const geometry = await boundary.evaluate((element) => {
+      const surface = element.querySelector<HTMLElement>('.sx-signal-surface')!;
+      const heading = element.querySelector<HTMLElement>('.sx-signal-surface__heading strong')!;
+      const body = element.querySelector<HTMLElement>('.sx-signal-surface__message')!;
+      const headingStyle = getComputedStyle(heading);
+      const bodyStyle = getComputedStyle(body);
+      return {
+        surfaceClientWidth: surface.clientWidth,
+        surfaceScrollWidth: surface.scrollWidth,
+        headingClientWidth: heading.clientWidth,
+        headingScrollWidth: heading.scrollWidth,
+        headingOverflow: headingStyle.overflow,
+        headingTextOverflow: headingStyle.textOverflow,
+        headingWhiteSpace: headingStyle.whiteSpace,
+        bodyClientHeight: body.clientHeight,
+        bodyScrollHeight: body.scrollHeight,
+        bodyOverflow: bodyStyle.overflow,
+        bodyOverflowWrap: bodyStyle.overflowWrap,
+        bodyLineClamp: bodyStyle.getPropertyValue('-webkit-line-clamp'),
+      };
+    });
+    expect(geometry.surfaceScrollWidth).toBeLessThanOrEqual(geometry.surfaceClientWidth + 1);
+    expect(geometry.headingScrollWidth).toBeGreaterThan(geometry.headingClientWidth);
+    expect(geometry.headingOverflow).toBe('hidden');
+    expect(geometry.headingTextOverflow).toBe('ellipsis');
+    expect(geometry.headingWhiteSpace).toBe('nowrap');
+    expect(geometry.bodyScrollHeight).toBeGreaterThan(geometry.bodyClientHeight);
+    expect(geometry.bodyOverflow).toBe('hidden');
+    expect(geometry.bodyOverflowWrap).toBe('anywhere');
+    expect(geometry.bodyLineClamp).toBe('2');
+    await expect(boundary).toHaveScreenshot('signal-copy-boundary.png');
+  });
+
   for (const section of sections) {
     test(`renders the complete ${section} section at 1080p`, async ({ page }, testInfo) => {
       test.skip(testInfo.project.name !== '1080p', 'Detailed section baselines are captured at 1080p.');
@@ -106,6 +285,24 @@ test.describe('Synex Design Lab visual regression', () => {
         for (const specimen of ['tokens', 'colors', 'materials', 'glass-intensity', 'screen-sizes']) {
           await expect(page.getByTestId(specimen)).toBeVisible();
         }
+      }
+
+      if (section === 'feedback') {
+        const toneMatrix = page.getByTestId('signal-tone-matrix');
+        for (const tone of ['neutral', 'info', 'success', 'warning', 'danger']) {
+          await expect(toneMatrix.locator(`[data-sx-tone="${tone}"]`)).toHaveCount(1);
+        }
+        for (const state of ['RUNNING', 'SUCCESS', 'FAILED']) {
+          await expect(toneMatrix.locator(`[data-sx-state="${state}"]`)).toHaveCount(1);
+        }
+        const profileMatrix = page.getByTestId('signal-profile-matrix');
+        for (const quality of ['low', 'balanced', 'high', 'ultra']) {
+          await expect(profileMatrix.locator(`[data-sx-quality="${quality}"]`)).toHaveCount(
+            quality === 'balanced' ? 3 : 1,
+          );
+        }
+        await expect(profileMatrix.locator('[data-sx-reduced-motion="true"]')).toHaveCount(1);
+        await expect(profileMatrix.locator('[data-sx-reduced-transparency="true"]')).toHaveCount(1);
       }
 
       await expect(page.locator('.lab-stage')).toHaveScreenshot(`section-${section}.png`);

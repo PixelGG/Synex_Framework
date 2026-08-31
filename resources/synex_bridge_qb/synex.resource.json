@@ -61,7 +61,12 @@
         "version": ">=0.1.0"
       }
     ],
-    "optional": [],
+    "optional": [
+      {
+        "name": "synex_notify",
+        "version": ">=0.1.0"
+      }
+    ],
     "development": []
   },
   "migrations": [],

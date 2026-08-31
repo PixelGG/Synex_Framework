@@ -101,7 +101,7 @@ test('RPC ingress bounds malformed and unknown-procedure floods across source re
 
       for _ = 1, 100 do handlers[SynexProtocol.events.request]('malformed') end
       assert(#responses == 4 and resolutions == 0)
-      assert(security.rateLimiter:snapshot().buckets == 1)
+      assert(security.rateLimiter:snapshot().buckets == 2)
       messaging.network:purgeSource(42, nil)
       assert(security.rateLimiter:snapshot().buckets == 0)
 
@@ -115,7 +115,7 @@ test('RPC ingress bounds malformed and unknown-procedure floods across source re
         })
       end
       assert(#responses == 8 and resolutions == 4)
-      assert(security.rateLimiter:snapshot().buckets == 1)
+      assert(security.rateLimiter:snapshot().buckets == 2)
 
       activeSession = {
         id = 'session-new', userId = 'user-new', sourceGeneration = 3, state = 'ACTIVE'
@@ -124,7 +124,7 @@ test('RPC ingress bounds malformed and unknown-procedure floods across source re
         wire = 1, requestId = 'request-new-1',
         procedure = 'synex.unknown_new', version = '1.0.0', payload = {}
       })
-      assert(security.rateLimiter:snapshot().buckets == 2)
+      assert(security.rateLimiter:snapshot().buckets == 3)
       messaging.network:purgeSource(42, 1)
       assert(security.rateLimiter:snapshot().buckets == 1)
 
@@ -342,7 +342,8 @@ test('RPC responses enforce the encoded byte cap and keep error fallbacks bounde
 
 test('public facades enforce RPC options and preserve idempotency metadata tuples', async () => {
   const engine = await coreEngine([
-    'foundation', 'registries', 'bootstrap_api_validation', 'bootstrap_api_tracing', 'bootstrap_api',
+    'foundation', 'registries', 'bootstrap_api_validation', 'bootstrap_api_tracing',
+    'bootstrap_api_diagnostics', 'bootstrap_api',
   ]);
   try {
     const result = await engine.doString(`

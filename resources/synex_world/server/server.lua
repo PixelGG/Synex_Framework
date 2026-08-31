@@ -282,6 +282,36 @@ local portals = SynexWorldPortals.create({
     nextId = nextId, now = now,
     triggerClient = function(source, event, payload) TriggerClientEvent(event, source, payload) end,
     emit = emit, audit = audit,
+    expectTransition = function(grant, portal, context)
+        local expectation, expectationError = coreMethod('Services', 'call',
+            'synex.security', '^1.0.0', 'registerExpectation', {
+                namespace = 'synex.world',
+                kind = 'movement.teleport',
+                subject = {
+                    sessionId = grant.sessionId,
+                    source = grant.source,
+                    sourceGeneration = grant.sourceGeneration,
+                    characterId = grant.characterId,
+                },
+                    constraintsJson = json.encode({
+                        categories = { 'movement' },
+                        detectors = { 'synex.security.movement' },
+                        codes = { 'MOVEMENT_TELEPORT_ANOMALY' },
+                        correlationKeys = { 'movement-teleport' },
+                        maximumSeverity = 'HIGH',
+                    }),
+                reason = 'world.portal.transition',
+                ttlMs = 8000,
+            }, { traceId = context and context.traceId, timeoutMs = 1000 })
+        if not expectation then
+            observability.increment('security_expectation_failures_total', {
+                code = type(expectationError) == 'table'
+                    and expectationError.code or 'UNAVAILABLE',
+            }, 1)
+            return false
+        end
+        return true
+    end,
 })
 local presence = SynexWorldPresence.create({
     now = now,

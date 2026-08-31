@@ -791,6 +791,7 @@ function sampleString(schema: JsonSchema): string {
     `synex_${"a".repeat(Math.max(1, minimum - 6))}`,
     `a.${"a".repeat(Math.max(1, minimum - 2))}`,
     "a".repeat(Math.max(1, minimum)),
+    "A".repeat(Math.max(1, minimum)),
     "0".repeat(Math.max(1, minimum)),
   ];
   if (pattern !== "") {

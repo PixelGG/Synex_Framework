@@ -39,6 +39,12 @@ factories.security = function(deps)
     local diagnosticSequence = 0
     local diagnosticTimestampMs = 0
     local diagnosticCategoryCounts = {}
+    local diagnosticStreamId = deps.securityDiagnosticsStreamId
+    if type(diagnosticStreamId) ~= 'string' or #diagnosticStreamId < 8
+        or #diagnosticStreamId > 36
+        or diagnosticStreamId:match('^[A-Za-z0-9_%.:%-]+$') == nil then
+        diagnosticStreamId = foundation.nextId('sdiag')
+    end
 
     local capabilityClass = {
         ['synex.runtime.read'] = 'normal',
@@ -52,6 +58,7 @@ factories.security = function(deps)
         ['synex.access.read'] = 'sensitive',
         ['synex.access.manage'] = 'privileged',
         ['synex.capabilities.delegate'] = 'privileged',
+        ['synex.notify.system'] = 'privileged',
         ['synex.permissions.manage'] = 'privileged',
         ['synex.sagas.register'] = 'privileged',
         ['synex.accounts.configure'] = 'privileged',
@@ -67,6 +74,11 @@ factories.security = function(deps)
         ['synex.accounts.integrity.read'] = 'sensitive',
         ['synex.accounts.mint'] = 'privileged',
         ['synex.accounts.burn'] = 'privileged',
+        ['synex.security.signal.emit'] = 'sensitive',
+        ['synex.security.expectation.manage'] = 'privileged',
+        ['synex.security.case.read'] = 'sensitive',
+        ['synex.security.diagnostics.read'] = 'sensitive',
+        ['synex.security.enforce'] = 'privileged',
         ['synex.characters.delete'] = 'destructive',
         ['synex.entities.delete_persistent'] = 'destructive'
     }
@@ -104,7 +116,9 @@ factories.security = function(deps)
     }
     local diagnosticAllowedFields = {
         category = true, severity = true, code = true, resource = true,
-        scope = true, operation = true, summary = true
+        scope = true, operation = true, summary = true,
+        sessionId = true, source = true, sourceGeneration = true,
+        userId = true, characterId = true
     }
     local capabilityDenialCodes = {
         unregistered = 'RESOURCE_NOT_REGISTERED',
@@ -170,6 +184,22 @@ factories.security = function(deps)
             or not finding.code:match('^[A-Z][A-Z0-9_]*$')
             or finding.resource ~= nil and not validDiagnosticToken(finding.resource, 128)
             or finding.scope ~= nil and not validDiagnosticToken(finding.scope, 128)
+            or finding.sessionId ~= nil and not validDiagnosticToken(finding.sessionId, 96)
+            or finding.userId ~= nil and not validDiagnosticToken(finding.userId, 96)
+            or finding.characterId ~= nil and not validDiagnosticToken(finding.characterId, 96)
+            or finding.source ~= nil and (type(finding.source) ~= 'number'
+                or math.type(finding.source) ~= 'integer'
+                or finding.source < 1 or finding.source > 65535)
+            or finding.sourceGeneration ~= nil
+                and (type(finding.sourceGeneration) ~= 'number'
+                    or math.type(finding.sourceGeneration) ~= 'integer'
+                    or finding.sourceGeneration < 1
+                    or finding.sourceGeneration > 9007199254740991)
+            or finding.sessionId ~= nil and (finding.source == nil
+                or finding.sourceGeneration == nil)
+            or finding.sessionId == nil and (finding.source ~= nil
+                or finding.sourceGeneration ~= nil or finding.userId ~= nil
+                or finding.characterId ~= nil)
             or not validDiagnosticToken(finding.operation, 128)
             or type(finding.summary) ~= 'string' or #finding.summary < 1
             or #finding.summary > 192
@@ -197,7 +227,12 @@ factories.security = function(deps)
             resource = finding.resource,
             scope = finding.scope,
             operation = finding.operation,
-            summary = finding.summary
+            summary = finding.summary,
+            sessionId = finding.sessionId,
+            source = finding.source,
+            sourceGeneration = finding.sourceGeneration,
+            userId = finding.userId,
+            characterId = finding.characterId
         }
         local slot
         if diagnosticCount < diagnosticMaximum then
@@ -276,6 +311,8 @@ factories.security = function(deps)
                 end
             end
         end
+        local oldest = diagnosticCount > 0
+            and diagnosticFindings[diagnosticStart] or nil
         return {
             status = 'AVAILABLE',
             items = items,
@@ -287,7 +324,10 @@ factories.security = function(deps)
             maximumRetained = diagnosticMaximum,
             dropped = diagnosticDropped,
             retentionTruncated = diagnosticDropped > 0,
-            payloadsExposed = false
+            payloadsExposed = false,
+            streamId = diagnosticStreamId,
+            oldestId = oldest and oldest.id or nil,
+            latestId = diagnosticSequence > 0 and diagnosticSequence or nil
         }, nil
     end
 

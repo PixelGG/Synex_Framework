@@ -92,6 +92,7 @@ function SynexEntityApplication.create(options)
                         getHealth = function()
                             return service.healthSnapshot()
                         end,
+                        getPlayerBucketFence = publicMethod(service.getPlayerBucketFence),
                         getControlSummary = publicMethod(service.getControlSummary),
                         getDiagnosticSnapshot = publicMethod(service.getDiagnosticSnapshot),
                         inspectEntity = publicMethod(service.inspectEntity),
@@ -103,6 +104,7 @@ function SynexEntityApplication.create(options)
                         getControlSummary = 'synex.entities.read',
                         getDiagnosticSnapshot = 'synex.entities.read',
                         getHealth = 'synex.entities.health',
+                        getPlayerBucketFence = 'synex.entities.query',
                         inspectEntity = 'synex.entities.read',
                         queryByBucket = 'synex.entities.query',
                         queryByOwner = 'synex.entities.query',

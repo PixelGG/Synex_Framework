@@ -1,0 +1,61 @@
+{
+  "$schema": "../../schemas/resource.schema.json",
+  "schema": 1,
+  "name": "synex_interact_companion",
+  "version": "0.1.0",
+  "synex": "^1.0.0",
+  "critical": false,
+  "capabilities": {
+    "request": [
+      "synex.interact.bundle.register",
+      "synex.world.bundle.register"
+    ]
+  },
+  "worldBundles": [
+    "world/terminal.world.json"
+  ],
+  "interactionBundles": [
+    "interactions/terminal.interact.json"
+  ],
+  "services": {
+    "provide": [],
+    "require": [
+      "synex.interact@1",
+      "synex.runtime@1",
+      "synex.world@1"
+    ],
+    "optional": []
+  },
+  "contracts": {
+    "provide": [],
+    "consume": []
+  },
+  "events": {
+    "publish": [],
+    "subscribe": []
+  },
+  "hooks": {
+    "register": [],
+    "run": []
+  },
+  "dependencies": {
+    "required": [
+      { "name": "synex_core", "version": ">=0.1.0" },
+      { "name": "synex_entities", "version": ">=0.1.0" },
+      { "name": "synex_world", "version": ">=0.1.0" },
+      { "name": "synex_ui", "version": ">=0.1.0" },
+      { "name": "synex_interact", "version": ">=0.1.0" }
+    ],
+    "optional": [],
+    "development": []
+  },
+  "migrations": [],
+  "dataOwnership": {
+    "tables": [],
+    "characterDelete": "none"
+  },
+  "stateSnapshot": {
+    "supported": false,
+    "schemaVersion": 1
+  }
+}

@@ -38,7 +38,7 @@ All privileged mutation remains server-only through Core contracts/capabilities.
 - Hot reload changes revisions; stale `WorldRef` values fail closed.
 - Frequent runtime queries use compiled spatial candidates rather than a complete registry scan.
 - Clients receive only bounded local slices for UX and native reconciliation.
-- A future interaction system can consume context/anchors without moving action semantics into World.
+- `synex_interact` can consume revisioned anchors, doors, portals and context without moving action semantics into World.
 - Third-party MLOs remain unmodified and can gain Synex meaning through a small companion.
 
 This ADR accepts the domain direction only. `synex_world` remains Experimental Alpha until its exact candidate completes MariaDB, FXServer/OneSync, real-client and restart/recovery acceptance.

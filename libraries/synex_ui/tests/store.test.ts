@@ -18,11 +18,284 @@ const openEnvelope: GameEnvelope = {
   },
 };
 
+const signalEnvelope: GameEnvelope = {
+  protocolVersion: 1,
+  messageId: 'msg_signal_1',
+  type: 'signal:upsert',
+  ownerResource: 'synex_notify',
+  ownerEpoch: 7,
+  revision: 1,
+  payload: {
+    signalId: 'notify.queue',
+    revision: 1,
+    kind: 'progress',
+    tone: 'info',
+    priority: 'normal',
+    title: 'Queue processing',
+    progress: { state: 'RUNNING', mode: 'determinate', value: 25, maximum: 100 },
+    actions: [{ token: 'cancel', label: 'Cancel', hint: 'B' }],
+    createdAt: 1_725_000_000_000,
+    position: 'top-right',
+    generation: 1,
+  },
+};
+
+const soundEnvelope: GameEnvelope = {
+  protocolVersion: 1,
+  messageId: 'msg_sound_1',
+  type: 'signal:sound',
+  ownerResource: 'synex_notify',
+  ownerEpoch: 7,
+  revision: 0,
+  payload: { tone: 'success', volume: 65, browserBootId: 'ui_test' },
+};
+
+const interactionEnvelope: GameEnvelope = {
+  protocolVersion: 1,
+  messageId: 'msg_interaction_1',
+  type: 'interaction:upsert',
+  ownerResource: 'synex_interact',
+  ownerEpoch: 11,
+  revision: 1,
+  payload: {
+    interactionId: 'world.terminal.inspect',
+    revision: 1,
+    mode: 'cue',
+    label: 'Inspect terminal',
+    intents: [{ intentId: 'terminal.inspect', label: 'Inspect terminal' }],
+    selectedIntentId: 'terminal.inspect',
+    moreCount: 0,
+    pointer: false,
+    input: { primary: { keyboard: 'E', gamepad: 'A' } },
+    cancellable: false,
+    generation: 1,
+  },
+};
+
 describe('runtime state', () => {
   it('starts closed with no mounted surface state', () => {
     const state = createInitialRuntimeState('ui_test');
     expect(state.surfaces).toEqual([]);
+    expect(state.signals).toEqual([]);
+    expect(state.signalGeneration).toBe(0);
+    expect(state.signalRevisions).toEqual({});
+    expect(state.interaction).toBeNull();
+    expect(state.interactionGeneration).toBe(0);
+    expect(state.interactionRevisions).toEqual({});
     expect(state.ready).toBe(false);
+    expect(state.health).toBe('DEGRADED');
+  });
+
+  it('never retains one-shot sound effects in reducer state', () => {
+    const state = createInitialRuntimeState('ui_test');
+    expect(runtimeReducer(state, { type: 'message', envelope: soundEnvelope })).toBe(state);
+  });
+
+  it('keeps one generation-fenced semantic interaction independently of notifications and modals', () => {
+    let state = runtimeReducer(createInitialRuntimeState('ui_test'), {
+      type: 'message', envelope: interactionEnvelope,
+    });
+    expect(state.interaction).toMatchObject({
+      interactionId: 'world.terminal.inspect',
+      ownerResource: 'synex_interact',
+      ownerEpoch: 11,
+    });
+    expect(state.interactionGeneration).toBe(1);
+    expect(state.signals).toEqual([]);
+    expect(state.surfaces).toEqual([]);
+
+    state = runtimeReducer(state, {
+      type: 'message',
+      envelope: {
+        ...interactionEnvelope,
+        messageId: 'msg_interaction_2',
+        revision: 2,
+        payload: {
+          ...interactionEnvelope.payload,
+          revision: 2,
+          label: 'Use terminal',
+          generation: 2,
+        },
+      },
+    });
+    expect(state.interaction?.label).toBe('Use terminal');
+
+    const stale = runtimeReducer(state, {
+      type: 'message',
+      envelope: { ...interactionEnvelope, messageId: 'msg_interaction_stale', payload: {
+        ...interactionEnvelope.payload, generation: 3,
+      } },
+    });
+    expect(stale.interaction?.label).toBe('Use terminal');
+    expect(stale.interactionGeneration).toBe(2);
+    expect(stale.health).toBe('DEGRADED');
+  });
+
+  it('applies a correlated interaction removal and blocks stale resurrection', () => {
+    let state = runtimeReducer(createInitialRuntimeState('ui_test'), {
+      type: 'message', envelope: interactionEnvelope,
+    });
+    state = runtimeReducer(state, {
+      type: 'message',
+      envelope: {
+        ...interactionEnvelope,
+        messageId: 'msg_interaction_remove',
+        type: 'interaction:remove',
+        revision: 2,
+        payload: { interactionId: 'world.terminal.inspect', generation: 2 },
+      },
+    });
+    expect(state.interaction).toBeNull();
+    expect(state.interactionGeneration).toBe(2);
+
+    const stale = runtimeReducer(state, {
+      type: 'message', envelope: { ...interactionEnvelope, messageId: 'msg_interaction_resurrection', payload: {
+        ...interactionEnvelope.payload, generation: 3,
+      } },
+    });
+    expect(stale.interaction).toBeNull();
+    expect(stale.interactionGeneration).toBe(2);
+    expect(stale.health).toBe('DEGRADED');
+  });
+
+  it('accepts an exact interaction snapshot and rejects owner injection atomically', () => {
+    const runtimeInteraction = { ...interactionEnvelope.payload, ownerResource: 'synex_interact', ownerEpoch: 11 };
+    delete (runtimeInteraction as { generation?: number }).generation;
+    let state = runtimeReducer(createInitialRuntimeState('ui_test'), {
+      type: 'message',
+      envelope: {
+        ...interactionEnvelope,
+        messageId: 'msg_interaction_sync',
+        type: 'runtime:sync',
+        revision: 0,
+        payload: { interaction: runtimeInteraction, interactionGeneration: 5 },
+      },
+    });
+    expect(state.interaction?.interactionId).toBe('world.terminal.inspect');
+    expect(state.interactionGeneration).toBe(5);
+
+    state = runtimeReducer(state, {
+      type: 'message',
+      envelope: {
+        ...interactionEnvelope,
+        messageId: 'msg_interaction_bad_sync',
+        type: 'runtime:sync',
+        revision: 0,
+        payload: {
+          interaction: { ...runtimeInteraction, ownerResource: 'foreign_target' },
+          interactionGeneration: 6,
+        },
+      },
+    });
+    expect(state.interaction?.ownerResource).toBe('synex_interact');
+    expect(state.interactionGeneration).toBe(5);
+    expect(state.health).toBe('DEGRADED');
+  });
+
+  it('keeps passive signals separate from modal surfaces and fences stale upserts', () => {
+    let state = runtimeReducer(createInitialRuntimeState('ui_test'), {
+      type: 'message',
+      envelope: signalEnvelope,
+    });
+    expect(state.signals).toHaveLength(1);
+    expect(state.surfaces).toEqual([]);
+    expect(state.interaction).toBeNull();
+    expect(state.signalGeneration).toBe(1);
+
+    state = runtimeReducer(state, {
+      type: 'message',
+      envelope: {
+        ...signalEnvelope,
+        messageId: 'msg_signal_2',
+        revision: 2,
+        payload: {
+          ...signalEnvelope.payload,
+          revision: 2,
+          title: 'Queue almost complete',
+          generation: 2,
+        },
+      },
+    });
+    expect(state.signals[0]?.title).toBe('Queue almost complete');
+
+    const stale = runtimeReducer(state, {
+      type: 'message',
+      envelope: {
+        ...signalEnvelope,
+        messageId: 'msg_signal_stale',
+        payload: { ...signalEnvelope.payload, generation: 3 },
+      },
+    });
+    expect(stale.signals[0]?.title).toBe('Queue almost complete');
+    expect(stale.signalGeneration).toBe(2);
+    expect(stale.health).toBe('DEGRADED');
+  });
+
+  it('applies a generation-fenced signal removal without touching an active modal', () => {
+    let state = runtimeReducer(createInitialRuntimeState('ui_test'), { type: 'message', envelope: openEnvelope });
+    state = runtimeReducer(state, { type: 'message', envelope: signalEnvelope });
+    state = runtimeReducer(state, {
+      type: 'message',
+      envelope: {
+        ...signalEnvelope,
+        messageId: 'msg_signal_remove',
+        type: 'signal:remove',
+        revision: 2,
+        payload: { signalId: 'notify.queue', generation: 2 },
+      },
+    });
+    expect(state.signals).toEqual([]);
+    expect(state.signalGeneration).toBe(2);
+    expect(state.surfaces).toHaveLength(1);
+
+    const staleResurrection = runtimeReducer(state, {
+      type: 'message',
+      envelope: {
+        ...signalEnvelope,
+        messageId: 'msg_signal_stale_resurrection',
+        payload: { ...signalEnvelope.payload, generation: 3 },
+      },
+    });
+    expect(staleResurrection.signals).toEqual([]);
+    expect(staleResurrection.signalGeneration).toBe(2);
+    expect(staleResurrection.health).toBe('DEGRADED');
+  });
+
+  it('accepts an exact signal snapshot and rejects a malformed replacement atomically', () => {
+    const runtimeSignal = {
+      ...signalEnvelope.payload,
+      ownerResource: 'synex_notify',
+      ownerEpoch: 7,
+    };
+    delete (runtimeSignal as { generation?: number }).generation;
+    let state = runtimeReducer(createInitialRuntimeState('ui_test'), {
+      type: 'message',
+      envelope: {
+        ...signalEnvelope,
+        messageId: 'msg_signal_snapshot',
+        type: 'runtime:sync',
+        revision: 0,
+        payload: { signals: [runtimeSignal], signalGeneration: 4 },
+      },
+    });
+    expect(state.signals).toHaveLength(1);
+    expect(state.signalGeneration).toBe(4);
+
+    state = runtimeReducer(state, {
+      type: 'message',
+      envelope: {
+        ...signalEnvelope,
+        messageId: 'msg_signal_bad_snapshot',
+        type: 'runtime:sync',
+        revision: 0,
+        payload: {
+          signals: [{ ...runtimeSignal, ownerResource: '../attacker' }],
+          signalGeneration: 5,
+        },
+      },
+    });
+    expect(state.signals).toHaveLength(1);
+    expect(state.signalGeneration).toBe(4);
     expect(state.health).toBe('DEGRADED');
   });
 

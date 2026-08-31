@@ -96,6 +96,17 @@ getPreferences()            setPreferences(patch)
 getHealth()                 getDiagnostics()
 ```
 
+The facade captured for the exact `synex_notify` owner also exposes the private
+`playSignalSound({ tone, volume })` transport. Other owners do not receive this
+method. It emits one bounded, non-retained browser effect and does not open a
+surface, mount visible UI, or request focus. The runtime injects the current
+browser-boot ID and the browser applies replay, owner-epoch, rate, and
+concurrent-voice fences before creating Web Audio nodes.
+
+`getDiagnostics()` is scoped to the facade's current owner epoch for focus
+leases, surfaces, and passive signal content. It never returns another
+resource's notification copy or action projection.
+
 Runtime descriptors are deliberately finite. `select` accepts a flat option
 set plus optional `multiple`, `searchable`, and `placeholder` fields. `menu`
 and `contextMenu` accept sectioned option trees up to three levels deep;
@@ -192,8 +203,8 @@ focus ownership from diverging. Passive leases remain non-interactive.
 - Every NUI callback returns one response envelope.
 - Protected mutations remain server-authoritative.
 - The closed shared frame is transparent, unmounted, and pointer-free; it retains
-  no focus of its own. With no valid active lease, native focus and input polling
-  are also fully released.
+  no focus of its own. With no surface, passive signal, or valid active lease,
+  native focus and input sampling are also fully released.
 - Runtime stop clears keep-input and focus even during recovery.
 - The owner-focus bridge is coordination, not a hostile-client security
   boundary. Protected actions remain server-authoritative.

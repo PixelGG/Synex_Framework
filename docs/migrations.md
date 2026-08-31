@@ -2,7 +2,7 @@
 
 Synex migrations are resource-owned, forward-only SQL files. Each runnable data-owning resource declares its ordered files in `synex.resource.json`. The current `synex_core` manifest declares 27 migrations in strict order.
 
-Only Core migrations `001` through `026` belong to the frozen Production-Beta profile. Current Core migration `027_domain_primitives` and every migration under `synex_groups`, `synex_accounts`, `synex_entities`, `synex_world`, `synex_bridge`, or a future downstream resource are outside that evidence. Groups, Accounts, Entities and World are separate Experimental Alpha domains; Bridge is a separate Experimental Alpha compatibility platform. None is part of the accepted Core installation or upgrade path.
+Only Core migrations `001` through `026` belong to the frozen Production-Beta profile. Current Core migration `027_domain_primitives` and every migration under `synex_groups`, `synex_accounts`, `synex_entities`, `synex_world`, `synex_bridge`, `synex_security`, or a future downstream resource are outside that evidence. Groups, Accounts, Entities and World are separate Experimental Alpha domains; Bridge is a separate Experimental Alpha compatibility platform; Security is a separate observe-first Experimental Alpha evidence domain. None is part of the accepted Core installation or upgrade path.
 
 ## Discovery and execution
 
@@ -79,7 +79,9 @@ The World Alpha manifest declares one ordered migration, `001_world`, for persis
 
 The Bridge Alpha manifest declares one ordered migration, `001_compatibility_identity_metadata`, for provider-scoped legacy identity mappings and bounded compatibility metadata. It does not own Core identity, Groups memberships, Accounts ledger state, or gameplay authority.
 
-Across Core, Groups, Accounts, Entities, World, and Bridge, the current manifests declare 82 migrations. That count is source inventory, not proof that any combined schema or downstream upgrade has passed real-database acceptance.
+The Security Alpha manifest declares one ordered migration, `001_security`, for bounded case summaries, normalized case-signal references, and enforcement outcomes in three owned tables. Real MariaDB migration, retention, restore, and restart acceptance remains open.
+
+Across Core, Groups, Accounts, Entities, World, Bridge, and Security, the current manifests declare 83 migrations. That count is source inventory, not proof that any combined schema or downstream upgrade has passed real-database acceptance.
 
 ## Immutability
 
@@ -102,7 +104,9 @@ The checked-in manifests currently declare these ownership snapshots:
 - `synex_world` — **Experimental Alpha World Semantics & Spatial Authority Engine:** one owned migration for persistent typed state values, authoritative logical door rows and bounded at-least-once outbox delivery; never routing buckets, process-local instance sessions, runtime handles, NetIDs, diagnostic findings or client-native ownership.
 - `synex_bridge` — **Experimental Alpha Compatibility Platform:** one owned migration for provider-scoped legacy identity mappings and bounded compatibility metadata; never Core identity authority, Groups membership authority, Accounts ledger state or gameplay ownership.
 
-Do not apply the five non-Core migration sets to a database intended to represent the Core-only acceptance target. Groups, Accounts, Entities, World, and Bridge still require their separate clean-schema, restored-upgrade, FXServer and restart/recovery acceptance; future rework in any downstream domain may require a new migration and upgrade decision.
+- `synex_security` — **Experimental Alpha Security, Detection & Correlation Foundation:** one owned migration for bounded case summaries, normalized case-signal references and enforcement outcomes in three tables; never raw movement samples, unrestricted client telemetry or parallel domain authority.
+
+Do not apply the six non-Core migration sets to a database intended to represent the Core-only acceptance target. Groups, Accounts, Entities, World, Bridge, and Security still require their separate clean-schema, restored-upgrade, FXServer and restart/recovery acceptance; Security additionally requires exact OneSync/gameplay false-positive calibration. Future rework in any downstream domain may require a new migration and upgrade decision.
 
 The exact table model and constraints are documented in [Database model](reference/database.md).
 

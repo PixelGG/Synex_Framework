@@ -4,6 +4,9 @@ import {
   createBrowserBootId,
   isBoundedPayload,
   parseGameEnvelope,
+  parseInteractionDescriptor,
+  parseSignalDescriptor,
+  parseSignalSoundPayload,
   parseSurfaceDescriptor,
 } from '../runtime/src/protocol';
 
@@ -18,6 +21,41 @@ const descriptor = {
   dismissible: true,
   confirmLabel: 'Restart',
   cancelLabel: 'Keep running',
+};
+
+const signalDescriptor = {
+  signalId: 'notify.download',
+  revision: 3,
+  kind: 'progress',
+  tone: 'info',
+  priority: 'normal',
+  title: 'Downloading vehicle assets',
+  message: '12 of 20 bundles are ready.',
+  iconKey: 'signal',
+  count: 2,
+  progress: { state: 'RUNNING', mode: 'determinate', value: 12, maximum: 20 },
+  actions: [{ token: 'cancel', label: 'Cancel', hint: 'B', style: 'danger' }],
+  createdAt: 1_725_000_000_000,
+  expiresAt: 1_725_000_030_000,
+  position: 'top-right',
+};
+
+const interactionCue = {
+  interactionId: 'intent.vehicle.trunk',
+  revision: 4,
+  mode: 'cue',
+  label: 'Open trunk',
+  targetLabel: 'Sultan RS',
+  projection: { visible: true, behindCamera: false, x: 0.52, y: 0.61 },
+  intents: [{ intentId: 'vehicle.trunk.open', label: 'Open trunk', iconKey: 'command' }],
+  selectedIntentId: 'vehicle.trunk.open',
+  moreCount: 2,
+  pointer: false,
+  input: {
+    primary: { keyboard: 'E', gamepad: 'A' },
+    more: { keyboard: 'Left Alt', gamepad: 'D-pad Up' },
+  },
+  cancellable: false,
 };
 
 describe('runtime protocol', () => {
@@ -123,6 +161,159 @@ describe('runtime protocol', () => {
     expect(isBoundedPayload({ value: 'x'.repeat(UI_LIMITS.maxPayloadBytes) })).toBe(false);
   });
 
+  it('reconstructs the strict passive signal DTO and display-only action hints', () => {
+    expect(parseSignalDescriptor(signalDescriptor)).toEqual(signalDescriptor);
+    const { actions: _actions, ...signalWithoutActions } = signalDescriptor;
+    expect(parseSignalDescriptor({
+      ...signalWithoutActions,
+      signalId: 'notify.waiting',
+      revision: 1,
+      progress: { state: 'PENDING', mode: 'indeterminate' },
+    })).toMatchObject({ actions: [], progress: { state: 'PENDING', mode: 'indeterminate' } });
+  });
+
+  it('rejects signal ownership injection, executable actions, and malformed progress', () => {
+    expect(parseSignalDescriptor({ ...signalDescriptor, ownerResource: 'synex_notify' })).toBeNull();
+    expect(parseSignalDescriptor({
+      ...signalDescriptor,
+      actions: [{ token: 'execute', label: 'Execute', callback: 'arbitrary:event' }],
+    })).toBeNull();
+    expect(parseSignalDescriptor({
+      ...signalDescriptor,
+      actions: [signalDescriptor.actions[0], signalDescriptor.actions[0]],
+    })).toBeNull();
+    expect(parseSignalDescriptor({
+      ...signalDescriptor,
+      progress: { state: 'RUNNING', mode: 'indeterminate', value: 12 },
+    })).toBeNull();
+    expect(parseSignalDescriptor({
+      ...signalDescriptor,
+      progress: { state: 'RUNNING', mode: 'determinate', value: 21, maximum: 20 },
+    })).toBeNull();
+    expect(parseSignalDescriptor({ ...signalDescriptor, message: 'unsafe\u0000copy' })).toBeNull();
+    expect(parseSignalDescriptor({ ...signalDescriptor, expiresAt: signalDescriptor.createdAt })).toBeNull();
+  });
+
+  it('enforces the canonical notify text and action boundaries exactly', () => {
+    const maximumAction = {
+      token: 'a'.repeat(96),
+      label: 'L'.repeat(64),
+      hint: 'H'.repeat(24),
+    };
+    expect(parseSignalDescriptor({
+      ...signalDescriptor,
+      title: 'T'.repeat(120),
+      message: 'M'.repeat(720),
+      actions: [maximumAction],
+    })).not.toBeNull();
+    expect(parseSignalDescriptor({ ...signalDescriptor, title: 'T'.repeat(121) })).toBeNull();
+    expect(parseSignalDescriptor({ ...signalDescriptor, message: 'M'.repeat(721) })).toBeNull();
+    expect(parseSignalDescriptor({ ...signalDescriptor, actions: [{ ...maximumAction, token: 'a'.repeat(97) }] })).toBeNull();
+    expect(parseSignalDescriptor({ ...signalDescriptor, actions: [{ ...maximumAction, label: 'L'.repeat(65) }] })).toBeNull();
+    expect(parseSignalDescriptor({ ...signalDescriptor, actions: [{ ...maximumAction, hint: 'H'.repeat(25) }] })).toBeNull();
+  });
+
+  it('reconstructs a bounded semantic interaction cue without authority data', () => {
+    expect(parseInteractionDescriptor(interactionCue)).toEqual(interactionCue);
+    expect(parseInteractionDescriptor({
+      interactionId: 'graph.repair.progress',
+      revision: 8,
+      mode: 'progress',
+      label: 'Repairing vehicle',
+      projection: { visible: true, behindCamera: false, x: 0.5, y: 0.64 },
+      intents: [],
+      pointer: false,
+      input: { cancel: { keyboard: 'X', gamepad: 'B' } },
+      progress: { mode: 'timed', elapsedMs: 1_250, durationMs: 5_000 },
+      cancellable: true,
+    })).toMatchObject({ progress: { mode: 'timed', elapsedMs: 1_250, durationMs: 5_000 } });
+  });
+
+  it('enforces bloom relevance bounds, strict fields, and passive cue/progress focus', () => {
+    const { moreCount: _moreCount, ...cueWithoutMore } = interactionCue;
+    const bloom = {
+      ...cueWithoutMore,
+      mode: 'bloom',
+      label: 'Vehicle actions',
+      intents: [
+        { intentId: 'vehicle.trunk.open', label: 'Open trunk' },
+        { intentId: 'vehicle.inspect', label: 'Inspect', disabled: true },
+      ],
+      selectedIntentId: 'vehicle.trunk.open',
+      pointer: true,
+      input: {
+        primary: { keyboard: 'Enter', gamepad: 'A', mouse: 'Left Click' },
+        cancel: { keyboard: 'Esc', gamepad: 'B', mouse: 'Right Click' },
+      },
+      cancellable: true,
+    };
+    expect(parseInteractionDescriptor(bloom)).not.toBeNull();
+    expect(parseInteractionDescriptor({ ...bloom, execute: 'arbitrary:event' })).toBeNull();
+    expect(parseInteractionDescriptor({ ...bloom, ownerResource: 'synex_interact' })).toBeNull();
+    expect(parseInteractionDescriptor({ ...bloom, intents: Array.from({ length: 7 }, (_, index) => ({
+      intentId: `intent.${index}`, label: `Intent ${index}`,
+    })) })).toBeNull();
+    expect(parseInteractionDescriptor({ ...bloom, selectedIntentId: 'vehicle.inspect' })).toBeNull();
+    expect(parseInteractionDescriptor({ ...interactionCue, pointer: true })).toBeNull();
+    expect(parseInteractionDescriptor({
+      interactionId: 'progress.bad', revision: 1, mode: 'progress', label: 'Working', intents: [],
+      pointer: false, input: {}, progress: { mode: 'timed', elapsedMs: 5_001, durationMs: 5_000 },
+      cancellable: false,
+    })).toBeNull();
+  });
+
+  it('accepts interaction envelopes only from synex_interact with a strict generation', () => {
+    const envelope = {
+      protocolVersion: 1,
+      messageId: 'message_interaction_01',
+      type: 'interaction:upsert',
+      ownerResource: 'synex_interact',
+      ownerEpoch: 3,
+      revision: interactionCue.revision,
+      payload: { ...interactionCue, generation: 7 },
+    };
+    expect(parseGameEnvelope(envelope)).not.toBeNull();
+    expect(parseGameEnvelope({ ...envelope, ownerResource: 'foreign_target' })).toBeNull();
+    expect(parseGameEnvelope({ ...envelope, payload: { ...envelope.payload, generation: 0 } })).toBeNull();
+    expect(parseGameEnvelope({ ...envelope, payload: { ...envelope.payload, callback: 'unsafe:event' } })).toBeNull();
+    expect(parseGameEnvelope({
+      ...envelope,
+      type: 'interaction:remove',
+      revision: 5,
+      payload: { interactionId: interactionCue.interactionId, generation: 8 },
+    })).not.toBeNull();
+  });
+
+  it('accepts only the closed notification sound payload and trusted owner envelope', () => {
+    const browserBootId = 'ui_test_boot_01';
+    for (const tone of ['neutral', 'info', 'success', 'warning', 'danger', 'critical']) {
+      expect(parseSignalSoundPayload({ tone, volume: 50, browserBootId })).toEqual({ tone, volume: 50, browserBootId });
+    }
+    for (const volume of [0, 1.5, 101, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(parseSignalSoundPayload({ tone: 'info', volume, browserBootId })).toBeNull();
+    }
+    expect(parseSignalSoundPayload({ tone: 'accent', volume: 50, browserBootId })).toBeNull();
+    expect(parseSignalSoundPayload({ tone: 'info', volume: 50 })).toBeNull();
+    expect(parseSignalSoundPayload({ tone: 'info', volume: 50, browserBootId: 'invalid id' })).toBeNull();
+    expect(parseSignalSoundPayload({ tone: 'info', volume: 50, browserBootId, url: 'https://example.invalid' })).toBeNull();
+
+    const soundEnvelope = {
+      protocolVersion: 1,
+      messageId: 'message_sound_01',
+      type: 'signal:sound',
+      ownerResource: 'synex_notify',
+      ownerEpoch: 1,
+      revision: 0,
+      payload: { tone: 'critical', volume: 100, browserBootId },
+    };
+    expect(parseGameEnvelope(soundEnvelope)).toEqual(soundEnvelope);
+    expect(parseGameEnvelope({ ...soundEnvelope, ownerResource: 'foreign_resource' })).toBeNull();
+    expect(parseGameEnvelope({ ...soundEnvelope, revision: 1 })).toBeNull();
+    expect(parseGameEnvelope({ ...soundEnvelope, payload: {
+      tone: 'critical', volume: 100, browserBootId, replay: true,
+    } })).toBeNull();
+  });
+
   it('requires the supported version, message type, owner epoch, and revision', () => {
     const envelope = {
       protocolVersion: 1,
@@ -134,6 +325,7 @@ describe('runtime protocol', () => {
       payload: descriptor,
     };
     expect(parseGameEnvelope(envelope)).not.toBeNull();
+    expect(parseGameEnvelope({ ...envelope, type: 'signal:upsert', payload: signalDescriptor })).not.toBeNull();
     expect(parseGameEnvelope({ ...envelope, protocolVersion: 2 })).toBeNull();
     expect(parseGameEnvelope({ ...envelope, type: 'runtime:execute' })).toBeNull();
     expect(parseGameEnvelope({ ...envelope, ownerEpoch: 0 })).toBeNull();

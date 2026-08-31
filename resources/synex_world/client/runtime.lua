@@ -689,6 +689,46 @@ exports('NearbyAnchors', function(options)
     return result
 end)
 
+local nearbyWorldKinds = {
+    anchor = 'anchors',
+    door = 'doors',
+    portal = 'portals',
+}
+
+exports('NearbyObjects', function(kind, options)
+    local listKey = nearbyWorldKinds[kind]
+    if listKey == nil or options ~= nil and type(options) ~= 'table' then return {} end
+    options = options or {}
+    for key in next, options do
+        if key ~= 'limit' and key ~= 'tag' and key ~= 'maxDistance' then return {} end
+    end
+    local limit = options.limit or MAX_ANCHOR_RESULTS
+    if not integerInRange(limit, 1, MAX_ANCHOR_RESULTS) then return {} end
+    local tag = options.tag
+    if tag ~= nil and not boundedString(tag, MAX_TAG_BYTES,
+        '^[a-z][a-z0-9_.%-]*$') then return {} end
+    local maxDistance = options.maxDistance
+    if maxDistance ~= nil and (not finiteNumber(maxDistance) or maxDistance < 0.0
+        or maxDistance > 1000.0) then return {} end
+
+    local result = {}
+    for _, object in ipairs(currentSlice[listKey] or {}) do
+        local distanceAccepted = maxDistance == nil
+            or finiteNumber(object.distance) and object.distance <= maxDistance
+        local tagAccepted = tag == nil
+        if tag ~= nil and type(object.tags) == 'table' then
+            for _, candidate in ipairs(object.tags) do
+                if candidate == tag then tagAccepted = true break end
+            end
+        end
+        if distanceAccepted and tagAccepted then
+            result[#result + 1] = copyValue(object)
+            if #result >= limit then break end
+        end
+    end
+    return result
+end)
+
 exports('ResolveCached', function(kind, key)
     if type(kind) ~= 'string' or not validWorldKey(key) then return nil end
     local index = cachedByKind[kind]

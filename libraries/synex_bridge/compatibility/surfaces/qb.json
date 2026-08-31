@@ -502,6 +502,45 @@
         "tests/compatibility/bridge-surface-coverage.test.ts"
       ],
       "adapterOperations": []
+    },
+    {
+      "name": "qb.client.notification",
+      "scope": "client",
+      "type": "method",
+      "status": "PARTIAL",
+      "legacyVersionRange": null,
+      "nativeMapping": "synex.notify.compatibility@1",
+      "requiredCapability": "synex.compat.qb.read",
+      "requiredAdapter": null,
+      "modes": [
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-notify-compatibility.test.ts"
+      ],
+      "adapterOperations": []
+    },
+    {
+      "name": "qb.client.notification_event",
+      "scope": "client",
+      "type": "event",
+      "status": "UNSUPPORTED",
+      "legacyVersionRange": null,
+      "nativeMapping": null,
+      "requiredCapability": null,
+      "requiredAdapter": null,
+      "modes": [
+        "strict",
+        "compat",
+        "silent"
+      ],
+      "deprecated": true,
+      "tests": [
+        "tests/compatibility/bridge-notify-compatibility.test.ts"
+      ],
+      "adapterOperations": []
     }
   ]
 }

@@ -13,6 +13,21 @@ describe('NUI transport', () => {
     expect(fetchImplementation).toHaveBeenCalledWith('https://synex_ui/runtime:ready', expect.objectContaining({ method: 'POST' }));
   });
 
+  it('allows only the fixed passive-signal visibility acknowledgement route', async () => {
+    const fetchImplementation = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      ok: true, data: { generation: 7, visible: 1 },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    const transport = createNuiTransport({ resourceName: 'synex_ui', fetchImplementation });
+    const result = await transport.post('runtime:signals:visible', {
+      requestId: 'signals_1', browserBootId: 'browser_1', generation: 7,
+      presentationRevision: 1, capacity: 4, signals: [],
+    });
+    expect(result).toMatchObject({ ok: true });
+    expect(fetchImplementation).toHaveBeenCalledWith(
+      'https://synex_ui/runtime:signals:visible', expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
   it('rejects a route outside the static allowlist before issuing fetch', async () => {
     const fetchImplementation = vi.fn<typeof fetch>();
     const transport = createNuiTransport({ fetchImplementation });

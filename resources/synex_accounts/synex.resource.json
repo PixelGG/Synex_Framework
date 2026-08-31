@@ -13,6 +13,7 @@
       "synex.events.durable",
       "synex.metrics.write",
       "synex.runtime.read",
+      "synex.security.signal.emit",
       "synex.control.provider.register"
     ]
   },

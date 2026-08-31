@@ -117,10 +117,13 @@ test('QB online lookup and enumeration return detached fenced player facades', a
 
 test('QB client player data and callback forms reuse the bounded native transport', async () => {
   const engine = await new LuaFactory().createEngine();
-  const source = await readFile(
+  const source = `${await readFile(
+    path.join(root, 'libraries', 'synex_bridge', 'compatibility_notify.lua'),
+    'utf8',
+  )}\n${await readFile(
     path.join(root, 'resources', 'synex_bridge_qb', 'client.lua'),
     'utf8',
-  );
+  )}`;
   try {
     await engine.doString(String.raw`
       registered, handlers, transportCalls = {}, {}, 0

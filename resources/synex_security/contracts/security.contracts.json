@@ -1,0 +1,231 @@
+{
+  "$schema": "../../../schemas/contract.schema.json",
+  "schema": 1,
+  "domain": "synex.security",
+  "contracts": [
+    {
+      "name": "synex.security.signal.report",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_security",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.security.signal.emit",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["namespace", "category", "detector", "code", "subject", "severity", "confidence", "evidenceClass", "correlationKey", "summary"],
+        "properties": {
+          "namespace": { "type": "string", "minLength": 3, "maxLength": 96, "pattern": "^[a-z][a-z0-9_.-]+$" },
+          "category": { "enum": ["transport", "economy", "inventory", "interaction", "movement", "combat", "player_integrity", "entity", "weapon", "world", "client_integrity", "resource_integrity", "connection"] },
+          "detector": { "type": "string", "minLength": 3, "maxLength": 64, "pattern": "^[a-z][a-z0-9_.-]+$" },
+          "code": { "type": "string", "minLength": 3, "maxLength": 64, "pattern": "^[A-Z][A-Z0-9_]+$" },
+          "subject": {
+            "type": "object",
+            "additionalProperties": false,
+            "anyOf": [
+              { "type": "object", "required": ["sessionId", "sourceGeneration"], "properties": { "sessionId": { "type": "string", "minLength": 3, "maxLength": 96 }, "sourceGeneration": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 } } },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "anyOf": [
+                  { "type": "object", "required": ["userId"], "properties": { "userId": { "type": "string", "minLength": 3, "maxLength": 96 } } },
+                  { "type": "object", "required": ["characterId"], "properties": { "characterId": { "type": "string", "minLength": 3, "maxLength": 96 } } },
+                  { "type": "object", "required": ["resourceName"], "properties": { "resourceName": { "type": "string", "minLength": 3, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$" } } }
+                ],
+                "properties": {
+                  "userId": { "type": "string", "minLength": 3, "maxLength": 96 },
+                  "characterId": { "type": "string", "minLength": 3, "maxLength": 96 },
+                  "resourceName": { "type": "string", "minLength": 3, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$" }
+                }
+              }
+            ],
+            "properties": {
+              "sessionId": { "type": "string", "minLength": 3, "maxLength": 96 },
+              "userId": { "type": "string", "minLength": 3, "maxLength": 96 },
+              "characterId": { "type": "string", "minLength": 3, "maxLength": 96 },
+              "resourceName": { "type": "string", "minLength": 3, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$" },
+              "source": { "type": "integer", "minimum": 1, "maximum": 65535 },
+              "sourceGeneration": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+            }
+          },
+          "severity": { "enum": ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "evidenceClass": { "const": "DOMAIN_AUTHORITATIVE" },
+          "correlationKey": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$" },
+          "summary": { "type": "string", "minLength": 3, "maxLength": 192 },
+          "traceId": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$" },
+          "requestId": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$" },
+          "rootEventId": { "type": "string", "minLength": 8, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$" },
+          "worldRefJson": { "type": "string", "minLength": 2, "maxLength": 1024 },
+          "entityRefJson": { "type": "string", "minLength": 2, "maxLength": 1024 },
+          "evidenceJson": { "type": "string", "minLength": 2, "maxLength": 4096 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["signalId", "accepted", "deduplicated"],
+        "properties": {
+          "signalId": { "type": "string", "minLength": 8, "maxLength": 64 },
+          "accepted": { "const": true },
+          "deduplicated": { "type": "boolean" },
+          "caseId": { "type": "string", "minLength": 8, "maxLength": 64 }
+        }
+      },
+      "errors": ["SECURITY_SIGNAL_INVALID", "SECURITY_SUBJECT_INVALID", "SECURITY_SUBJECT_STALE", "SECURITY_NAMESPACE_DENIED", "SECURITY_OWNER_STALE", "SECURITY_RATE_LIMITED", "SECURITY_PAYLOAD_TOO_LARGE", "SECURITY_VALUE_INVALID", "SECURITY_ID_INVALID", "SECURITY_CLOCK_INVALID", "SECURITY_UNAVAILABLE", "STALE_RESOURCE"],
+      "idempotent": false,
+      "rateLimit": { "capacity": 40, "refillPerSecond": 10 }
+    },
+    {
+      "name": "synex.security.expectation.register",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_security",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.security.expectation.manage",
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["namespace", "kind", "subject", "reason", "ttlMs", "constraintsJson"],
+        "properties": {
+          "namespace": { "type": "string", "minLength": 3, "maxLength": 96, "pattern": "^[a-z][a-z0-9_.-]+$" },
+          "kind": { "enum": ["combat.invulnerable", "combat.passive", "visibility.hidden", "movement.teleport", "movement.noclip", "camera.spectate", "camera.freecam", "player.model", "weapon.grant", "entity.spawn"] },
+          "subject": { "type": "object", "additionalProperties": false, "anyOf": [{ "type": "object", "required": ["sessionId", "sourceGeneration"], "properties": { "sessionId": { "type": "string", "minLength": 3, "maxLength": 96 }, "sourceGeneration": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 } } }, { "type": "object", "additionalProperties": false, "anyOf": [{ "type": "object", "required": ["userId"], "properties": { "userId": { "type": "string", "minLength": 3, "maxLength": 96 } } }, { "type": "object", "required": ["characterId"], "properties": { "characterId": { "type": "string", "minLength": 3, "maxLength": 96 } } }, { "type": "object", "required": ["resourceName"], "properties": { "resourceName": { "type": "string", "minLength": 3, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$" } } }], "properties": { "userId": { "type": "string", "minLength": 3, "maxLength": 96 }, "characterId": { "type": "string", "minLength": 3, "maxLength": 96 }, "resourceName": { "type": "string", "minLength": 3, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$" } } }], "properties": { "sessionId": { "type": "string", "minLength": 3, "maxLength": 96 }, "userId": { "type": "string", "minLength": 3, "maxLength": 96 }, "characterId": { "type": "string", "minLength": 3, "maxLength": 96 }, "resourceName": { "type": "string", "minLength": 3, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$" }, "source": { "type": "integer", "minimum": 1, "maximum": 65535 }, "sourceGeneration": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 } } },
+          "reason": { "type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[a-z][a-z0-9_.-]+$" },
+          "ttlMs": { "type": "integer", "minimum": 100, "maximum": 300000 },
+          "constraintsJson": { "type": "string", "minLength": 2, "maxLength": 4096 },
+          "traceId": { "type": "string", "minLength": 8, "maxLength": 64 }
+        }
+      },
+      "output": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["expectationId", "kind", "ownerResource", "ownerEpoch", "revision", "expiresAtMs"],
+        "properties": {
+          "expectationId": { "type": "string", "minLength": 8, "maxLength": 64 },
+          "kind": { "enum": ["combat.invulnerable", "combat.passive", "visibility.hidden", "movement.teleport", "movement.noclip", "camera.spectate", "camera.freecam", "player.model", "weapon.grant", "entity.spawn"] },
+          "ownerResource": { "type": "string", "minLength": 3, "maxLength": 64 },
+          "ownerEpoch": { "type": "integer", "minimum": 1 },
+          "revision": { "type": "integer", "minimum": 1 },
+          "expiresAtMs": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "errors": ["SECURITY_EXPECTATION_INVALID", "SECURITY_EXPECTATION_STALE", "SECURITY_EXPECTATION_LIMIT", "SECURITY_EXPECTATION_CONFLICT", "SECURITY_EXPECTATION_DENIED", "SECURITY_OWNER_STALE", "SECURITY_ID_INVALID", "SECURITY_VALUE_INVALID", "SECURITY_RATE_LIMITED", "SECURITY_UNAVAILABLE", "STALE_RESOURCE"],
+      "idempotent": false,
+      "rateLimit": { "capacity": 24, "refillPerSecond": 6 }
+    },
+    {
+      "name": "synex.security.expectation.revoke",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_security",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.security.expectation.manage",
+      "input": { "type": "object", "additionalProperties": false, "required": ["expectationId", "revision"], "properties": { "expectationId": { "type": "string", "minLength": 8, "maxLength": 64 }, "revision": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }, "reason": { "type": "string", "minLength": 3, "maxLength": 128 } } },
+      "output": { "type": "object", "additionalProperties": false, "required": ["expectationId", "revoked"], "properties": { "expectationId": { "type": "string", "minLength": 8, "maxLength": 64 }, "revoked": { "const": true } } },
+      "errors": ["SECURITY_EXPECTATION_NOT_FOUND", "SECURITY_EXPECTATION_INVALID", "SECURITY_EXPECTATION_DENIED", "SECURITY_EXPECTATION_STALE", "SECURITY_OWNER_STALE", "SECURITY_RATE_LIMITED", "SECURITY_UNAVAILABLE", "STALE_RESOURCE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 24, "refillPerSecond": 6 }
+    },
+    {
+      "name": "synex.security.expectation.list",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_security",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.security.case.read",
+      "input": { "type": "object", "additionalProperties": false, "required": ["subjectKey", "limit"], "properties": { "subjectKey": { "type": "string", "minLength": 3, "maxLength": 256 }, "limit": { "type": "integer", "minimum": 1, "maximum": 50 }, "cursor": { "type": "integer", "minimum": 0, "maximum": 4096 } } },
+      "output": { "type": "object", "additionalProperties": false, "required": ["itemsJson", "total", "truncated"], "properties": { "itemsJson": { "type": "string", "maxLength": 16384 }, "total": { "type": "integer", "minimum": 0 }, "truncated": { "type": "boolean" }, "nextCursor": { "type": "integer", "minimum": 1, "maximum": 4096 } } },
+      "errors": ["SECURITY_INVALID_REQUEST", "SECURITY_EXPECTATION_INVALID", "SECURITY_RATE_LIMITED", "SECURITY_VALUE_INVALID", "SECURITY_UNAVAILABLE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 20, "refillPerSecond": 5 }
+    },
+    {
+      "name": "synex.security.assessment.get",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_security",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.security.case.read",
+      "input": { "type": "object", "additionalProperties": false, "required": ["subjectKey"], "properties": { "subjectKey": { "type": "string", "minLength": 3, "maxLength": 160 } } },
+      "output": { "type": "object", "additionalProperties": false, "required": ["subjectKey", "severity", "confidence", "status", "activeExpectations", "hypothesesJson"], "properties": { "subjectKey": { "type": "string", "minLength": 3, "maxLength": 160 }, "severity": { "enum": ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"] }, "confidence": { "type": "number", "minimum": 0, "maximum": 1 }, "status": { "enum": ["CLEAR", "OBSERVE", "REVIEW", "ACTION"] }, "activeExpectations": { "type": "integer", "minimum": 0 }, "hypothesesJson": { "type": "string", "maxLength": 16384 } } },
+      "errors": ["SECURITY_SUBJECT_INVALID", "SECURITY_INVALID_REQUEST", "SECURITY_RATE_LIMITED", "SECURITY_VALUE_INVALID", "SECURITY_UNAVAILABLE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 20, "refillPerSecond": 5 }
+    },
+    {
+      "name": "synex.security.case.get",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_security",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.security.case.read",
+      "input": { "type": "object", "additionalProperties": false, "required": ["caseId"], "properties": { "caseId": { "type": "string", "minLength": 8, "maxLength": 64 } } },
+      "output": { "type": "object", "additionalProperties": false, "required": ["caseId", "status", "category", "severity", "confidence", "signalCount", "enforcementCount", "openedAt", "updatedAt", "detailJson"], "properties": { "caseId": { "type": "string", "minLength": 8, "maxLength": 64 }, "status": { "enum": ["OPEN", "MONITORING", "REVIEW", "ENFORCED", "CLOSED"] }, "category": { "enum": ["transport", "economy", "inventory", "interaction", "movement", "combat", "player_integrity", "entity", "weapon", "world", "client_integrity", "resource_integrity", "connection"] }, "severity": { "enum": ["INFO", "LOW", "MEDIUM", "HIGH", "CRITICAL"] }, "confidence": { "type": "number", "minimum": 0, "maximum": 1 }, "signalCount": { "type": "integer", "minimum": 0 }, "enforcementCount": { "type": "integer", "minimum": 0 }, "openedAt": { "type": "string", "minLength": 20, "maxLength": 32 }, "updatedAt": { "type": "string", "minLength": 20, "maxLength": 32 }, "detailJson": { "type": "string", "maxLength": 16384 } } },
+      "errors": ["SECURITY_CASE_NOT_FOUND", "SECURITY_INVALID_REQUEST", "SECURITY_RATE_LIMITED", "SECURITY_PERSISTENCE_INVALID", "SECURITY_VALUE_INVALID", "SECURITY_UNAVAILABLE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 20, "refillPerSecond": 5 }
+    },
+    {
+      "name": "synex.security.health.get",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_security",
+      "stability": "experimental",
+      "network": "none",
+      "capability": "synex.security.diagnostics.read",
+      "input": { "type": "object", "additionalProperties": false, "properties": {} },
+      "output": { "type": "object", "additionalProperties": false, "required": ["state", "detectors", "openCases", "activeExpectations", "sentinelSources", "persistenceBacklog", "reasonsJson"], "properties": { "state": { "enum": ["READY", "DEGRADED", "UNHEALTHY"] }, "detectors": { "type": "integer", "minimum": 0 }, "openCases": { "type": "integer", "minimum": 0 }, "activeExpectations": { "type": "integer", "minimum": 0 }, "sentinelSources": { "type": "integer", "minimum": 0 }, "persistenceBacklog": { "type": "integer", "minimum": 0 }, "reasonsJson": { "type": "string", "minLength": 2, "maxLength": 2048 } } },
+      "errors": ["SECURITY_RATE_LIMITED", "SECURITY_UNAVAILABLE"],
+      "idempotent": true,
+      "rateLimit": { "capacity": 10, "refillPerSecond": 2 }
+    },
+    {
+      "name": "synex.security.sentinel.report",
+      "version": "1.0.0",
+      "kind": "rpc",
+      "provider": "synex_security",
+      "stability": "internal",
+      "network": "client-to-server",
+      "sessionStates": ["ACTIVE"],
+      "input": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["clientEpoch", "sequence", "sampledAtMs", "challengeRef", "sample"],
+        "properties": {
+          "clientEpoch": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "sequence": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "sampledAtMs": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+          "challengeRef": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "sample": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["position", "velocity", "camera", "health", "armor", "visible", "alpha", "model", "weapon", "movement"],
+            "properties": {
+              "position": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "number", "minimum": -20000, "maximum": 20000 } },
+              "velocity": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "number", "minimum": -1000, "maximum": 1000 } },
+              "camera": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "number", "minimum": -20000, "maximum": 20000 } },
+              "health": { "type": "integer", "minimum": 0, "maximum": 1000 },
+              "armor": { "type": "integer", "minimum": 0, "maximum": 1000 },
+              "visible": { "type": "boolean" },
+              "alpha": { "type": "integer", "minimum": 0, "maximum": 255 },
+              "model": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+              "weapon": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+              "movement": { "type": "object", "additionalProperties": false, "required": ["inVehicle", "ragdoll", "falling", "parachute"], "properties": { "inVehicle": { "type": "boolean" }, "ragdoll": { "type": "boolean" }, "falling": { "type": "boolean" }, "parachute": { "type": "integer", "minimum": -1, "maximum": 3 } } }
+            }
+          }
+        }
+      },
+      "output": { "type": "object", "additionalProperties": false, "required": ["accepted", "duplicate", "nextChallengeRef", "nextReportAfterMs"], "properties": { "accepted": { "const": true }, "duplicate": { "type": "boolean" }, "nextChallengeRef": { "type": "string", "minLength": 8, "maxLength": 64 }, "nextReportAfterMs": { "type": "integer", "minimum": 1000, "maximum": 30000 } } },
+      "errors": ["SECURITY_SENTINEL_INVALID", "SECURITY_SENTINEL_REPLAY", "SECURITY_SENTINEL_STALE", "SECURITY_RATE_LIMITED", "SECURITY_UNAVAILABLE"],
+      "idempotent": false,
+      "rateLimit": { "capacity": 4, "refillPerSecond": 1 }
+    }
+  ]
+}

@@ -1008,11 +1008,167 @@ SynexLuaGeneratedContracts = {
       ["provider"] = "synex_core",
       ["version"] = "1.0.0"
     },
+    ["synex.interact.bundle.register"] = {
+      ["kind"] = "service",
+      ["name"] = "synex.interact.bundle.register",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.bundle.replace"] = {
+      ["kind"] = "service",
+      ["name"] = "synex.interact.bundle.replace",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.bundle.unregister"] = {
+      ["kind"] = "service",
+      ["name"] = "synex.interact.bundle.unregister",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.discovery.entities"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.interact.discovery.entities",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.discovery.snapshot"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.interact.discovery.snapshot",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.graph.ack"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.interact.graph.ack",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.lease.activate"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.interact.lease.activate",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.lease.request"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.interact.lease.request",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.metrics.report"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.interact.metrics.report",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.session.cancel"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.interact.session.cancel",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.session.join"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.interact.session.join",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.session.leave"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.interact.session.leave",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.notify.action.invoke"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.notify.action.invoke",
+      ["provider"] = "synex_notify",
+      ["version"] = "1.0.0"
+    },
+    ["synex.notify.command.pull"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.notify.command.pull",
+      ["provider"] = "synex_notify",
+      ["version"] = "1.0.0"
+    },
+    ["synex.notify.dismiss"] = {
+      ["kind"] = "service",
+      ["name"] = "synex.notify.dismiss",
+      ["provider"] = "synex_notify",
+      ["version"] = "1.0.0"
+    },
+    ["synex.notify.metrics.report"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.notify.metrics.report",
+      ["provider"] = "synex_notify",
+      ["version"] = "1.0.0"
+    },
+    ["synex.notify.send"] = {
+      ["kind"] = "service",
+      ["name"] = "synex.notify.send",
+      ["provider"] = "synex_notify",
+      ["version"] = "1.0.0"
+    },
+    ["synex.notify.update"] = {
+      ["kind"] = "service",
+      ["name"] = "synex.notify.update",
+      ["provider"] = "synex_notify",
+      ["version"] = "1.0.0"
+    },
     ["synex.runtime.status"] = {
       ["kind"] = "service",
       ["name"] = "synex.runtime.status",
       ["provider"] = "synex_core",
       ["version"] = "2.0.0"
+    },
+    ["synex.security.assessment.get"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.security.assessment.get",
+      ["provider"] = "synex_security",
+      ["version"] = "1.0.0"
+    },
+    ["synex.security.case.get"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.security.case.get",
+      ["provider"] = "synex_security",
+      ["version"] = "1.0.0"
+    },
+    ["synex.security.expectation.list"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.security.expectation.list",
+      ["provider"] = "synex_security",
+      ["version"] = "1.0.0"
+    },
+    ["synex.security.expectation.register"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.security.expectation.register",
+      ["provider"] = "synex_security",
+      ["version"] = "1.0.0"
+    },
+    ["synex.security.expectation.revoke"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.security.expectation.revoke",
+      ["provider"] = "synex_security",
+      ["version"] = "1.0.0"
+    },
+    ["synex.security.health.get"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.security.health.get",
+      ["provider"] = "synex_security",
+      ["version"] = "1.0.0"
+    },
+    ["synex.security.sentinel.report"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.security.sentinel.report",
+      ["provider"] = "synex_security",
+      ["version"] = "1.0.0"
+    },
+    ["synex.security.signal.report"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.security.signal.report",
+      ["provider"] = "synex_security",
+      ["version"] = "1.0.0"
     },
     ["synex.world.door.set_state"] = {
       ["kind"] = "rpc",
@@ -1057,7 +1213,7 @@ SynexLuaGeneratedContracts = {
       ["version"] = "1.0.0"
     }
   },
-  ["sourceHash"] = "d221dcd6ed86651cadea6bed9fed5ab2d92470d4727475fa81e9454a194f7d19",
+  ["sourceHash"] = "ed52744d1b75972bf22cd978612b61f88fbe1885ad3deb223e75474b0b0183e9",
   ["versions"] = {
     ["synex.accounts.access.check@1.0.0"] = {
       ["kind"] = "rpc",
@@ -2073,6 +2229,114 @@ SynexLuaGeneratedContracts = {
       ["provider"] = "synex_core",
       ["version"] = "1.0.0"
     },
+    ["synex.interact.bundle.register@1.0.0"] = {
+      ["kind"] = "service",
+      ["name"] = "synex.interact.bundle.register",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.bundle.replace@1.0.0"] = {
+      ["kind"] = "service",
+      ["name"] = "synex.interact.bundle.replace",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.bundle.unregister@1.0.0"] = {
+      ["kind"] = "service",
+      ["name"] = "synex.interact.bundle.unregister",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.discovery.entities@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.interact.discovery.entities",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.discovery.snapshot@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.interact.discovery.snapshot",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.graph.ack@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.interact.graph.ack",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.lease.activate@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.interact.lease.activate",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.lease.request@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.interact.lease.request",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.metrics.report@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.interact.metrics.report",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.session.cancel@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.interact.session.cancel",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.session.join@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.interact.session.join",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.interact.session.leave@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.interact.session.leave",
+      ["provider"] = "synex_interact",
+      ["version"] = "1.0.0"
+    },
+    ["synex.notify.action.invoke@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.notify.action.invoke",
+      ["provider"] = "synex_notify",
+      ["version"] = "1.0.0"
+    },
+    ["synex.notify.command.pull@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.notify.command.pull",
+      ["provider"] = "synex_notify",
+      ["version"] = "1.0.0"
+    },
+    ["synex.notify.dismiss@1.0.0"] = {
+      ["kind"] = "service",
+      ["name"] = "synex.notify.dismiss",
+      ["provider"] = "synex_notify",
+      ["version"] = "1.0.0"
+    },
+    ["synex.notify.metrics.report@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.notify.metrics.report",
+      ["provider"] = "synex_notify",
+      ["version"] = "1.0.0"
+    },
+    ["synex.notify.send@1.0.0"] = {
+      ["kind"] = "service",
+      ["name"] = "synex.notify.send",
+      ["provider"] = "synex_notify",
+      ["version"] = "1.0.0"
+    },
+    ["synex.notify.update@1.0.0"] = {
+      ["kind"] = "service",
+      ["name"] = "synex.notify.update",
+      ["provider"] = "synex_notify",
+      ["version"] = "1.0.0"
+    },
     ["synex.runtime.status@1.0.0"] = {
       ["kind"] = "service",
       ["name"] = "synex.runtime.status",
@@ -2084,6 +2348,54 @@ SynexLuaGeneratedContracts = {
       ["name"] = "synex.runtime.status",
       ["provider"] = "synex_core",
       ["version"] = "2.0.0"
+    },
+    ["synex.security.assessment.get@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.security.assessment.get",
+      ["provider"] = "synex_security",
+      ["version"] = "1.0.0"
+    },
+    ["synex.security.case.get@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.security.case.get",
+      ["provider"] = "synex_security",
+      ["version"] = "1.0.0"
+    },
+    ["synex.security.expectation.list@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.security.expectation.list",
+      ["provider"] = "synex_security",
+      ["version"] = "1.0.0"
+    },
+    ["synex.security.expectation.register@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.security.expectation.register",
+      ["provider"] = "synex_security",
+      ["version"] = "1.0.0"
+    },
+    ["synex.security.expectation.revoke@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.security.expectation.revoke",
+      ["provider"] = "synex_security",
+      ["version"] = "1.0.0"
+    },
+    ["synex.security.health.get@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.security.health.get",
+      ["provider"] = "synex_security",
+      ["version"] = "1.0.0"
+    },
+    ["synex.security.sentinel.report@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.security.sentinel.report",
+      ["provider"] = "synex_security",
+      ["version"] = "1.0.0"
+    },
+    ["synex.security.signal.report@1.0.0"] = {
+      ["kind"] = "rpc",
+      ["name"] = "synex.security.signal.report",
+      ["provider"] = "synex_security",
+      ["version"] = "1.0.0"
     },
     ["synex.world.door.set_state@1.0.0"] = {
       ["kind"] = "rpc",

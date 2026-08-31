@@ -619,23 +619,10 @@ factories.bootstrapApi = function(deps)
                 end)
             end
         }
-        facade.Diagnostics = {
-            run = function()
-                return guarded(caller, epoch, 'synex.runtime.read', 'Diagnostics.run', function()
-                    return runtime:doctor()
-                end)
-            end,
-            getControlSnapshot = function()
-                return guarded(caller, epoch, 'synex.runtime.read', 'Diagnostics.getControlSnapshot', function()
-                    return runtime:controlSnapshot()
-                end)
-            end,
-            search = function(request)
-                return guarded(caller, epoch, 'synex.audit.summary', 'Diagnostics.search', function()
-                    return reliability.audit:search(request)
-                end)
-            end
-        }
+        facade.Diagnostics = factories.bootstrapApiDiagnostics({
+            runtime = runtime, reliability = reliability, security = security,
+            guarded = guarded, caller = caller, epoch = epoch,
+        })
         for _, namespace in pairs(facade) do
             if type(namespace) == 'table' then
                 for name, handler in pairs(namespace) do

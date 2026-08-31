@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "key": "synex_interact:terminal",
+  "revision": 1,
+  "smartObjects": [
+    {
+      "key": "synex_interact:terminal",
+      "binding": {
+        "type": "worldAnchor",
+        "key": "synex_interact:terminal_anchor"
+      },
+      "slots": [
+        {
+          "key": "operator",
+          "interactionRadius": 2.0,
+          "facingTolerance": 100,
+          "capacity": 1
+        }
+      ],
+      "activities": ["synex_interact:inspect_terminal"],
+      "presentation": {
+        "label": "Diagnostic terminal"
+      }
+    }
+  ],
+  "intents": [
+    {
+      "key": "synex_interact:inspect_terminal",
+      "smartObjectKey": "synex_interact:terminal",
+      "verb": "inspect",
+      "label": "Inspect terminal",
+      "basePriority": 10,
+      "specificity": 10,
+      "trigger": "primary",
+      "slotSelector": "operator",
+      "visibilityConditions": [],
+      "executionPolicy": {
+        "maximumDistance": 2.0,
+        "leaseTtlMs": 2500,
+        "maximumLifetimeMs": 10000,
+        "lockChannels": ["actor.hands"],
+        "cancel": {
+          "cancelOnMove": true,
+          "actorMoveDistance": 0.75,
+          "cancelOnDamage": true,
+          "cancelOnVehicleChange": true,
+          "cancelOnTargetMove": true,
+          "targetMoveDistance": 0.5
+        }
+      },
+      "actionGraphRef": "synex_interact:inspect_terminal",
+      "presentation": {
+        "hint": "INTERACT_PRIMARY"
+      },
+      "participants": [
+        {
+          "role": "operator",
+          "required": true,
+          "slotKey": "operator",
+          "capacity": 1,
+          "lossPolicy": "ABORT"
+        }
+      ]
+    }
+  ],
+  "graphs": [
+    {
+      "key": "synex_interact:inspect_terminal",
+      "entry": "verify",
+      "timeoutMs": 10000,
+      "locks": ["actor.hands"],
+      "cancelPolicy": {
+        "cancelOnDeath": true,
+        "cancelOnRagdoll": true,
+        "cancelOnTargetLoss": true,
+        "targetLossGraceMs": 500,
+        "cancelOnWorldChange": true,
+        "cancelDistance": 1.75,
+        "distanceHysteresis": 0.15,
+        "distanceGraceMs": 250
+      },
+      "participantLossPolicy": "ABORT",
+      "nodes": [
+        {
+          "key": "verify",
+          "type": "verifyTarget",
+          "next": "progress"
+        },
+        {
+          "key": "progress",
+          "type": "progress",
+          "durationMs": 700,
+          "presentation": {
+            "label": "Inspecting terminal",
+            "mode": "timed",
+            "cancellable": true
+          },
+          "next": "complete"
+        },
+        {
+          "key": "complete",
+          "type": "complete"
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "purpose": "bounded integration fixture",
+    "persistentSideEffects": false
+  }
+}

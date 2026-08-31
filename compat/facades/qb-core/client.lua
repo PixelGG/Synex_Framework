@@ -18,3 +18,9 @@ exports('GetPlayerData', function()
     if not caller then return nil end
     return exports.synex_bridge_qb:GetPlayerDataForConsumer(caller)
 end)
+exports('Notify', function(text, notifyType, durationMs, icon)
+    local caller = consumer()
+    if not caller then return nil end
+    return exports.synex_bridge_qb:NotifyForConsumer(
+        caller, text, notifyType, durationMs, icon)
+end)

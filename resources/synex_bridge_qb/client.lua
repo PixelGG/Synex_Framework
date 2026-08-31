@@ -3,10 +3,14 @@ local transport = assert(SynexBridgeClient,
     requestEvent = 'synex_bridge_qb:server:callback',
     responseEvent = 'synex_bridge_qb:client:callback',
 })
+local notifyCompatibility = assert(SynexBridgeNotify,
+    'synex_bridge notification compatibility library is unavailable')
 
 local FACADE_RESOURCE = 'qb-core'
 local currentPlayerData = {}
-local authorizedConsumers = { playerData = {}, callbacks = {} }
+local authorizedConsumers = {
+    playerData = {}, callbacks = {}, notifications = {},
+}
 
 local function isCallable(value)
     if type(value) == 'function' then return true end
@@ -63,15 +67,21 @@ end
 local function readClientAccess(value)
     if type(value) ~= 'table' then return nil end
     for key in next, value do
-        if key ~= 'playerData' and key ~= 'callbacks' then return nil end
+        if key ~= 'playerData' and key ~= 'callbacks'
+            and key ~= 'notifications' then return nil end
     end
     local playerData = consumerSet(rawget(value, 'playerData'))
     local callbacks = consumerSet(rawget(value, 'callbacks'))
-    if not playerData or not callbacks then return nil end
+    local notifications = consumerSet(rawget(value, 'notifications') or {})
+    if not playerData or not callbacks or not notifications then return nil end
     for consumer in pairs(callbacks) do
         if playerData[consumer] ~= true then return nil end
     end
-    return { playerData = playerData, callbacks = callbacks }
+    return {
+        playerData = playerData,
+        callbacks = callbacks,
+        notifications = notifications,
+    }
 end
 
 local function hasAccess(consumer, surface)
@@ -116,6 +126,11 @@ local function triggerCallback(consumer, name, ...)
     return response
 end
 
+local function notify(consumer, text, notifyType, durationMs, icon)
+    if not hasAccess(consumer, 'notifications') then return nil end
+    return notifyCompatibility.qb(consumer, text, notifyType, durationMs, icon)
+end
+
 local function coreObject(consumer, filters)
     local functions = {}
     if hasAccess(consumer, 'playerData') then
@@ -126,6 +141,11 @@ local function coreObject(consumer, filters)
     if hasAccess(consumer, 'callbacks') then
         functions.TriggerCallback = function(name, ...)
             return triggerCallback(consumer, name, ...)
+        end
+    end
+    if hasAccess(consumer, 'notifications') then
+        functions.Notify = function(text, notifyType, durationMs, icon)
+            return notify(consumer, text, notifyType, durationMs, icon)
         end
     end
     if next(functions) == nil then return nil end
@@ -151,15 +171,20 @@ RegisterNetEvent('synex_bridge_qb:client:projection', function(
     action, playerData, clientAccess)
     if source ~= 65535 then return end
     local access = action == 'replace' and readClientAccess(clientAccess) or nil
-    if access and next(access.playerData) ~= nil and type(playerData) == 'table' then
+    if access and (next(access.playerData) ~= nil
+        or next(access.notifications) ~= nil) and type(playerData) == 'table' then
         currentPlayerData = copy(playerData)
         authorizedConsumers = access
     elseif action == 'clear' then
         currentPlayerData = {}
-        authorizedConsumers = { playerData = {}, callbacks = {} }
+        authorizedConsumers = {
+            playerData = {}, callbacks = {}, notifications = {},
+        }
     elseif action == 'replace' then
         currentPlayerData = {}
-        authorizedConsumers = { playerData = {}, callbacks = {} }
+        authorizedConsumers = {
+            playerData = {}, callbacks = {}, notifications = {},
+        }
     end
 end)
 
@@ -169,11 +194,21 @@ end)
 exports('GetPlayerData', function(callback)
     return getPlayerData(GetInvokingResource(), callback)
 end)
+exports('Notify', function(text, notifyType, durationMs, icon)
+    return notify(GetInvokingResource(), text, notifyType, durationMs, icon)
+end)
 exports('GetCoreObjectForConsumer', function(consumer, filters)
-    if GetInvokingResource() ~= FACADE_RESOURCE or not validConsumer(consumer) then return nil end
+    if GetInvokingResource() ~= FACADE_RESOURCE
+        or not validConsumer(consumer) then return nil end
     return coreObject(consumer, filters)
 end)
 exports('GetPlayerDataForConsumer', function(consumer, callback)
-    if GetInvokingResource() ~= FACADE_RESOURCE or not validConsumer(consumer) then return nil end
+    if GetInvokingResource() ~= FACADE_RESOURCE
+        or not validConsumer(consumer) then return nil end
     return getPlayerData(consumer, callback)
+end)
+exports('NotifyForConsumer', function(consumer, text, notifyType, durationMs, icon)
+    if GetInvokingResource() ~= FACADE_RESOURCE
+        or not validConsumer(consumer) then return nil end
+    return notify(consumer, text, notifyType, durationMs, icon)
 end)

@@ -1,0 +1,265 @@
+{
+  "$schema": "../../schemas/resource.schema.json",
+  "schema": 1,
+  "name": "synex_interact",
+  "version": "0.1.0",
+  "synex": "^1.0.0",
+  "critical": false,
+  "capabilities": {
+    "request": [
+      "synex.audit.append",
+      "synex.capabilities.delegate",
+      "synex.compat.adapter.register",
+      "synex.control.provider.register",
+      "synex.entities.context.validate",
+      "synex.entities.query",
+      "synex.entities.read",
+      "synex.identity.read",
+      "synex.metrics.write",
+      "synex.permissions.read",
+      "synex.runtime.read",
+      "synex.security.signal.emit",
+      "synex.world.query",
+      "synex.world.read"
+    ]
+  },
+  "controlProvider": {
+    "schemaVersion": 1,
+    "namespace": "interact",
+    "label": "Interact",
+    "category": "foundation",
+    "version": "1.0.0",
+    "operations": ["summary", "health", "list", "inspect", "metrics", "findings"],
+    "views": [
+      {
+        "id": "overview",
+        "label": "Interaction overview",
+        "operation": "summary",
+        "presentation": "key-value",
+        "order": 10,
+        "description": "Bounded bundle, smart-object, lease, session and graph totals.",
+        "accessClass": "general"
+      },
+      {
+        "id": "health",
+        "label": "Interaction health",
+        "operation": "health",
+        "presentation": "key-value",
+        "order": 20,
+        "description": "Current Core, World, Entities and UI dependency health.",
+        "accessClass": "general"
+      },
+      {
+        "id": "bundles",
+        "label": "Bundles",
+        "operation": "list",
+        "presentation": "table",
+        "order": 30,
+        "description": "Cursor-bounded active Interaction bundles and revisions.",
+        "accessClass": "general"
+      },
+      {
+        "id": "providers",
+        "label": "Providers",
+        "operation": "list",
+        "presentation": "table",
+        "order": 40,
+        "description": "Resource-owned candidate, condition and action providers.",
+        "accessClass": "general"
+      },
+      {
+        "id": "smart_objects",
+        "label": "Smart objects",
+        "operation": "list",
+        "presentation": "table",
+        "order": 50,
+        "description": "Bounded active Smart Object definitions and slot counts.",
+        "accessClass": "general"
+      },
+      {
+        "id": "slots",
+        "label": "Slots",
+        "operation": "list",
+        "presentation": "table",
+        "order": 60,
+        "description": "Current bounded slot reservation and occupancy pressure.",
+        "accessClass": "general"
+      },
+      {
+        "id": "active_leases",
+        "label": "Active leases",
+        "operation": "list",
+        "presentation": "table",
+        "order": 70,
+        "description": "Redacted actor-, target-, intent- and revision-bound lease aggregates.",
+        "accessClass": "general"
+      },
+      {
+        "id": "sessions",
+        "label": "Interaction sessions",
+        "operation": "list",
+        "presentation": "table",
+        "order": 80,
+        "description": "Bounded single- and multi-actor interaction sessions.",
+        "accessClass": "general"
+      },
+      {
+        "id": "graphs",
+        "label": "Action graphs",
+        "operation": "list",
+        "presentation": "table",
+        "order": 90,
+        "description": "Compiled graph definitions without domain request payloads.",
+        "accessClass": "general"
+      },
+      {
+        "id": "denials",
+        "label": "Security denials",
+        "operation": "list",
+        "presentation": "table",
+        "order": 95,
+        "description": "Bounded rejection codes without player or target identifiers.",
+        "accessClass": "security"
+      },
+      {
+        "id": "trace",
+        "label": "Interaction trace replay",
+        "operation": "list",
+        "presentation": "timeline",
+        "order": 97,
+        "description": "Exact development trace replay from the bounded in-process ring.",
+        "accessClass": "audit",
+        "input": {
+          "fields": [{
+            "key": "trace_id",
+            "label": "Trace ID",
+            "source": "filter",
+            "type": "string",
+            "format": "identifier",
+            "required": true,
+            "minLength": 8,
+            "maxLength": 64
+          }]
+        }
+      },
+      {
+        "id": "object",
+        "label": "Smart Object inspector",
+        "operation": "inspect",
+        "presentation": "detail",
+        "order": 100,
+        "description": "Inspect one exact namespaced Smart Object without player data.",
+        "accessClass": "general",
+        "input": {
+          "fields": [{
+            "key": "id",
+            "label": "Namespaced key",
+            "source": "id",
+            "type": "string",
+            "format": "identifier",
+            "required": true,
+            "minLength": 3,
+            "maxLength": 128
+          }]
+        }
+      },
+      {
+        "id": "graph",
+        "label": "Graph inspector",
+        "operation": "inspect",
+        "presentation": "graph",
+        "order": 110,
+        "description": "Inspect one bounded compiled Action Graph definition.",
+        "accessClass": "general",
+        "input": {
+          "fields": [{
+            "key": "id",
+            "label": "Namespaced key",
+            "source": "id",
+            "type": "string",
+            "format": "identifier",
+            "required": true,
+            "minLength": 3,
+            "maxLength": 128
+          }]
+        }
+      },
+      {
+        "id": "performance",
+        "label": "Performance",
+        "operation": "metrics",
+        "presentation": "metrics",
+        "order": 120,
+        "description": "Bounded sensor, candidate, lease, graph and evaluator metrics.",
+        "accessClass": "general"
+      },
+      {
+        "id": "findings",
+        "label": "Findings",
+        "operation": "findings",
+        "presentation": "findings",
+        "order": 130,
+        "description": "Bundle, provider, reservation, lease, lock and graph findings.",
+        "accessClass": "general"
+      }
+    ]
+  },
+  "interactionBundles": ["interactions/terminal.interact.json"],
+  "services": {
+    "provide": ["synex.interact@1"],
+    "require": ["synex.runtime@1", "synex.entities@1", "synex.world@1"],
+    "optional": []
+  },
+  "contracts": {
+    "provide": [
+      "synex.interact.bundle.register",
+      "synex.interact.bundle.replace",
+      "synex.interact.bundle.unregister",
+      "synex.interact.discovery.snapshot",
+      "synex.interact.discovery.entities",
+      "synex.interact.lease.request",
+      "synex.interact.lease.activate",
+      "synex.interact.session.cancel",
+      "synex.interact.session.join",
+      "synex.interact.session.leave",
+      "synex.interact.graph.ack",
+      "synex.interact.metrics.report"
+    ],
+    "consume": [
+      "synex.entities.get",
+      "synex.entities.query.by_net_id",
+      "synex.entities.query.nearby",
+      "synex.entities.context.validate"
+    ]
+  },
+  "events": {
+    "publish": ["synex.interact.*"],
+    "subscribe": []
+  },
+  "hooks": {
+    "register": [],
+    "run": []
+  },
+  "dependencies": {
+    "required": [
+      { "name": "synex_core", "version": ">=0.1.0" },
+      { "name": "synex_entities", "version": ">=0.1.0" },
+      { "name": "synex_world", "version": ">=0.1.0" },
+      { "name": "synex_ui", "version": ">=0.1.0" }
+    ],
+    "optional": [
+      { "name": "synex_bridge", "version": ">=0.1.0" },
+      { "name": "synex_notify", "version": ">=0.1.0" }
+    ],
+    "development": []
+  },
+  "migrations": [],
+  "dataOwnership": {
+    "tables": [],
+    "characterDelete": "none"
+  },
+  "stateSnapshot": {
+    "supported": false,
+    "schemaVersion": 1
+  }
+}

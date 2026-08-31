@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <code>synex_core</code> provides the runtime foundation; Groups, Accounts, Entity Authority and World are separate experimental domains.<br>
+  <code>synex_core</code> provides the runtime foundation; domain engines and shared foundations such as Notify mature independently.<br>
   Each module keeps its own release boundary and must earn maturity through exact-candidate evidence.
 </p>
 
@@ -64,7 +64,7 @@
 - **LIVE CLIENT VERIFIED.** Join completed through all nine ordered connection stages, followed by a clean disconnect and successful reconnect. Doctor returned `PASS`, all 26 migrations were applied, and final cleanup left 3 closed sessions, 0 open sessions, and 0 active session or admission leases.
 - **LIMITED MATURITY.** This acceptance does not promote Synex to Stable/1.0, certify the complete framework, or change public Core contracts from `experimental`.
 - **NOT CERTIFIED.** MySQL and multi-instance operation, including `kick_old`, are outside the accepted Production-Beta profile.
-- **OUT OF SCOPE.** `synex_groups`, `synex_accounts`, `synex_entities`, `synex_world`, every other runtime resource, all libraries, bridges, and examples remain outside the frozen Core certification. Groups, Accounts, Entities and World have separate Experimental Alpha boundaries; none inherits Core acceptance.
+- **OUT OF SCOPE.** `synex_groups`, `synex_accounts`, `synex_entities`, `synex_world`, `synex_notify`, every other runtime resource, all libraries, bridges, and examples remain outside the frozen Core certification. Each implemented downstream module has its own Experimental Alpha boundary and none inherits Core acceptance.
 
 <details>
 <summary>Post-Beta hardening — explicitly not part of this acceptance gate</summary>
@@ -133,6 +133,9 @@ The Production-Beta decision is valid only inside these boundaries. A different 
 | Operations Control Plane — Experimental Alpha | [`synex_control`](./resources/synex_control/) | Optional read-only, provider-driven Core/domain diagnostics with lazy bounded views, opaque pagination, sanitization, and a standalone NUI; real provider-runtime and CEF acceptance deferred |
 | Compatibility Platform — Experimental Alpha | [`synex_bridge`](./libraries/synex_bridge/) | Catalog-gated QB, QBX and ESX projections, historical facades, persistent legacy identity/metadata, ledger-backed money translation, Groups mapping, bounded callbacks, lifecycle/event coordination, catalogs, adapters, profiles, telemetry, Control/Doctor and migration tooling; exact FXServer/client acceptance deferred |
 | UI Foundation — Experimental Alpha | [`synex_ui`](./libraries/synex_ui/) | Build-time React component and design-system package plus a separate client runtime for focus arbitration, bounded input, and generic shared surfaces; real FiveM/CEF, controller, safe-zone, and performance acceptance remains open |
+| Feedback & Notification Engine — Experimental Alpha | [`synex_notify`](./resources/synex_notify/) | Resource-owned, session-fenced feedback orchestration with bounded lifecycle, queueing, priority, deduplication, grouping, progress, actions, presentation policy, rate limits, passive `synex_ui` signal/sound transport, and default-disabled partial QB/QBX/ESX mappings; live FXServer/CEF acceptance remains open |
+| Context-Aware Interaction Runtime — Experimental Alpha | [`synex_interact`](./resources/synex_interact/) | Zero-mode Context Sensor, bounded candidate/intent arbitration, Smart Objects and slots, server-authoritative leases, multi-actor sessions, actor locks, typed Action Graphs, shared Synex UI surfaces, diagnostics and partial legacy-target normalization; live FXServer/OneSync/client acceptance remains open |
+| Security, Detection & Correlation Foundation — Experimental Alpha | [`synex_security`](./resources/synex_security/) | Bounded evidence from server-authoritative Core/domain boundaries, expectations, observe-first detectors, correlation, cases, controlled enforcement, Sentinel telemetry, Cfx event guards and operator diagnostics; real FXServer/OneSync/MariaDB/gameplay acceptance remains open |
 | Contract pipeline | [`packages/contracts`](./packages/contracts/) | Canonical inputs and deterministic generated runtime/reference artifacts used to validate Core development |
 | SDK and tooling | [`packages`](./packages/) / [`tools`](./tools/) | Generated clients/types, validation, migration, security, certification, and test tooling; not separately certified server features |
 
@@ -154,6 +157,12 @@ The certification boundary is deliberately narrow: **only the frozen `synex_core
 
 `synex_ui` is implemented as two intentionally separate Experimental Alpha surfaces: the `@synex/ui` build-time package supplies local React components, tokens, materials, accessibility primitives, and Design Lab scenarios; the `synex_ui` client resource owns focus leases, bounded input routing, generic shared dialogs/forms/menus, preferences, and a versioned NUI transport. It owns no gameplay domain, server authority, SQL, or financial/inventory state, and `synex_control` remains runtime-independent. Automated type, unit, browser, build, closed-state, and transport checks are development evidence only. Real FiveM/CEF loading, safe-zone behavior, controller navigation, focus recovery, glass readability over gameplay, and runtime performance are still pending. See the [UI foundation documentation](./docs/ui/README.md).
 
+`synex_notify` is an Experimental Alpha feedback-orchestration foundation, not a durable inbox or a domain source of truth. It owns bounded notification lifecycle, owner epochs, priority arbitration, deduplication, grouping, progress revisions, short-lived action tokens, session/source-generation fencing, quiet-context presentation policy, and rate budgets. Visual and optional bounded sound output are delegated to passive paths inside `synex_ui`; normal notifications never request NUI focus, while a text-only native fallback is reserved for critical signals when the optional UI runtime is unavailable. The server service, client runtime, Control provider, CLI Doctor, server Bridge adapter, and restricted QB/QBX/ESX client function/export mappings are implemented. The mappings remain default-denied without an operator profile and grant no event, target, system-origin, banner, or privileged-priority compatibility. Real FXServer, CEF, controller, restart, accessibility, sound-device and gameplay-background acceptance remain open. See the [Notify guide](./docs/notify/overview.md).
+
+`synex_interact` is an Experimental Alpha Context-Aware Interaction Runtime, not a reskinned target menu. Its client discovers a bounded local candidate set and stabilizes observed intents; its server resolves canonical bundle, World and Entity references before issuing actor-, target-, revision- and nonce-bound leases. Smart Object slots, atomic reservations, multi-actor readiness, actor locks and typed Action Graphs remain runtime-only, while gameplay side effects stay in their owning domain adapters. Intent Cue, Action Bloom and progress use the shared `synex_ui` runtime, and legacy `ox_target`, `qb-target` and `qtarget` shapes are normalized only as explicitly partial, consumer-bound compatibility input. Repository tests are implementation evidence; native shape tests, OneSync projections, real CEF/input, restart/hostile-client and measured profiler acceptance remain open. See the [Interact guide](./docs/interact/README.md).
+
+`synex_security` is an Experimental Alpha Security, Detection, Correlation, Case and Enforcement foundation. Core and each domain remain responsible for preventing invalid state changes; Security consumes only bounded evidence, applies narrowly owned expectations, correlates independent evidence and records cases. Accounts, Entities and Interact report selected authoritative denials after their own fail-closed decisions, while World can register short-lived movement expectations for valid transitions. The client Sentinel is advisory evidence, not attestation, and automatic kick and ban remain disabled by default. Exact FXServer/OneSync event behavior and cancellation, MariaDB persistence/recovery, restart handling, detector calibration and real-client false-positive acceptance remain open. See the [Security guide](./docs/security/README.md).
+
 Every later or otherwise separate directory under `resources/`, remaining libraries, and runnable examples remain experimental rework snapshots or scaffolds.
 
 This also applies to the reserved gameplay names `synex_character`, `synex_identity`, `synex_inventory`, `synex_banking`, `synex_phone`, `synex_radio`, `synex_jobs`, `synex_shops`, `synex_vehicles`, and `synex_garages`. Directory presence does not imply a finished feature. Character and session behavior accepted in the current Core profile belongs to `synex_core`.
@@ -173,10 +182,23 @@ flowchart TB
     API -. "server-only experimental domain" .-> ACCOUNTS["synex_accounts Experimental Alpha"]
     API -. "server-only Entity authority domain" .-> ENTITIES["synex_entities Experimental Alpha"]
     API -. "World semantics and spatial authority" .-> WORLD["synex_world Experimental Alpha"]
+    API -. "resource-owned feedback orchestration" .-> NOTIFY["synex_notify Experimental Alpha"]
+    API -. "server-authoritative interaction leases" .-> INTERACT["synex_interact Experimental Alpha"]
+    API -. "security service, diagnostics and Access" .-> SECURITY["synex_security Experimental Alpha"]
     WORLD -. "routing-bucket contracts" .-> ENTITIES
     WORLD -. "optional capability decisions" .-> GROUPS
+    ACCOUNTS -. "bounded authority denials" .-> SECURITY
+    ENTITIES -. "bounded authority denials" .-> SECURITY
+    WORLD -. "movement expectations" .-> SECURITY
+    INTERACT -. "bounded lease and policy denials" .-> SECURITY
     API -. "consumer-bound compatibility" .-> BRIDGE["synex_bridge Experimental Alpha"]
     CORE -. "client runtime dependency" .-> UI["synex_ui Experimental Alpha"]
+    NOTIFY -. "passive signal transport" .-> UI
+    WORLD -. "anchors, doors, portals and context" .-> INTERACT
+    ENTITIES -. "generation-safe nearby projections" .-> INTERACT
+    INTERACT -. "intent cue, bloom and progress" .-> UI
+    BRIDGE -. "partial legacy-target normalization" .-> INTERACT
+    BRIDGE -. "partial notify adapter" .-> NOTIFY
     UILIB["@synex/ui build-time package"] -. "compiled into resource-owned NUI bundles" .-> CONSUMERUI["Consumer UI bundles"]
     UI -. "focus leases and generic shared surfaces" .-> CONSUMERUI
     OX --> ACCOUNTS
@@ -185,7 +207,7 @@ flowchart TB
     API -. "future rework boundary" .-> REWORK["Other downstream snapshots — not certified"]
 ```
 
-Solid arrows show the frozen Core profile's runtime or generated-input flow. Dashed edges mark development APIs and build-time composition; neither the Organizations Engine Alpha, Financial Engine Alpha, Entity Authority Alpha, World Alpha, UI Foundation Alpha, nor another downstream consumer inherits Core acceptance.
+Solid arrows show the frozen Core profile's runtime or generated-input flow. Dashed edges mark development APIs and build-time composition; neither the Organizations Engine Alpha, Financial Engine Alpha, Entity Authority Alpha, World Alpha, Notify Alpha, Interact Alpha, Security Alpha, UI Foundation Alpha, nor another downstream consumer inherits Core acceptance.
 
 The core separates users, sessions, characters, ephemeral player sources, and source generations. Resource manifests declare API ranges, services, contracts, capabilities, migrations, and data ownership. A capability declaration records intent; operator policy must grant it, and deny rules take precedence.
 
@@ -205,7 +227,7 @@ npm run security
 npm run certify
 ```
 
-These checks are required development gates; they are not by themselves Production-Beta evidence. This repository remains a development monorepo rather than a packaged server release. Deploy only `oxmysql` and the frozen accepted `synex_core` revision when relying on the documented Core profile. Treat Organizations, Financial, Entity Authority and World as separate Experimental Alpha candidates, keep credentials in an operator-owned local file, and follow the reviewed configuration and acceptance instructions:
+These checks are required development gates; they are not by themselves Production-Beta evidence. This repository remains a development monorepo rather than a packaged server release. Deploy only `oxmysql` and the frozen accepted `synex_core` revision when relying on the documented Core profile. Treat Organizations, Financial, Entity Authority, World, Notify, UI and Security as separate Experimental Alpha candidates, keep credentials in an operator-owned local file, and follow the reviewed configuration and acceptance instructions:
 
 [Getting started](./docs/getting-started.md) &middot; [Core server configuration](./examples/server.cfg.example) &middot; [Release readiness](./docs/release-readiness.md)
 
@@ -255,6 +277,9 @@ MySQL remains a code-compatibility target, not a certified Production-Beta datab
 - [Read-only Control Plane](./docs/reference/control-plane.md)
 - [Compatibility bridges and migration boundary](./docs/compatibility/README.md)
 - [UI Foundation and NUI runtime](./docs/ui/README.md)
+- [Feedback and notification orchestration](./docs/notify/overview.md)
+- [Context-aware interaction runtime](./docs/interact/README.md)
+- [Security detection and response foundation](./docs/security/README.md)
 
 ## Community
 

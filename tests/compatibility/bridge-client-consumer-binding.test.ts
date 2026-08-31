@@ -11,7 +11,11 @@ const foundationPath = path.join(
 );
 
 async function clientSource(provider: 'qb' | 'qbx' | 'esx'): Promise<string> {
-  return readFile(path.join(root, 'resources', `synex_bridge_${provider}`, 'client.lua'), 'utf8');
+  const [compatibilityNotify, client] = await Promise.all([
+    readFile(path.join(root, 'libraries', 'synex_bridge', 'compatibility_notify.lua'), 'utf8'),
+    readFile(path.join(root, 'resources', `synex_bridge_${provider}`, 'client.lua'), 'utf8'),
+  ]);
+  return `${compatibilityNotify}\n${client}`;
 }
 
 test('QB client projections and callbacks remain bound to authorized consumers', async () => {

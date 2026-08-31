@@ -126,6 +126,15 @@ jobs:
       - name: Run entity and control-plane tests
         run: node tools/test-runner.mjs entities
 
+      - name: Run notification orchestration tests
+        run: npm run test:notify
+
+      - name: Run context-aware interaction runtime tests
+        run: npm run test:interact
+
+      - name: Run Security foundation tests
+        run: npm run test:security
+
       - name: Run compatibility and migration-planner tests
         run: node tools/test-runner.mjs compatibility
 

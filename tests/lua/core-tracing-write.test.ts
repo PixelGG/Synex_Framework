@@ -20,6 +20,7 @@ async function createEngine(): Promise<LuaEngine> {
     'security',
     'bootstrap_api_validation',
     'bootstrap_api_tracing',
+    'bootstrap_api_diagnostics',
     'bootstrap_api',
   ]) {
     await load(engine, `core/synex_core/server/${file}.lua`);

@@ -28,6 +28,7 @@ test('resource restart invalidates manifests, capabilities, contracts, consumer 
     'bootstrap_discovery',
     'bootstrap_api_validation',
     'bootstrap_api_tracing',
+    'bootstrap_api_diagnostics',
     'bootstrap_api',
     'bootstrap_restart',
     'bootstrap_resource_events',
@@ -406,7 +407,8 @@ test('runtime status history and contract stay bounded and schema-complete', asy
 
 test('runtime status registers compatible v1 and extended v2 handlers', async () => {
   const engine = await createEngine([
-    'foundation', 'registries', 'bootstrap_api_validation', 'bootstrap_api_tracing', 'bootstrap_api',
+    'foundation', 'registries', 'bootstrap_api_validation', 'bootstrap_api_tracing',
+    'bootstrap_api_diagnostics', 'bootstrap_api',
   ], true);
   try {
     const result = await engine.doString(`

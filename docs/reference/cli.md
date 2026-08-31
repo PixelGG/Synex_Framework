@@ -29,6 +29,48 @@ They execute only from source `0` (server console), are registered as restricted
 
 Doctor, ledger/status, trace, inspect, and outbox are bounded reads through capability-declared Accounts service methods. `synex accounts reconcile` is intentionally mutating: it requires a currency and UUID idempotency key, invokes `synex.accounts.integrity.run`, and transactionally stores the reconciliation run, findings, Accounts audit, and outbox evidence. `synex accounts outbox-retry` is the second explicit mutation: it invokes the separately privileged `synex.accounts.outbox.retry` operation for one dead event, is idempotent per caller/key, and records durable retry evidence plus Core audit. Neither command edits balances, rewrites ledger history, freezes accounts, or creates/destroys supply. There is no NUI mutation button or automatic repair.
 
+## FXServer Notify diagnostics
+
+The runtime command also exposes three read-only forms for the Experimental Alpha Notify resource:
+
+```text
+synex doctor notify
+synex notify status
+synex notify doctor
+```
+
+They call the capability-gated `synex.notify@1` diagnostics surface and return bounded lifecycle, owner, action-token, health and finding aggregates. They never emit a notification, target a player, reveal notification text or action tokens, or provide a production spam simulator. The commands report `UNAVAILABLE` while `synex_notify` is stopped and `DEGRADED` when its optional `synex_ui` transport is unavailable.
+
+The runtime command exposes bounded read-only Interact diagnostics:
+
+```text
+synex doctor interact
+synex interact status
+synex interact doctor
+synex interact inspect <namespaced-key>
+synex interact trace <trace-id>
+```
+
+`status` returns aggregate registry/runtime pressure, `doctor` returns bounded findings, and `inspect` resolves one exact Smart Object or Action Graph without player, target, adapter request or domain payloads. These commands do not issue a lease, run a graph, reserve a slot or mutate gameplay state. They report the optional resource state through the same fail-closed service boundary used by other domain commands.
+
+## FXServer Security diagnostics
+
+The runtime command exposes bounded, read-only Security operations:
+
+```text
+synex doctor security
+synex security status
+synex security doctor
+synex security detectors
+synex security case <case-id>
+```
+
+They call the capability-gated `synex.security@1` service. Output is limited to
+health, detector state, redacted findings, case summaries, bounded timelines,
+and enforcement provenance. No command applies a restriction, kick, or ban, and
+no command exposes unrestricted client telemetry. The commands report
+`UNAVAILABLE` while the Experimental Alpha resource is stopped.
+
 ## Build and contracts
 
 ```text

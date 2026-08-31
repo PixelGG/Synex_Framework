@@ -17,6 +17,7 @@ function Portals.create(options)
     local triggerClient = assert(options.triggerClient, 'world portals require client projection')
     local emit = options.emit or function() end
     local audit = options.audit or function() end
+    local expectTransition = options.expectTransition or function() return true end
     local grants, grantOrder = {}, {}
     local grantHead = 1
     local grantCount = 0
@@ -451,6 +452,9 @@ function Portals.create(options)
             end
             return nil, consumedPortal
         end
+        -- Security is advisory here. World remains authoritative and a Security
+        -- outage must never weaken or block an already validated transition.
+        pcall(expectTransition, consumed, consumedPortal, contractContext)
         triggerClient(request.source, 'synex_world:client:apply_transition', {
             schemaVersion = 1, revision = portal.revision,
             grantId = consumed.grantId, destination = consumed.destination,

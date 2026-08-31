@@ -30,6 +30,13 @@ function SynexEntityService.create(options)
     local config = assert(options.config, 'entity service config is required')
     local health = assert(options.health, 'entity service health is required')
     local coreRef = assert(options.coreRef, 'entity service coreRef is required')
+    local playerBucketFence = SynexEntityPlayerBucketFence.create({
+        coreRef = coreRef, foundation = foundation, ports = ports,
+        state = state, validation = validation,
+    })
+    local securityReporting = SynexEntitySecurityReporting.create({
+        coreRef = coreRef, foundation = foundation, resourceName = resourceName,
+    })
     local buckets = state.buckets
     local playerMemberships = state.playerMemberships
     local service = {}
@@ -67,6 +74,9 @@ function SynexEntityService.create(options)
             observability.audit('entities.' .. action, 'contract', contractName,
                 { code = operationError.code }, context)
         end
+        -- Entity authority has already failed closed. Security is an optional,
+        -- fail-open observer and can never authorize this operation.
+        securityReporting.reportDenial(contractName, operationError, context)
     end
     function service.healthSnapshot()
         return {
@@ -99,6 +109,10 @@ function SynexEntityService.create(options)
             return nil, rateError
         end
         return service.healthSnapshot()
+    end
+
+    function service.getPlayerBucketFence(request, context)
+        return playerBucketFence.resolve(request, context)
     end
 
     function service.getControlSummary(request, context)

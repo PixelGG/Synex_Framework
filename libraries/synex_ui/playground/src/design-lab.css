@@ -226,6 +226,29 @@ code, kbd, .lab-index__code { font-family: "JetBrains Mono Variable", ui-monospa
 .lab-skeleton-circle { width: 52px; height: 52px; }
 .lab-skeleton-rect { flex: 1; height: 52px; }
 .lab-loading-stage { position: relative; display: grid; place-items: center; min-height: 180px; }
+.lab-signal-simulator { display: grid; gap: 12px; }
+.lab-signal-controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); border-top: 1px solid var(--lab-plate-line); border-left: 1px solid var(--lab-plate-line); }
+.lab-signal-controls__group { display: grid; min-width: 0; gap: 10px; align-content: start; padding: 12px; border-right: 1px solid var(--lab-plate-line); border-bottom: 1px solid var(--lab-plate-line); }
+.lab-signal-controls__group > span { color: var(--lab-plate-muted); font: 9px "JetBrains Mono Variable", ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; }
+.lab-signal-readout { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; border-top: 1px solid var(--lab-plate-line); border-left: 1px solid var(--lab-plate-line); }
+.lab-signal-readout > div { display: grid; min-width: 0; gap: 5px; padding: 10px 12px; border-right: 1px solid var(--lab-plate-line); border-bottom: 1px solid var(--lab-plate-line); }
+.lab-signal-readout dt { color: var(--lab-plate-muted); font: 8px "JetBrains Mono Variable", ui-monospace, monospace; letter-spacing: .06em; text-transform: uppercase; }
+.lab-signal-readout dd { overflow: hidden; margin: 0; color: var(--lab-plate-text); font-size: 11px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.lab-signal-readout__note { min-height: 1.5em; margin: -4px 0 0; color: var(--lab-plate-muted); font-size: 11px; line-height: 1.5; }
+.lab-signal-stage { position: relative; min-height: 30rem; overflow: hidden; border: 1px solid var(--lab-plate-line); background: var(--lab-plate-raised); }
+.lab-signal-stage .sx-signal-rail { position: absolute; width: min(22rem, calc(100% - 2rem)); max-width: none; transform: none; }
+.lab-signal-stage .sx-signal-rail[data-sx-position="top-right"] { top: 1rem; right: 1rem; }
+.lab-signal-matrix, .lab-signal-profile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr)); gap: 12px; }
+.lab-signal-matrix .sx-signal-surface, .lab-signal-profile .sx-signal-surface { margin: 0; }
+.lab-signal-profile { display: grid; gap: 8px; min-width: 0; padding: 10px; border: 1px solid var(--lab-plate-line); background: var(--lab-plate-raised); }
+.lab-signal-profile > span { color: var(--lab-plate-muted); font-family: "JetBrains Mono Variable", ui-monospace, monospace; font-size: 9px; letter-spacing: .08em; }
+.lab-signal-boundary { display: grid; grid-template-columns: minmax(18rem, 22rem) minmax(15rem, 1fr); gap: 16px; align-items: start; }
+.lab-signal-boundary__frame { min-width: 0; }
+.lab-signal-boundary__frame .sx-signal-surface { margin: 0; }
+.lab-signal-boundary__checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; border-top: 1px solid var(--lab-plate-line); border-left: 1px solid var(--lab-plate-line); }
+.lab-signal-boundary__checks > div { display: grid; min-width: 0; gap: 5px; padding: 10px 12px; border-right: 1px solid var(--lab-plate-line); border-bottom: 1px solid var(--lab-plate-line); }
+.lab-signal-boundary__checks dt { color: var(--lab-plate-muted); font: 8px "JetBrains Mono Variable", ui-monospace, monospace; letter-spacing: .06em; text-transform: uppercase; }
+.lab-signal-boundary__checks dd { margin: 0; color: var(--lab-plate-text); font-size: 11px; line-height: 1.4; }
 
 .lab-metrics { border-top: 1px solid var(--lab-plate-line); border-left: 1px solid var(--lab-plate-line); }
 .lab-metrics .sx-stat { min-height: 128px; padding: 18px; border-right: 1px solid var(--lab-plate-line); border-bottom: 1px solid var(--lab-plate-line); background: transparent; }
@@ -246,6 +269,10 @@ code, kbd, .lab-index__code { font-family: "JetBrains Mono Variable", ui-monospa
 .lab-runtime-map__lane strong { margin-top: auto; font-size: 11px; letter-spacing: 0.02em; }
 .lab-runtime-map__connector { position: relative; height: 1px; background: var(--lab-plate-line); }
 .lab-runtime-map__connector::after { position: absolute; top: -3px; right: 0; width: 6px; height: 6px; content: ""; border-top: 1px solid var(--lab-plate-line); border-right: 1px solid var(--lab-plate-line); transform: rotate(45deg); }
+.lab-interaction-preview { position: relative; width: min(100%, 820px); height: 430px; margin-inline: auto; overflow: hidden; border: 1px solid var(--lab-plate-line); background: #080d11; isolation: isolate; }
+.lab-interaction-preview::before { position: absolute; inset: 0; content: ""; background-image: linear-gradient(rgba(124, 153, 170, .07) 1px, transparent 1px), linear-gradient(90deg, rgba(124, 153, 170, .07) 1px, transparent 1px); background-size: 32px 32px; }
+.lab-interaction-preview__axis { position: absolute; inset: 50% 0 auto; height: 1px; background: rgba(124, 153, 170, .14); }
+.lab-interaction-preview__axis::after { position: absolute; inset: -215px auto auto 50%; width: 1px; height: 430px; content: ""; background: rgba(124, 153, 170, .14); }
 .lab-event-log { min-height: 184px; }
 .lab-event-log > div { display: grid; grid-template-columns: 34px 1fr; min-height: 34px; border-bottom: 1px solid var(--lab-plate-line); }
 .lab-event-log span, .lab-event-log code { display: flex; align-items: center; padding: 0 9px; }
@@ -313,7 +340,9 @@ code, kbd, .lab-index__code { font-family: "JetBrains Mono Variable", ui-monospa
   .lab-runtime-map { grid-template-columns: 1fr; gap: 0; }
   .lab-runtime-map__connector { width: 1px; height: 26px; margin-left: 20px; }
   .lab-runtime-map__connector::after { top: auto; right: -3px; bottom: 0; transform: rotate(135deg); }
+  .lab-interaction-preview { transform-origin: top left; }
   .lab-transparency-proof__samples { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lab-signal-boundary { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 560px) {
@@ -337,6 +366,7 @@ code, kbd, .lab-index__code { font-family: "JetBrains Mono Variable", ui-monospa
   .lab-transparency-proof__field { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(2, 1fr); }
   .lab-transparency-proof__samples { grid-template-columns: 1fr; }
   .lab-chart-swatches { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lab-signal-readout, .lab-signal-boundary__checks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .lab-footer { align-items: flex-start; flex-direction: column; }
   .lab-footer span:nth-child(2) { display: none; }
 }

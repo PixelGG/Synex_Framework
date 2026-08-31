@@ -12,6 +12,7 @@ const STATE_SCHEMA_PATH = "schemas/state.schema.json";
 const CONFIGURATION_SCHEMA_PATH = "schemas/config.schema.json";
 const CAPABILITY_POLICY_SCHEMA_PATH = "schemas/capability-policy.schema.json";
 const WORLD_BUNDLE_SCHEMA_PATH = "schemas/world-bundle.schema.json";
+const INTERACTION_BUNDLE_SCHEMA_PATH = "schemas/interaction-bundle.schema.json";
 
 export interface SchemaRegistry {
   contract: ValidateFunction<unknown>;
@@ -20,6 +21,7 @@ export interface SchemaRegistry {
   configuration: ValidateFunction<unknown>;
   capabilityPolicy: ValidateFunction<unknown>;
   worldBundle: ValidateFunction<unknown>;
+  interactionBundle: ValidateFunction<unknown>;
 }
 
 export async function loadSchemaRegistry(repositoryRoot: string): Promise<SchemaRegistry> {
@@ -30,9 +32,10 @@ export async function loadSchemaRegistry(repositoryRoot: string): Promise<Schema
   const configurationSchema = await readJsonFile(join(repositoryRoot, CONFIGURATION_SCHEMA_PATH));
   const capabilityPolicySchema = await readJsonFile(join(repositoryRoot, CAPABILITY_POLICY_SCHEMA_PATH));
   const worldBundleSchema = await readJsonFile(join(repositoryRoot, WORLD_BUNDLE_SCHEMA_PATH));
+  const interactionBundleSchema = await readJsonFile(join(repositoryRoot, INTERACTION_BUNDLE_SCHEMA_PATH));
   if (!isRecord(contractSchema) || !isRecord(resourceSchema) || !isRecord(stateSchema)
     || !isRecord(configurationSchema) || !isRecord(capabilityPolicySchema)
-    || !isRecord(worldBundleSchema)) {
+    || !isRecord(worldBundleSchema) || !isRecord(interactionBundleSchema)) {
     throw new CliError("Synex schema documents must be JSON objects.");
   }
 
@@ -43,6 +46,7 @@ export async function loadSchemaRegistry(repositoryRoot: string): Promise<Schema
     configuration: ajv.compile(configurationSchema),
     capabilityPolicy: ajv.compile(capabilityPolicySchema),
     worldBundle: ajv.compile(worldBundleSchema),
+    interactionBundle: ajv.compile(interactionBundleSchema),
   };
 }
 

@@ -60,10 +60,41 @@ The client runtime is the sole authority for:
 - browser readiness and runtime synchronization;
 - static NUI callback routes and response correlation;
 - local preference validation and persistence;
-- runtime metrics and health reasons.
+- runtime metrics and health reasons;
+- bounded, owner/revision-fenced passive Signal projections for `synex_notify`.
 
 The React runtime renders validated descriptors. It does not infer ownership or
 dispatch arbitrary Lua/server behavior.
+
+Passive signals are not generic interactive surfaces and never acquire a focus
+lease. `synex_notify` decides queueing, priority, deduplication, grouping,
+progress and action eligibility, then projects at most the visible bounded set
+through `upsertSignal`/`removeSignal`. The UI runtime validates and renders that
+projection, retains short exit motion, and reconciles a complete snapshot after
+a browser restart. It never becomes notification domain truth.
+
+Those raw signal operations are private transport, not a general UI facade:
+only a facade whose immediate owner is `synex_notify` may call `upsertSignal`,
+`removeSignal`, `getSignalSnapshot`, or bind the adaptive visible capacity;
+other owners receive `UI_SIGNAL_DENIED` for transport and no capacity-binding
+method. The browser reports only signals actually in its `active`
+phase, excluding the 140 ms dismissing retention and any planned signal that has
+not obtained a slot. Each report carries the browser boot, current signal
+generation, exact signal revisions, current adaptive capacity, and a strictly
+increasing per-browser-boot `presentationRevision`. Transient callback failures retry;
+Notify keeps action descriptors initially withheld until the surface is active
+and keeps F9/F10 fail-closed until the resulting action-bearing revision is
+confirmed.
+
+`upsertSignal` separates store admission from browser delivery. A successful
+call returns the retained signal generation plus `delivered`; `false` means the
+bounded UI store accepted the revision while CEF was not ready or
+`SendNUIMessage` did not report success. The later full sync can reconcile that
+state, but callers must not count it as display/paint. `synex_notify` treats it
+as a transport failure, suppresses sound, and permits only its critical
+once-per-content-generation text fallback. Even after a successful synchronous
+send, a critical signal must receive its exact browser-active ACK within 1,250 ms
+or the same bounded fallback is attempted.
 
 Native execution is deliberately split: the central resource calls
 `SetNuiFocus` and `SendNUIMessage` for the shared frame; the owner-focus helper
@@ -93,7 +124,12 @@ The runtime fails closed:
 - invalid, oversized, stale, or owner-mismatched input is rejected;
 - every accepted static NUI callback receives exactly one response envelope;
 - timeouts and owner stops settle pending requests;
-- resource shutdown releases focus and clears browser state.
+- resource shutdown releases focus and clears browser state;
+- passive signal owner stop and runtime restart clear or reconcile bounded state
+  without mounting an opaque full-screen layer;
+- stale/missing passive-signal visibility ACKs cannot grant action eligibility;
+- store-retained but `delivered = false` signals cannot be treated as browser
+  display success.
 
 The focus-agent bridge coordinates client resources; it is not an authorization
 or hostile-client security boundary. Protected domain operations remain
@@ -118,9 +154,12 @@ ui_payload_bytes             ui_runtime_errors
 ui_owner_cleanup_total       ui_active_surfaces
 ```
 
-Diagnostics also include current focus/queue summaries, active surfaces, input
-device, limits, pending-request count, and the most recently sampled screen
-metrics. They contain coordination metadata, not domain or player data.
+Diagnostics also include owner/epoch-scoped focus/queue summaries, surfaces and
+passive signals, plus input device, limits, pending-request count, and the most
+recently sampled screen metrics. One resource cannot read another resource's
+surface or signal content. Global health and metrics remain bounded and
+low-cardinality; diagnostics contain coordination metadata, not domain or player
+data.
 
 Stable public error codes are:
 
@@ -131,7 +170,7 @@ UI_OWNER_STOPPED             UI_OWNER_STALE
 UI_REQUEST_INVALID           UI_REQUEST_TIMEOUT
 UI_REQUEST_CANCELLED         UI_REQUEST_STALE
 UI_SURFACE_CONFLICT          UI_PAYLOAD_TOO_LARGE
-UI_PROTOCOL_UNSUPPORTED
+UI_PROTOCOL_UNSUPPORTED      UI_SIGNAL_DENIED
 ```
 
 ## Acceptance gate
@@ -139,4 +178,5 @@ UI_PROTOCOL_UNSUPPORTED
 Browser and automated tests do not prove the Cfx boundary. Exact production
 output still requires a real FiveM/CEF smoke test covering start, open, all
 input modes, close, owner stop, runtime restart, reconnect, safe zone, and
-performance. That live acceptance is **NOT YET VERIFIED**.
+performance, including controller, accessibility, and measured Resmon behavior.
+That live acceptance is **NOT YET VERIFIED**.

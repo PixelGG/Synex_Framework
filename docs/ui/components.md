@@ -414,6 +414,27 @@ meaning remains in accessible status text.
 endless spinner without status or recovery; do not replace form validation with
 a transient toast; do not announce every animation frame.
 
+### Passive Signal Surface
+
+The runtime-level Signal Surface is not the package `Toast` component and is not
+a general-purpose consumer API. `synex_notify` owns its lifecycle and supplies a
+bounded four-item visible projection through signal transport reserved to the
+immediate `synex_notify` facade owner. Other owners receive `UI_SIGNAL_DENIED`
+from raw signal upsert/remove/snapshot operations. The surface uses one compact
+locator/state geometry, plain-text title/message, optional fixed-registry icon,
+count, progress rail and at most two presentation hints. It never takes pointer
+or keyboard focus. Critical signals alone use an
+assertive alert; all other kinds share a polite status channel with announcement
+deduplication. See [Notify visual language](../notify/visual-language.md).
+
+Action hints are initially withheld until the browser reports the signal's exact
+revision as actually `active`. The resulting action-bearing revision must be
+acknowledged before F9/F10 is enabled. A signal retained for 140 ms exit motion
+is `dismissing`, is not included in that visibility ACK, and cannot retain
+F9/F10 eligibility. The ACK is fenced by signal generation and monotonic
+per-browser-boot `presentationRevision` and is retried on transient callback
+failure.
+
 ## Data-display family
 
 **Purpose.** Present structured records, key/value facts, status, identity, and

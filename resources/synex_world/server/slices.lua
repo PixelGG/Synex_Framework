@@ -84,6 +84,8 @@ function Slices.create(options)
             end
         elseif object.kind == 'portal' then
             result.portalType, result.enabled = object.portalType, object.enabled
+            result.source = Validation.copy(object.source)
+            result.position = object.source and Validation.copy(object.source.position) or nil
         end
         return result
     end

@@ -59,6 +59,21 @@
         ]
       }
     },
+    "interactionBundles": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 28,
+        "maxLength": 240,
+        "pattern": "^interactions/[A-Za-z0-9._/-]+\\.interact\\.json$",
+        "allOf": [
+          { "not": { "pattern": "(?:^|/)\\.{1,2}(?:/|$)" } },
+          { "not": { "pattern": "//" } }
+        ]
+      }
+    },
     "services": {
       "type": "object",
       "additionalProperties": false,

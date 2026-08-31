@@ -188,6 +188,67 @@ local function monotonicMilliseconds()
     return math.floor(os.clock() * 1000)
 end
 
+local economySecurityCodes = {
+    PRINCIPAL_SPOOFED = { severity = 'HIGH', confidence = 0.98,
+        key = 'principal-spoofed' },
+    ACCOUNT_ACCESS_DENIED = { severity = 'MEDIUM', confidence = 0.90,
+        key = 'access-denied' },
+    ACCESS_DENIED = { severity = 'MEDIUM', confidence = 0.90,
+        key = 'access-denied' },
+    REASON_CODE_NOT_OWNED = { severity = 'MEDIUM', confidence = 0.92,
+        key = 'reason-namespace-denied' },
+    IDEMPOTENCY_CONFLICT = { severity = 'MEDIUM', confidence = 0.94,
+        key = 'idempotency-conflict' },
+    OUTBOX_RETRY_IDEMPOTENCY_CONFLICT = { severity = 'MEDIUM', confidence = 0.94,
+        key = 'idempotency-conflict' },
+    OPERATION_NOT_ALLOWED = { severity = 'LOW', confidence = 0.72,
+        key = 'operation-forbidden' },
+}
+
+local function reportEconomyDenial(operation, operationError, context)
+    local code = type(operationError) == 'table' and operationError.code or nil
+    local policy = economySecurityCodes[code]
+    local api = currentApi
+    local call = type(api) == 'table' and type(api.Services) == 'table'
+        and api.Services.call or nil
+    if not policy or not Foundation.isCallable(call) then return false end
+    local session = type(context) == 'table' and context.session or nil
+    local subject
+    if type(session) == 'table' and type(session.id) == 'string'
+        and type(session.sourceGeneration) == 'number'
+        and type(context.source) == 'number' then
+        subject = {
+            sessionId = session.id,
+            source = context.source,
+            sourceGeneration = session.sourceGeneration,
+            userId = session.userId,
+            characterId = session.characterId,
+        }
+    else
+        local caller = type(context) == 'table'
+            and (context.caller or context.callerResource) or nil
+        subject = { resourceName = type(caller) == 'string' and caller or RESOURCE }
+    end
+    local ok = pcall(call, 'synex.security', '^1.0.0', 'reportSignal', {
+        namespace = 'synex.accounts',
+        category = 'economy',
+        detector = 'synex.accounts.domain',
+        code = code,
+        subject = subject,
+        severity = policy.severity,
+        confidence = policy.confidence,
+        evidenceClass = 'DOMAIN_AUTHORITATIVE',
+        correlationKey = 'economy:' .. policy.key,
+        traceId = type(context) == 'table' and context.traceId or nil,
+        summary = 'Accounts authority rejected a security-relevant financial operation.',
+        evidenceJson = encode({ operation = tostring(operation):sub(1, 64) }),
+    }, {
+        traceId = type(context) == 'table' and context.traceId or nil,
+        timeoutMs = 1000,
+    })
+    return ok
+end
+
 local function instrumentedHandler(operation, handler)
     return function(request, context)
         local startedAt = monotonicMilliseconds()
@@ -219,6 +280,11 @@ local function instrumentedHandler(operation, handler)
             coreMetrics.increment('synex_accounts_access_denials_total', {
                 operation = operation,
             })
+        end
+        if outcome == 'failure' then
+            -- Accounts has already rejected the operation. Security reporting is
+            -- deliberately fail-open and can never authorize or roll back money.
+            reportEconomyDenial(operation, operationError, context)
         end
         if value and (operation == 'integrity_reconcile'
             or operation == 'run_reconciliation') then

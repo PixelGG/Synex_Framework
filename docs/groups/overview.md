@@ -85,7 +85,7 @@ The current contract catalog covers:
 - exact, read-only compatibility target resolution plus an approval-, policy-, idempotency-, and CAS-bound atomic grade/primary mutation;
 - one active-session-bound self snapshot containing only the caller's memberships, public group/grade/role data, and own duty state.
 
-The current source catalog contains **71 Groups contracts**: 70 server-local contracts and one client-to-server self projection. Across the repository's six source catalogs there are currently 178 versioned definitions. Treat those counts as revision-specific; the exact source remains the [generated contract catalog](../../packages/contracts/generated/docs/contracts.md), and the concise cross-resource reference is [Groups API reference](../reference/groups.md).
+The current source catalog contains **71 Groups contracts**: 70 server-local contracts and one client-to-server self projection. Across the repository's nine source catalogs there are currently 204 versioned definitions. Treat those counts as revision-specific; the exact source remains the [generated contract catalog](../../packages/contracts/generated/docs/contracts.md), and the concise cross-resource reference is [Groups API reference](../reference/groups.md).
 
 All Groups reads pass a final encoded-response guard of 30,000 bytes, below Core's 32 KiB RPC/service ceiling. The relationship, duty, and assignment list contracts cap pages at 40; the self projection caps memberships and per-membership roles at 8; other management lists retain their contract-declared limits of at most 100. Relationship and assignment detail metadata is additionally bounded to 16 KiB. A response that cannot fit fails with `READ_MODEL_TOO_LARGE` instead of crossing the transport boundary partially.
 

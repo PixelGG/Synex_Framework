@@ -51,14 +51,16 @@ test('entity Lua modules respect cohesion limits after the authority split', asy
   assert.ok(serverLines <= 250, `server.lua has ${serverLines} lines; limit is 250`);
 });
 
-test('authority split modules compile in Lua', async () => {
+test('authority split and security integration modules compile in Lua', async () => {
   const engine = await new LuaFactory().createEngine();
   try {
     await engine.doString(await source('server/authority_lifecycle.lua'));
     await engine.doString(await source('server/authority_service.lua'));
+    await engine.doString(await source('server/security_reporting.lua'));
     assert.equal(await engine.doString(String.raw`
       return type(SynexEntityAuthorityLifecycle.attach) == 'function'
         and type(SynexEntityAuthorityService.create) == 'function'
+        and type(SynexEntitySecurityReporting.create) == 'function'
     `), true);
   } finally {
     engine.global.close();

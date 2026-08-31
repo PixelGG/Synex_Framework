@@ -673,15 +673,19 @@ test('network RPC limiter state is fenced by source generation', async () => {
       })
       handlers[SynexProtocol.events.cancel]('request-new')
       assert(consumed[1] == ('rpc:42:%s:ingress'):format(old.sourceGeneration))
-      assert(consumed[2] == ('rpc-cancel:42:%s:'):format(old.sourceGeneration))
-      assert(consumed[3] == ('rpc:42:%s:ingress'):format(replacement.sourceGeneration))
-      assert(consumed[4] == ('rpc-cancel:42:%s:'):format(replacement.sourceGeneration))
+      assert(consumed[2] == ('rpc-diagnostic:42:%s:'):format(old.sourceGeneration))
+      assert(consumed[3] == ('rpc-cancel:42:%s:'):format(old.sourceGeneration))
+      assert(consumed[4] == ('rpc:42:%s:ingress'):format(replacement.sourceGeneration))
+      assert(consumed[5] == ('rpc-diagnostic:42:%s:'):format(replacement.sourceGeneration))
+      assert(consumed[6] == ('rpc-cancel:42:%s:'):format(replacement.sourceGeneration))
       assert(purged[1] == ('rpc:42:%s:'):format(old.sourceGeneration))
-      assert(purged[2] == ('rpc-cancel:42:%s:'):format(old.sourceGeneration))
+      assert(purged[2] == 'rpc-unauthenticated:42:')
+      assert(purged[3] == ('rpc-cancel:42:%s:'):format(old.sourceGeneration))
+      assert(purged[4] == ('rpc-diagnostic:42:%s:'):format(old.sourceGeneration))
       assert(not purged[1]:find(':' .. replacement.sourceGeneration .. ':', 1, true))
       return table.concat({old.sourceGeneration, replacement.sourceGeneration, #consumed, #purged}, ':')
     `);
-    assert.equal(result, '1:3:4:2');
+    assert.equal(result, '1:3:6:4');
   } finally {
     engine.global.close();
   }
@@ -697,7 +701,7 @@ test('service provider health and circuit state drive dependency validation and 
     'messaging',
   ]);
   const result = await engine.doString(`
-    local now, failProvider = 1000, true
+    local now, providerMode = 1000, 'domain_error'
     local platform = setmetatable({
       nowGame = function() return now end
     }, { __index = FakePlatform })
@@ -725,7 +729,10 @@ test('service provider health and circuit state drive dependency validation and 
     assert(messaging.services:provide('synex_provider', providerEpoch, {
       name = 'synex.fixture', version = '1.0.0',
       methods = { read = function()
-        if failProvider then return nil, foundation.error('FIXTURE_FAILURE', 'fixture failure') end
+        if providerMode == 'domain_error' then
+          return nil, foundation.error('FIXTURE_FAILURE', 'fixture failure')
+        end
+        if providerMode == 'exception' then error('fixture provider exception') end
         return { ready = true }, nil
       end }
     }))
@@ -735,11 +742,19 @@ test('service provider health and circuit state drive dependency validation and 
         'synex_core', coreEpoch, 'synex.fixture', '^1.0.0', 'read', {}, {})
       assert(value == nil and callError.code == 'FIXTURE_FAILURE')
     end
+    local rejected = lifecycle.dependencies:snapshot().providerHealth['synex.fixture'].synex_provider['1']
+    assert(rejected.health == 'HEALTHY' and rejected.circuit == 'CLOSED')
+    providerMode = 'exception'
+    for _ = 1, 5 do
+      local value, callError = messaging.services:call(
+        'synex_core', coreEpoch, 'synex.fixture', '^1.0.0', 'read', {}, {})
+      assert(value == nil and callError.code == 'SERVICE_FAILED')
+    end
     local opened = lifecycle.dependencies:snapshot().providerHealth['synex.fixture'].synex_provider['1']
     assert(opened.health == 'HEALTHY' and opened.circuit == 'OPEN')
     assert(#lifecycle.dependencies:validate() == 1)
     now = now + 5001
-    failProvider = false
+    providerMode = 'healthy'
     assert(messaging.services:call(
       'synex_core', coreEpoch, 'synex.fixture', '^1.0.0', 'read', {}, {}))
     local recovered = lifecycle.dependencies:snapshot().providerHealth['synex.fixture'].synex_provider['1']
@@ -751,9 +766,9 @@ test('service provider health and circuit state drive dependency validation and 
     assert(messaging.services:setHealth(
       'synex_provider', providerEpoch, 'synex.fixture', '1.0.0', 'HEALTHY'))
     assert(#lifecycle.dependencies:validate() == 0)
-    return opened.circuit .. ':' .. recovered.circuit
+    return rejected.circuit .. ':' .. opened.circuit .. ':' .. recovered.circuit
   `);
-  assert.equal(result, 'OPEN:CLOSED');
+  assert.equal(result, 'CLOSED:OPEN:CLOSED');
   engine.global.close();
 });
 

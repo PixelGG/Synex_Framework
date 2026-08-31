@@ -603,6 +603,7 @@ test('domain outbox dispatchers use bounded owner-aware claims and capability-ga
         'synex.events.durable',
         'synex.metrics.write',
         'synex.runtime.read',
+        'synex.security.signal.emit',
         'synex.control.provider.register',
       ]);
     } else {

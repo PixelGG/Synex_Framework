@@ -1,4 +1,4 @@
-export const GENERATED_SOURCE_HASH = "d221dcd6ed86651cadea6bed9fed5ab2d92470d4727475fa81e9454a194f7d19";
+export const GENERATED_SOURCE_HASH = "ed52744d1b75972bf22cd978612b61f88fbe1885ad3deb223e75474b0b0183e9";
 
 export const GENERATED_CONTRACT_VERSIONS = {
   "synex.accounts.access.check@1.0.0": { name: "synex.accounts.access.check", version: "1.0.0", kind: "rpc", provider: "synex_accounts" },
@@ -170,8 +170,34 @@ export const GENERATED_CONTRACT_VERSIONS = {
   "synex.identity.characters.list@1.0.0": { name: "synex.identity.characters.list", version: "1.0.0", kind: "service", provider: "synex_core" },
   "synex.identity.characters.select@1.0.0": { name: "synex.identity.characters.select", version: "1.0.0", kind: "service", provider: "synex_core" },
   "synex.identity.session.by_source@1.0.0": { name: "synex.identity.session.by_source", version: "1.0.0", kind: "service", provider: "synex_core" },
+  "synex.interact.bundle.register@1.0.0": { name: "synex.interact.bundle.register", version: "1.0.0", kind: "service", provider: "synex_interact" },
+  "synex.interact.bundle.replace@1.0.0": { name: "synex.interact.bundle.replace", version: "1.0.0", kind: "service", provider: "synex_interact" },
+  "synex.interact.bundle.unregister@1.0.0": { name: "synex.interact.bundle.unregister", version: "1.0.0", kind: "service", provider: "synex_interact" },
+  "synex.interact.discovery.entities@1.0.0": { name: "synex.interact.discovery.entities", version: "1.0.0", kind: "rpc", provider: "synex_interact" },
+  "synex.interact.discovery.snapshot@1.0.0": { name: "synex.interact.discovery.snapshot", version: "1.0.0", kind: "rpc", provider: "synex_interact" },
+  "synex.interact.graph.ack@1.0.0": { name: "synex.interact.graph.ack", version: "1.0.0", kind: "rpc", provider: "synex_interact" },
+  "synex.interact.lease.activate@1.0.0": { name: "synex.interact.lease.activate", version: "1.0.0", kind: "rpc", provider: "synex_interact" },
+  "synex.interact.lease.request@1.0.0": { name: "synex.interact.lease.request", version: "1.0.0", kind: "rpc", provider: "synex_interact" },
+  "synex.interact.metrics.report@1.0.0": { name: "synex.interact.metrics.report", version: "1.0.0", kind: "rpc", provider: "synex_interact" },
+  "synex.interact.session.cancel@1.0.0": { name: "synex.interact.session.cancel", version: "1.0.0", kind: "rpc", provider: "synex_interact" },
+  "synex.interact.session.join@1.0.0": { name: "synex.interact.session.join", version: "1.0.0", kind: "rpc", provider: "synex_interact" },
+  "synex.interact.session.leave@1.0.0": { name: "synex.interact.session.leave", version: "1.0.0", kind: "rpc", provider: "synex_interact" },
+  "synex.notify.action.invoke@1.0.0": { name: "synex.notify.action.invoke", version: "1.0.0", kind: "rpc", provider: "synex_notify" },
+  "synex.notify.command.pull@1.0.0": { name: "synex.notify.command.pull", version: "1.0.0", kind: "rpc", provider: "synex_notify" },
+  "synex.notify.dismiss@1.0.0": { name: "synex.notify.dismiss", version: "1.0.0", kind: "service", provider: "synex_notify" },
+  "synex.notify.metrics.report@1.0.0": { name: "synex.notify.metrics.report", version: "1.0.0", kind: "rpc", provider: "synex_notify" },
+  "synex.notify.send@1.0.0": { name: "synex.notify.send", version: "1.0.0", kind: "service", provider: "synex_notify" },
+  "synex.notify.update@1.0.0": { name: "synex.notify.update", version: "1.0.0", kind: "service", provider: "synex_notify" },
   "synex.runtime.status@1.0.0": { name: "synex.runtime.status", version: "1.0.0", kind: "service", provider: "synex_core" },
   "synex.runtime.status@2.0.0": { name: "synex.runtime.status", version: "2.0.0", kind: "service", provider: "synex_core" },
+  "synex.security.assessment.get@1.0.0": { name: "synex.security.assessment.get", version: "1.0.0", kind: "rpc", provider: "synex_security" },
+  "synex.security.case.get@1.0.0": { name: "synex.security.case.get", version: "1.0.0", kind: "rpc", provider: "synex_security" },
+  "synex.security.expectation.list@1.0.0": { name: "synex.security.expectation.list", version: "1.0.0", kind: "rpc", provider: "synex_security" },
+  "synex.security.expectation.register@1.0.0": { name: "synex.security.expectation.register", version: "1.0.0", kind: "rpc", provider: "synex_security" },
+  "synex.security.expectation.revoke@1.0.0": { name: "synex.security.expectation.revoke", version: "1.0.0", kind: "rpc", provider: "synex_security" },
+  "synex.security.health.get@1.0.0": { name: "synex.security.health.get", version: "1.0.0", kind: "rpc", provider: "synex_security" },
+  "synex.security.sentinel.report@1.0.0": { name: "synex.security.sentinel.report", version: "1.0.0", kind: "rpc", provider: "synex_security" },
+  "synex.security.signal.report@1.0.0": { name: "synex.security.signal.report", version: "1.0.0", kind: "rpc", provider: "synex_security" },
   "synex.world.door.set_state@1.0.0": { name: "synex.world.door.set_state", version: "1.0.0", kind: "rpc", provider: "synex_world" },
   "synex.world.instance.close@1.0.0": { name: "synex.world.instance.close", version: "1.0.0", kind: "rpc", provider: "synex_world" },
   "synex.world.instance.create@1.0.0": { name: "synex.world.instance.create", version: "1.0.0", kind: "rpc", provider: "synex_world" },
@@ -350,7 +376,33 @@ export const GENERATED_CONTRACTS = {
   "synex.identity.characters.list": GENERATED_CONTRACT_VERSIONS["synex.identity.characters.list@1.0.0"],
   "synex.identity.characters.select": GENERATED_CONTRACT_VERSIONS["synex.identity.characters.select@1.0.0"],
   "synex.identity.session.by_source": GENERATED_CONTRACT_VERSIONS["synex.identity.session.by_source@1.0.0"],
+  "synex.interact.bundle.register": GENERATED_CONTRACT_VERSIONS["synex.interact.bundle.register@1.0.0"],
+  "synex.interact.bundle.replace": GENERATED_CONTRACT_VERSIONS["synex.interact.bundle.replace@1.0.0"],
+  "synex.interact.bundle.unregister": GENERATED_CONTRACT_VERSIONS["synex.interact.bundle.unregister@1.0.0"],
+  "synex.interact.discovery.entities": GENERATED_CONTRACT_VERSIONS["synex.interact.discovery.entities@1.0.0"],
+  "synex.interact.discovery.snapshot": GENERATED_CONTRACT_VERSIONS["synex.interact.discovery.snapshot@1.0.0"],
+  "synex.interact.graph.ack": GENERATED_CONTRACT_VERSIONS["synex.interact.graph.ack@1.0.0"],
+  "synex.interact.lease.activate": GENERATED_CONTRACT_VERSIONS["synex.interact.lease.activate@1.0.0"],
+  "synex.interact.lease.request": GENERATED_CONTRACT_VERSIONS["synex.interact.lease.request@1.0.0"],
+  "synex.interact.metrics.report": GENERATED_CONTRACT_VERSIONS["synex.interact.metrics.report@1.0.0"],
+  "synex.interact.session.cancel": GENERATED_CONTRACT_VERSIONS["synex.interact.session.cancel@1.0.0"],
+  "synex.interact.session.join": GENERATED_CONTRACT_VERSIONS["synex.interact.session.join@1.0.0"],
+  "synex.interact.session.leave": GENERATED_CONTRACT_VERSIONS["synex.interact.session.leave@1.0.0"],
+  "synex.notify.action.invoke": GENERATED_CONTRACT_VERSIONS["synex.notify.action.invoke@1.0.0"],
+  "synex.notify.command.pull": GENERATED_CONTRACT_VERSIONS["synex.notify.command.pull@1.0.0"],
+  "synex.notify.dismiss": GENERATED_CONTRACT_VERSIONS["synex.notify.dismiss@1.0.0"],
+  "synex.notify.metrics.report": GENERATED_CONTRACT_VERSIONS["synex.notify.metrics.report@1.0.0"],
+  "synex.notify.send": GENERATED_CONTRACT_VERSIONS["synex.notify.send@1.0.0"],
+  "synex.notify.update": GENERATED_CONTRACT_VERSIONS["synex.notify.update@1.0.0"],
   "synex.runtime.status": GENERATED_CONTRACT_VERSIONS["synex.runtime.status@2.0.0"],
+  "synex.security.assessment.get": GENERATED_CONTRACT_VERSIONS["synex.security.assessment.get@1.0.0"],
+  "synex.security.case.get": GENERATED_CONTRACT_VERSIONS["synex.security.case.get@1.0.0"],
+  "synex.security.expectation.list": GENERATED_CONTRACT_VERSIONS["synex.security.expectation.list@1.0.0"],
+  "synex.security.expectation.register": GENERATED_CONTRACT_VERSIONS["synex.security.expectation.register@1.0.0"],
+  "synex.security.expectation.revoke": GENERATED_CONTRACT_VERSIONS["synex.security.expectation.revoke@1.0.0"],
+  "synex.security.health.get": GENERATED_CONTRACT_VERSIONS["synex.security.health.get@1.0.0"],
+  "synex.security.sentinel.report": GENERATED_CONTRACT_VERSIONS["synex.security.sentinel.report@1.0.0"],
+  "synex.security.signal.report": GENERATED_CONTRACT_VERSIONS["synex.security.signal.report@1.0.0"],
   "synex.world.door.set_state": GENERATED_CONTRACT_VERSIONS["synex.world.door.set_state@1.0.0"],
   "synex.world.instance.close": GENERATED_CONTRACT_VERSIONS["synex.world.instance.close@1.0.0"],
   "synex.world.instance.create": GENERATED_CONTRACT_VERSIONS["synex.world.instance.create@1.0.0"],
@@ -697,7 +749,7 @@ export type SynexEntitiesQueryByResourceOutput = { "items": Array<{ "binding"?: 
 export type SynexEntitiesQueryByResourceError = "FORBIDDEN" | "INTERNAL_ERROR" | "INVALID_ARGUMENT" | "NOT_FOUND" | "RATE_LIMITED" | "STALE_ENTITY" | "STALE_RESOURCE" | "UNAVAILABLE";
 
 export type SynexEntitiesQueryNearbyInput = { "bucket"?: { "bucket": number; "generation": 0 | string; }; "filters"?: { "archetype"?: string; "entityTypes"?: Array<"vehicle" | "ped" | "object">; "materialized"?: boolean; "persistent"?: boolean; "tags"?: Array<string>; }; "limit": number; "position": { "x": number; "y": number; "z": number; }; "radius": number; };
-export type SynexEntitiesQueryNearbyOutput = { "items": Array<{ "distance": number; "entity": { "binding"?: { "namespace": string; "ref": string; }; "bucket": number; "entityId": string; "entityType": "vehicle" | "ped" | "object"; "generation": number; "materialized": boolean; "model": number; "netId"?: number; "networkOwner"?: number; "owner": { "id": string; "type": "character" | "group" | "resource" | "system" | "user"; }; "persistent": boolean; "resourceOwner": string; "status": "DEFINED" | "SPAWNING" | "ACTIVE" | "ORPHANED" | "RECOVERING" | "DORMANT" | "DELETING" | "DELETED" | "FAILED"; }; }>; "nextCursor"?: string; "truncated": boolean; };
+export type SynexEntitiesQueryNearbyOutput = { "items": Array<{ "distance": number; "entity": { "archetype"?: string; "binding"?: { "namespace": string; "ref": string; }; "bucket": number; "entityId": string; "entityType": "vehicle" | "ped" | "object"; "generation": number; "materialized": boolean; "model": number; "netId"?: number; "networkOwner"?: number; "owner": { "id": string; "type": "character" | "group" | "resource" | "system" | "user"; }; "persistent": boolean; "resourceOwner": string; "status": "DEFINED" | "SPAWNING" | "ACTIVE" | "ORPHANED" | "RECOVERING" | "DORMANT" | "DELETING" | "DELETED" | "FAILED"; }; }>; "nextCursor"?: string; "truncated": boolean; };
 export type SynexEntitiesQueryNearbyError = "BUCKET_NOT_FOUND" | "FORBIDDEN" | "INTERNAL_ERROR" | "INVALID_ARGUMENT" | "NOT_FOUND" | "RATE_LIMITED" | "STALE_ENTITY" | "STALE_RESOURCE" | "UNAVAILABLE" | "STALE_BUCKET";
 
 export type SynexEntitiesResolvePersistentInput = { "persistentKey": string; };
@@ -1036,6 +1088,78 @@ export type SynexIdentitySessionBySourceInput = { "source": number; };
 export type SynexIdentitySessionBySourceOutput = { "found": boolean; "session"?: { "characterId"?: string; "id": string; "source": number; "sourceGeneration": number; "state": string; "userId": string; "version": number; }; };
 export type SynexIdentitySessionBySourceError = "CAPABILITY_DENIED" | "NOT_READY";
 
+export type SynexInteractBundleRegisterInput = { "bundle": { [key: string]: unknown; }; };
+export type SynexInteractBundleRegisterOutput = { "activated": true; "key": string; "ownerEpoch": number; "ownerResource": string; "revision": number; };
+export type SynexInteractBundleRegisterError = "INTERACT_BUNDLE_INVALID" | "INTERACT_BUNDLE_CONFLICT" | "INTERACT_OWNER_STALE" | "INTERACT_RATE_LIMITED" | "INTERACT_UNAVAILABLE";
+
+export type SynexInteractBundleReplaceInput = { "bundle": { [key: string]: unknown; }; "expectedRevision": number; };
+export type SynexInteractBundleReplaceOutput = { "activated": true; "key": string; "ownerEpoch": number; "ownerResource": string; "revision": number; };
+export type SynexInteractBundleReplaceError = "INTERACT_BUNDLE_INVALID" | "INTERACT_BUNDLE_CONFLICT" | "INTERACT_BUNDLE_STALE" | "INTERACT_OWNER_STALE" | "INTERACT_RATE_LIMITED" | "INTERACT_UNAVAILABLE";
+
+export type SynexInteractBundleUnregisterInput = { "key": string; "revision": number; };
+export type SynexInteractBundleUnregisterOutput = { "key": string; "removed": true; };
+export type SynexInteractBundleUnregisterError = "INTERACT_BUNDLE_NOT_FOUND" | "INTERACT_BUNDLE_STALE" | "INTERACT_OWNER_STALE" | "INTERACT_RATE_LIMITED" | "INTERACT_UNAVAILABLE";
+
+export type SynexInteractDiscoveryEntitiesInput = { "discoveryRevision": number; };
+export type SynexInteractDiscoveryEntitiesOutput = { "bucket": number; "discoveryRevision": number; "entities": Array<{ "archetype"?: string; "bucket": number; "entityRef": { "entityId": string; "generation": number; }; "entityType": "vehicle" | "ped" | "object"; "heading": number; "model": number; "netId": number; "position": { "x": number; "y": number; "z": number; }; }>; "projectionRevision": number; "schemaVersion": 1; "sourceGeneration": number; "truncated": boolean; };
+export type SynexInteractDiscoveryEntitiesError = "INTERACT_INVALID_REQUEST" | "INTERACT_DISCOVERY_STALE" | "INTERACT_LEASE_STALE" | "INTERACT_TARGET_STALE" | "INTERACT_RATE_LIMITED" | "INTERACT_PAYLOAD_TOO_LARGE" | "INTERACT_UNAVAILABLE";
+
+export type SynexInteractDiscoverySnapshotInput = { "knownRevision": number; "page": number; "snapshotRevision": number; };
+export type SynexInteractDiscoverySnapshotOutput = { "complete": boolean; "objectCount": number; "page": number; "pageCount": number; "payload": string; "revision": number; "schemaVersion": 1; "totalBytes": number; "unchanged": boolean; };
+export type SynexInteractDiscoverySnapshotError = "INTERACT_NOT_READY" | "INTERACT_INVALID_REQUEST" | "INTERACT_DISCOVERY_STALE" | "INTERACT_RATE_LIMITED" | "INTERACT_PAYLOAD_TOO_LARGE" | "INTERACT_UNAVAILABLE";
+
+export type SynexInteractGraphAckInput = { "code"?: string; "executionId": string; "nodeKey": string; "result": "COMPLETED" | "CANCELLED" | "FAILED"; "sequence": number; "sessionId": string; };
+export type SynexInteractGraphAckOutput = { "accepted": true; "duplicate": boolean; };
+export type SynexInteractGraphAckError = "INTERACT_GRAPH_INVALID" | "INTERACT_SESSION_NOT_FOUND" | "INTERACT_LEASE_STALE" | "INTERACT_RATE_LIMITED" | "INTERACT_UNAVAILABLE";
+
+export type SynexInteractLeaseActivateInput = { "leaseId": string; "nonce": string; };
+export type SynexInteractLeaseActivateOutput = { "accepted": true; "leaseId": string; "sessionId": string; "state": "READY" | "RUNNING" | "WAITING"; };
+export type SynexInteractLeaseActivateError = "INTERACT_LEASE_EXPIRED" | "INTERACT_LEASE_REVOKED" | "INTERACT_LEASE_REPLAYED" | "INTERACT_LEASE_STALE" | "INTERACT_ACTOR_BUSY" | "INTERACT_RATE_LIMITED" | "INTERACT_UNAVAILABLE";
+
+export type SynexInteractLeaseRequestInput = { "clientRevision": number; "intent": { "key": string; "revision": number; }; "slotKey"?: string; "target": { "kind": "world"; "worldRef": { "key": string; "kind"?: "anchor" | "door" | "portal"; "revision": number; }; [key: string]: unknown; } | { "entityRef": { "entityId": string; "generation": number; }; "kind": "entity"; [key: string]: unknown; } | { "bone"?: string; "kind": "ambient"; "model": number; "netId": number; [key: string]: unknown; } | { "bindingKey": string; "kind": "static"; "position"?: { "x": number; "y": number; "z": number; }; [key: string]: unknown; } | { "bindingKey": string; "kind": "dynamic"; "position"?: { "x": number; "y": number; "z": number; }; [key: string]: unknown; }; };
+export type SynexInteractLeaseRequestOutput = { "expiresAt": number; "intent": { "key": string; "revision": number; }; "leaseId": string; "nonce": string; "requiredParticipants"?: Array<string>; "sessionId": string; "state": "ISSUED" | "WAITING"; };
+export type SynexInteractLeaseRequestError = "INTERACT_NOT_READY" | "INTERACT_INTENT_NOT_FOUND" | "INTERACT_INTENT_STALE" | "INTERACT_TARGET_INVALID" | "INTERACT_TARGET_STALE" | "INTERACT_SLOT_NOT_FOUND" | "INTERACT_SLOT_BUSY" | "INTERACT_SLOT_DISABLED" | "INTERACT_LEASE_DENIED" | "INTERACT_ACTOR_BUSY" | "INTERACT_RATE_LIMITED" | "INTERACT_UNAVAILABLE";
+
+export type SynexInteractMetricsReportInput = { "clientEpoch": number; "counters": { "bloomOpened"?: number; "candidatesSeen"?: number; "expensiveChecks"?: number; "intentChanges"?: number; "leaseRequests"?: number; "promptsShown"?: number; "providerTimeouts"?: number; "sensorTicks"?: number; "transportFailures"?: number; }; "gauges": { "candidateCount"?: number; "expensiveCandidateCount"?: number; "intentScoringDurationMs"?: number; "providerDurationMs"?: number; "sensorDurationMs"?: number; "sensorIntervalMs"?: number; }; "sequence": number; };
+export type SynexInteractMetricsReportOutput = { "accepted": true; "duplicate": boolean; "nextReportAfterMs": number; };
+export type SynexInteractMetricsReportError = "INTERACT_INVALID_REQUEST" | "INTERACT_RATE_LIMITED" | "INTERACT_UNAVAILABLE";
+
+export type SynexInteractSessionCancelInput = { "reason": "USER_CANCELLED" | "ACTOR_MOVED" | "ACTOR_DIED" | "ACTOR_RAGDOLL" | "ACTOR_DAMAGED" | "TARGET_MOVED" | "TARGET_GONE" | "OUT_OF_RANGE" | "WORLD_CHANGED" | "ENTITY_REF_STALE" | "SLOT_LOST" | "TARGET_STATE_CHANGED" | "TIMEOUT"; "sessionId": string; };
+export type SynexInteractSessionCancelOutput = { "cancelled": true; "sessionId": string; };
+export type SynexInteractSessionCancelError = "INTERACT_SESSION_NOT_FOUND" | "INTERACT_LEASE_STALE" | "INTERACT_RATE_LIMITED" | "INTERACT_UNAVAILABLE";
+
+export type SynexInteractSessionJoinInput = { "invitationId": string; "role": string; "sessionId": string; };
+export type SynexInteractSessionJoinOutput = { "leaseId": string; "nonce": string; "role": string; "sessionId": string; "state": "WAITING"; };
+export type SynexInteractSessionJoinError = "INTERACT_INVALID_REQUEST" | "INTERACT_SESSION_NOT_FOUND" | "INTERACT_SESSION_EXPIRED" | "INTERACT_PARTICIPANT_DENIED" | "INTERACT_LEASE_STALE" | "INTERACT_ACTOR_BUSY" | "INTERACT_INTENT_NOT_FOUND" | "INTERACT_INTENT_STALE" | "INTERACT_BUNDLE_INVALID" | "INTERACT_TARGET_INVALID" | "INTERACT_TARGET_STALE" | "INTERACT_SLOT_NOT_FOUND" | "INTERACT_SLOT_BUSY" | "INTERACT_SLOT_DISABLED" | "INTERACT_SLOT_LOST" | "INTERACT_RESERVATION_INVALID" | "INTERACT_LEASE_DENIED" | "INTERACT_PROVIDER_UNAVAILABLE" | "INTERACT_PROVIDER_TIMEOUT" | "INTERACT_EVALUATOR_UNAVAILABLE" | "INTERACT_EVALUATOR_TIMEOUT" | "INTERACT_EVALUATOR_INVALID" | "INTERACT_ADAPTER_MISSING" | "INTERACT_DOMAIN_REJECTED" | "INTERACT_RATE_LIMITED" | "INTERACT_UNAVAILABLE";
+
+export type SynexInteractSessionLeaveInput = { "sessionId": string; };
+export type SynexInteractSessionLeaveOutput = { "left": true; "sessionId": string; };
+export type SynexInteractSessionLeaveError = "INTERACT_SESSION_NOT_FOUND" | "INTERACT_PARTICIPANT_DENIED" | "INTERACT_LEASE_STALE" | "INTERACT_RATE_LIMITED" | "INTERACT_UNAVAILABLE";
+
+export type SynexNotifyActionInvokeInput = { "notificationId": string; "revision": number; "token": string; };
+export type SynexNotifyActionInvokeOutput = { "accepted": true; "actionId": string; };
+export type SynexNotifyActionInvokeError = "NOTIFY_INVALID_REQUEST" | "NOTIFY_ACTION_NOT_FOUND" | "NOTIFY_ACTION_EXPIRED" | "NOTIFY_ACTION_REPLAYED" | "NOTIFY_NOTIFICATION_STALE" | "NOTIFY_TARGET_STALE" | "NOTIFY_UNAVAILABLE";
+
+export type SynexNotifyCommandPullInput = { "commandId": string; };
+export type SynexNotifyCommandPullOutput = { "command": "show" | "update" | "dismiss" | "owner_stop"; "commandId": string; "notificationId": string; "ownerEpoch": number; "ownerResource": string; "payload"?: { [key: string]: unknown; }; "revision": number; "schemaVersion": 1; "target": { "sessionId": string; "source": number; "sourceGeneration": number; }; };
+export type SynexNotifyCommandPullError = "NOTIFY_INVALID_REQUEST" | "NOTIFY_COMMAND_NOT_FOUND" | "NOTIFY_TARGET_STALE" | "NOTIFY_UNAVAILABLE";
+
+export type SynexNotifyDismissInput = { "handle": { "notificationId": string; "ownerEpoch": number; "ownerResource": string; "revision": number; }; "reason"?: "dismissed" | "cancelled" | "superseded"; };
+export type SynexNotifyDismissOutput = { "dismissed": true; "notificationId": string; };
+export type SynexNotifyDismissError = "NOTIFY_INVALID_REQUEST" | "NOTIFY_OWNER_INVALID" | "NOTIFY_OWNER_STALE" | "NOTIFY_RATE_LIMITED" | "NOTIFY_NOTIFICATION_NOT_FOUND" | "NOTIFY_NOTIFICATION_STALE" | "NOTIFY_TARGET_STALE" | "NOTIFY_UNAVAILABLE";
+
+export type SynexNotifyMetricsReportInput = { "clientEpoch": number; "counters": { "coalesced": number; "created": number; "deduplicated": number; "displayed": number; "grouped": number; "nativeFallbacks": number; "presentationExpired": number; "queueEvictions": number; "queuePromotions": number; "queueWaitTotalMs": number; "quietDeferred": number; "removed": number; "renderAckSamples": number; "renderAckTotalMs": number; "renderDispatchSamples": number; "renderDispatchTotalMs": number; "suppressed": number; "transportFailures": number; }; "gauges": { "pendingVisibilityAcks": number; "queued": number; "visible": number; }; "sequence": number; };
+export type SynexNotifyMetricsReportOutput = { "accepted": true; "duplicate": boolean; "nextReportAfterMs": number; };
+export type SynexNotifyMetricsReportError = "NOTIFY_INVALID_REQUEST" | "NOTIFY_RATE_LIMITED" | "NOTIFY_QUEUE_FULL" | "NOTIFY_TARGET_STALE" | "NOTIFY_UNAVAILABLE";
+
+export type SynexNotifySendInput = { "payload": { "actions"?: Array<{ "hint"?: string; "id": string; "label": string; "style"?: "primary" | "quiet" | "danger"; "ttlMs"?: number; }>; "dedupeKey"?: string; "dedupePolicy"?: "suppress" | "count" | "replace" | "refresh"; "durationMs"?: number; "groupKey"?: string; "history"?: boolean; "iconKey"?: "check" | "close" | "chevron-down" | "chevron-right" | "arrow-left" | "arrow-right" | "search" | "plus" | "minus" | "more" | "copy" | "eye" | "eye-off" | "info" | "warning" | "error" | "success" | "menu" | "command" | "signal"; "kind"?: "toast" | "progress" | "persistent" | "banner" | "status"; "maxLifetimeMs"?: number; "maxRefreshCount"?: number; "message"?: string; "position"?: "top-right" | "top-left" | "bottom-right" | "bottom-left" | "top-center" | "bottom-center"; "priority"?: "low" | "normal" | "high" | "critical"; "progress"?: { "maximum"?: number; "mode": "determinate" | "indeterminate"; "state": "PENDING" | "RUNNING" | "SUCCESS" | "FAILED" | "CANCELLED"; "value"?: number; }; "sound"?: boolean; "title": string; "tone"?: "neutral" | "info" | "success" | "warning" | "danger"; }; "target": { "sessionId": string; "source": number; "sourceGeneration": number; }; };
+export type SynexNotifySendOutput = { "notificationId": string; "ownerEpoch": number; "ownerResource": string; "revision": number; };
+export type SynexNotifySendError = "NOTIFY_INVALID_REQUEST" | "NOTIFY_OWNER_STALE" | "NOTIFY_RATE_LIMITED" | "NOTIFY_QUEUE_FULL" | "NOTIFY_INVALID_PRIORITY" | "NOTIFY_PRIORITY_DENIED" | "NOTIFY_UI_UNAVAILABLE" | "NOTIFY_PAYLOAD_TOO_LARGE" | "NOTIFY_TARGET_STALE" | "NOTIFY_UNAVAILABLE";
+
+export type SynexNotifyUpdateInput = { "handle": { "notificationId": string; "ownerEpoch": number; "ownerResource": string; "revision": number; }; "patch": { "actions"?: Array<{ "hint"?: string; "id": string; "label": string; "style"?: "primary" | "quiet" | "danger"; "ttlMs"?: number; }>; "durationMs"?: number; "message"?: string; "progress"?: { "maximum"?: number; "mode": "determinate" | "indeterminate"; "state": "PENDING" | "RUNNING" | "SUCCESS" | "FAILED" | "CANCELLED"; "value"?: number; }; "title"?: string; "tone"?: "neutral" | "info" | "success" | "warning" | "danger"; }; };
+export type SynexNotifyUpdateOutput = { "notificationId": string; "ownerEpoch": number; "ownerResource": string; "revision": number; };
+export type SynexNotifyUpdateError = "NOTIFY_INVALID_REQUEST" | "NOTIFY_OWNER_INVALID" | "NOTIFY_OWNER_STALE" | "NOTIFY_RATE_LIMITED" | "NOTIFY_NOTIFICATION_NOT_FOUND" | "NOTIFY_NOTIFICATION_STALE" | "NOTIFY_ACTION_EXPIRED" | "NOTIFY_PAYLOAD_TOO_LARGE" | "NOTIFY_TARGET_STALE" | "NOTIFY_UNAVAILABLE";
+
 export type SynexRuntimeStatusf3d52e61Input = Record<string, never>;
 export type SynexRuntimeStatusf3d52e61Output = { "operational": boolean; "reasons": { [key: string]: unknown; }; "recentTransitions": Array<{ [key: string]: unknown; }>; "revision": number; "state": string; };
 export type SynexRuntimeStatusf3d52e61Error = "CAPABILITY_DENIED" | "NOT_READY";
@@ -1043,6 +1167,38 @@ export type SynexRuntimeStatusf3d52e61Error = "CAPABILITY_DENIED" | "NOT_READY";
 export type SynexRuntimeStatusc2f5ab45Input = Record<string, never>;
 export type SynexRuntimeStatusc2f5ab45Output = { "operational": boolean; "playerAdmission": boolean; "reasons": { [key: string]: unknown; }; "recentTransitions": Array<{ [key: string]: unknown; }>; "revision": number; "state": string; };
 export type SynexRuntimeStatusc2f5ab45Error = "CAPABILITY_DENIED" | "NOT_READY";
+
+export type SynexSecurityAssessmentGetInput = { "subjectKey": string; };
+export type SynexSecurityAssessmentGetOutput = { "activeExpectations": number; "confidence": number; "hypothesesJson": string; "severity": "INFO" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"; "status": "CLEAR" | "OBSERVE" | "REVIEW" | "ACTION"; "subjectKey": string; };
+export type SynexSecurityAssessmentGetError = "SECURITY_SUBJECT_INVALID" | "SECURITY_INVALID_REQUEST" | "SECURITY_RATE_LIMITED" | "SECURITY_VALUE_INVALID" | "SECURITY_UNAVAILABLE";
+
+export type SynexSecurityCaseGetInput = { "caseId": string; };
+export type SynexSecurityCaseGetOutput = { "caseId": string; "category": "transport" | "economy" | "inventory" | "interaction" | "movement" | "combat" | "player_integrity" | "entity" | "weapon" | "world" | "client_integrity" | "resource_integrity" | "connection"; "confidence": number; "detailJson": string; "enforcementCount": number; "openedAt": string; "severity": "INFO" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"; "signalCount": number; "status": "OPEN" | "MONITORING" | "REVIEW" | "ENFORCED" | "CLOSED"; "updatedAt": string; };
+export type SynexSecurityCaseGetError = "SECURITY_CASE_NOT_FOUND" | "SECURITY_INVALID_REQUEST" | "SECURITY_RATE_LIMITED" | "SECURITY_PERSISTENCE_INVALID" | "SECURITY_VALUE_INVALID" | "SECURITY_UNAVAILABLE";
+
+export type SynexSecurityExpectationListInput = { "cursor"?: number; "limit": number; "subjectKey": string; };
+export type SynexSecurityExpectationListOutput = { "itemsJson": string; "nextCursor"?: number; "total": number; "truncated": boolean; };
+export type SynexSecurityExpectationListError = "SECURITY_INVALID_REQUEST" | "SECURITY_EXPECTATION_INVALID" | "SECURITY_RATE_LIMITED" | "SECURITY_VALUE_INVALID" | "SECURITY_UNAVAILABLE";
+
+export type SynexSecurityExpectationRegisterInput = { "constraintsJson": string; "kind": "combat.invulnerable" | "combat.passive" | "visibility.hidden" | "movement.teleport" | "movement.noclip" | "camera.spectate" | "camera.freecam" | "player.model" | "weapon.grant" | "entity.spawn"; "namespace": string; "reason": string; "subject": { "sessionId": string; "sourceGeneration": number; [key: string]: unknown; } | { "userId": string; [key: string]: unknown; } | { "characterId": string; [key: string]: unknown; } | { "resourceName": string; [key: string]: unknown; }; "traceId"?: string; "ttlMs": number; };
+export type SynexSecurityExpectationRegisterOutput = { "expectationId": string; "expiresAtMs": number; "kind": "combat.invulnerable" | "combat.passive" | "visibility.hidden" | "movement.teleport" | "movement.noclip" | "camera.spectate" | "camera.freecam" | "player.model" | "weapon.grant" | "entity.spawn"; "ownerEpoch": number; "ownerResource": string; "revision": number; };
+export type SynexSecurityExpectationRegisterError = "SECURITY_EXPECTATION_INVALID" | "SECURITY_EXPECTATION_STALE" | "SECURITY_EXPECTATION_LIMIT" | "SECURITY_EXPECTATION_CONFLICT" | "SECURITY_EXPECTATION_DENIED" | "SECURITY_OWNER_STALE" | "SECURITY_ID_INVALID" | "SECURITY_VALUE_INVALID" | "SECURITY_RATE_LIMITED" | "SECURITY_UNAVAILABLE" | "STALE_RESOURCE";
+
+export type SynexSecurityExpectationRevokeInput = { "expectationId": string; "reason"?: string; "revision": number; };
+export type SynexSecurityExpectationRevokeOutput = { "expectationId": string; "revoked": true; };
+export type SynexSecurityExpectationRevokeError = "SECURITY_EXPECTATION_NOT_FOUND" | "SECURITY_EXPECTATION_INVALID" | "SECURITY_EXPECTATION_DENIED" | "SECURITY_EXPECTATION_STALE" | "SECURITY_OWNER_STALE" | "SECURITY_RATE_LIMITED" | "SECURITY_UNAVAILABLE" | "STALE_RESOURCE";
+
+export type SynexSecurityHealthGetInput = Record<string, never>;
+export type SynexSecurityHealthGetOutput = { "activeExpectations": number; "detectors": number; "openCases": number; "persistenceBacklog": number; "reasonsJson": string; "sentinelSources": number; "state": "READY" | "DEGRADED" | "UNHEALTHY"; };
+export type SynexSecurityHealthGetError = "SECURITY_RATE_LIMITED" | "SECURITY_UNAVAILABLE";
+
+export type SynexSecuritySentinelReportInput = { "challengeRef": string; "clientEpoch": number; "sample": { "alpha": number; "armor": number; "camera": Array<number>; "health": number; "model": number; "movement": { "falling": boolean; "inVehicle": boolean; "parachute": number; "ragdoll": boolean; }; "position": Array<number>; "velocity": Array<number>; "visible": boolean; "weapon": number; }; "sampledAtMs": number; "sequence": number; };
+export type SynexSecuritySentinelReportOutput = { "accepted": true; "duplicate": boolean; "nextChallengeRef": string; "nextReportAfterMs": number; };
+export type SynexSecuritySentinelReportError = "SECURITY_SENTINEL_INVALID" | "SECURITY_SENTINEL_REPLAY" | "SECURITY_SENTINEL_STALE" | "SECURITY_RATE_LIMITED" | "SECURITY_UNAVAILABLE";
+
+export type SynexSecuritySignalReportInput = { "category": "transport" | "economy" | "inventory" | "interaction" | "movement" | "combat" | "player_integrity" | "entity" | "weapon" | "world" | "client_integrity" | "resource_integrity" | "connection"; "code": string; "confidence": number; "correlationKey": string; "detector": string; "entityRefJson"?: string; "evidenceClass": "DOMAIN_AUTHORITATIVE"; "evidenceJson"?: string; "namespace": string; "requestId"?: string; "rootEventId"?: string; "severity": "INFO" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"; "subject": { "sessionId": string; "sourceGeneration": number; [key: string]: unknown; } | { "userId": string; [key: string]: unknown; } | { "characterId": string; [key: string]: unknown; } | { "resourceName": string; [key: string]: unknown; }; "summary": string; "traceId"?: string; "worldRefJson"?: string; };
+export type SynexSecuritySignalReportOutput = { "accepted": true; "caseId"?: string; "deduplicated": boolean; "signalId": string; };
+export type SynexSecuritySignalReportError = "SECURITY_SIGNAL_INVALID" | "SECURITY_SUBJECT_INVALID" | "SECURITY_SUBJECT_STALE" | "SECURITY_NAMESPACE_DENIED" | "SECURITY_OWNER_STALE" | "SECURITY_RATE_LIMITED" | "SECURITY_PAYLOAD_TOO_LARGE" | "SECURITY_VALUE_INVALID" | "SECURITY_ID_INVALID" | "SECURITY_CLOCK_INVALID" | "SECURITY_UNAVAILABLE" | "STALE_RESOURCE";
 
 export type SynexWorldDoorSetStateInput = { "doorRef": { "key": string; "kind": "door"; "revision": number; }; "expectedVersion": number; "idempotencyKey": string; "instanceId"?: string; "reasonCode": string; "source"?: number; "state": "LOCKED" | "UNLOCKED" | "DISABLED"; };
 export type SynexWorldDoorSetStateOutput = { "defaulted"?: boolean; "definitionRevision": number; "eventId": string; "key": string; "persistent": boolean; "previousVersion"?: number; "provenance": { "actor": { "ref": string; "type": "resource" | "system" | "user" | "character" | "entity"; }; "reasonCode": string; "sourceResource": string; "timestamp": string; "traceId": string; }; "replayed": boolean; "schemaVersion": number; "state": "LOCKED" | "UNLOCKED" | "DISABLED"; "version": number; };
@@ -1250,8 +1406,34 @@ export interface GeneratedVersionedContractMap {
   "synex.identity.characters.list@1.0.0": { input: SynexIdentityCharactersListInput; output: SynexIdentityCharactersListOutput; error: SynexIdentityCharactersListError };
   "synex.identity.characters.select@1.0.0": { input: SynexIdentityCharactersSelectInput; output: SynexIdentityCharactersSelectOutput; error: SynexIdentityCharactersSelectError };
   "synex.identity.session.by_source@1.0.0": { input: SynexIdentitySessionBySourceInput; output: SynexIdentitySessionBySourceOutput; error: SynexIdentitySessionBySourceError };
+  "synex.interact.bundle.register@1.0.0": { input: SynexInteractBundleRegisterInput; output: SynexInteractBundleRegisterOutput; error: SynexInteractBundleRegisterError };
+  "synex.interact.bundle.replace@1.0.0": { input: SynexInteractBundleReplaceInput; output: SynexInteractBundleReplaceOutput; error: SynexInteractBundleReplaceError };
+  "synex.interact.bundle.unregister@1.0.0": { input: SynexInteractBundleUnregisterInput; output: SynexInteractBundleUnregisterOutput; error: SynexInteractBundleUnregisterError };
+  "synex.interact.discovery.entities@1.0.0": { input: SynexInteractDiscoveryEntitiesInput; output: SynexInteractDiscoveryEntitiesOutput; error: SynexInteractDiscoveryEntitiesError };
+  "synex.interact.discovery.snapshot@1.0.0": { input: SynexInteractDiscoverySnapshotInput; output: SynexInteractDiscoverySnapshotOutput; error: SynexInteractDiscoverySnapshotError };
+  "synex.interact.graph.ack@1.0.0": { input: SynexInteractGraphAckInput; output: SynexInteractGraphAckOutput; error: SynexInteractGraphAckError };
+  "synex.interact.lease.activate@1.0.0": { input: SynexInteractLeaseActivateInput; output: SynexInteractLeaseActivateOutput; error: SynexInteractLeaseActivateError };
+  "synex.interact.lease.request@1.0.0": { input: SynexInteractLeaseRequestInput; output: SynexInteractLeaseRequestOutput; error: SynexInteractLeaseRequestError };
+  "synex.interact.metrics.report@1.0.0": { input: SynexInteractMetricsReportInput; output: SynexInteractMetricsReportOutput; error: SynexInteractMetricsReportError };
+  "synex.interact.session.cancel@1.0.0": { input: SynexInteractSessionCancelInput; output: SynexInteractSessionCancelOutput; error: SynexInteractSessionCancelError };
+  "synex.interact.session.join@1.0.0": { input: SynexInteractSessionJoinInput; output: SynexInteractSessionJoinOutput; error: SynexInteractSessionJoinError };
+  "synex.interact.session.leave@1.0.0": { input: SynexInteractSessionLeaveInput; output: SynexInteractSessionLeaveOutput; error: SynexInteractSessionLeaveError };
+  "synex.notify.action.invoke@1.0.0": { input: SynexNotifyActionInvokeInput; output: SynexNotifyActionInvokeOutput; error: SynexNotifyActionInvokeError };
+  "synex.notify.command.pull@1.0.0": { input: SynexNotifyCommandPullInput; output: SynexNotifyCommandPullOutput; error: SynexNotifyCommandPullError };
+  "synex.notify.dismiss@1.0.0": { input: SynexNotifyDismissInput; output: SynexNotifyDismissOutput; error: SynexNotifyDismissError };
+  "synex.notify.metrics.report@1.0.0": { input: SynexNotifyMetricsReportInput; output: SynexNotifyMetricsReportOutput; error: SynexNotifyMetricsReportError };
+  "synex.notify.send@1.0.0": { input: SynexNotifySendInput; output: SynexNotifySendOutput; error: SynexNotifySendError };
+  "synex.notify.update@1.0.0": { input: SynexNotifyUpdateInput; output: SynexNotifyUpdateOutput; error: SynexNotifyUpdateError };
   "synex.runtime.status@1.0.0": { input: SynexRuntimeStatusf3d52e61Input; output: SynexRuntimeStatusf3d52e61Output; error: SynexRuntimeStatusf3d52e61Error };
   "synex.runtime.status@2.0.0": { input: SynexRuntimeStatusc2f5ab45Input; output: SynexRuntimeStatusc2f5ab45Output; error: SynexRuntimeStatusc2f5ab45Error };
+  "synex.security.assessment.get@1.0.0": { input: SynexSecurityAssessmentGetInput; output: SynexSecurityAssessmentGetOutput; error: SynexSecurityAssessmentGetError };
+  "synex.security.case.get@1.0.0": { input: SynexSecurityCaseGetInput; output: SynexSecurityCaseGetOutput; error: SynexSecurityCaseGetError };
+  "synex.security.expectation.list@1.0.0": { input: SynexSecurityExpectationListInput; output: SynexSecurityExpectationListOutput; error: SynexSecurityExpectationListError };
+  "synex.security.expectation.register@1.0.0": { input: SynexSecurityExpectationRegisterInput; output: SynexSecurityExpectationRegisterOutput; error: SynexSecurityExpectationRegisterError };
+  "synex.security.expectation.revoke@1.0.0": { input: SynexSecurityExpectationRevokeInput; output: SynexSecurityExpectationRevokeOutput; error: SynexSecurityExpectationRevokeError };
+  "synex.security.health.get@1.0.0": { input: SynexSecurityHealthGetInput; output: SynexSecurityHealthGetOutput; error: SynexSecurityHealthGetError };
+  "synex.security.sentinel.report@1.0.0": { input: SynexSecuritySentinelReportInput; output: SynexSecuritySentinelReportOutput; error: SynexSecuritySentinelReportError };
+  "synex.security.signal.report@1.0.0": { input: SynexSecuritySignalReportInput; output: SynexSecuritySignalReportOutput; error: SynexSecuritySignalReportError };
   "synex.world.door.set_state@1.0.0": { input: SynexWorldDoorSetStateInput; output: SynexWorldDoorSetStateOutput; error: SynexWorldDoorSetStateError };
   "synex.world.instance.close@1.0.0": { input: SynexWorldInstanceCloseInput; output: SynexWorldInstanceCloseOutput; error: SynexWorldInstanceCloseError };
   "synex.world.instance.create@1.0.0": { input: SynexWorldInstanceCreateInput; output: SynexWorldInstanceCreateOutput; error: SynexWorldInstanceCreateError };
@@ -1430,7 +1612,33 @@ export interface GeneratedContractMap {
   "synex.identity.characters.list": { input: SynexIdentityCharactersListInput; output: SynexIdentityCharactersListOutput; error: SynexIdentityCharactersListError };
   "synex.identity.characters.select": { input: SynexIdentityCharactersSelectInput; output: SynexIdentityCharactersSelectOutput; error: SynexIdentityCharactersSelectError };
   "synex.identity.session.by_source": { input: SynexIdentitySessionBySourceInput; output: SynexIdentitySessionBySourceOutput; error: SynexIdentitySessionBySourceError };
+  "synex.interact.bundle.register": { input: SynexInteractBundleRegisterInput; output: SynexInteractBundleRegisterOutput; error: SynexInteractBundleRegisterError };
+  "synex.interact.bundle.replace": { input: SynexInteractBundleReplaceInput; output: SynexInteractBundleReplaceOutput; error: SynexInteractBundleReplaceError };
+  "synex.interact.bundle.unregister": { input: SynexInteractBundleUnregisterInput; output: SynexInteractBundleUnregisterOutput; error: SynexInteractBundleUnregisterError };
+  "synex.interact.discovery.entities": { input: SynexInteractDiscoveryEntitiesInput; output: SynexInteractDiscoveryEntitiesOutput; error: SynexInteractDiscoveryEntitiesError };
+  "synex.interact.discovery.snapshot": { input: SynexInteractDiscoverySnapshotInput; output: SynexInteractDiscoverySnapshotOutput; error: SynexInteractDiscoverySnapshotError };
+  "synex.interact.graph.ack": { input: SynexInteractGraphAckInput; output: SynexInteractGraphAckOutput; error: SynexInteractGraphAckError };
+  "synex.interact.lease.activate": { input: SynexInteractLeaseActivateInput; output: SynexInteractLeaseActivateOutput; error: SynexInteractLeaseActivateError };
+  "synex.interact.lease.request": { input: SynexInteractLeaseRequestInput; output: SynexInteractLeaseRequestOutput; error: SynexInteractLeaseRequestError };
+  "synex.interact.metrics.report": { input: SynexInteractMetricsReportInput; output: SynexInteractMetricsReportOutput; error: SynexInteractMetricsReportError };
+  "synex.interact.session.cancel": { input: SynexInteractSessionCancelInput; output: SynexInteractSessionCancelOutput; error: SynexInteractSessionCancelError };
+  "synex.interact.session.join": { input: SynexInteractSessionJoinInput; output: SynexInteractSessionJoinOutput; error: SynexInteractSessionJoinError };
+  "synex.interact.session.leave": { input: SynexInteractSessionLeaveInput; output: SynexInteractSessionLeaveOutput; error: SynexInteractSessionLeaveError };
+  "synex.notify.action.invoke": { input: SynexNotifyActionInvokeInput; output: SynexNotifyActionInvokeOutput; error: SynexNotifyActionInvokeError };
+  "synex.notify.command.pull": { input: SynexNotifyCommandPullInput; output: SynexNotifyCommandPullOutput; error: SynexNotifyCommandPullError };
+  "synex.notify.dismiss": { input: SynexNotifyDismissInput; output: SynexNotifyDismissOutput; error: SynexNotifyDismissError };
+  "synex.notify.metrics.report": { input: SynexNotifyMetricsReportInput; output: SynexNotifyMetricsReportOutput; error: SynexNotifyMetricsReportError };
+  "synex.notify.send": { input: SynexNotifySendInput; output: SynexNotifySendOutput; error: SynexNotifySendError };
+  "synex.notify.update": { input: SynexNotifyUpdateInput; output: SynexNotifyUpdateOutput; error: SynexNotifyUpdateError };
   "synex.runtime.status": { input: SynexRuntimeStatusc2f5ab45Input; output: SynexRuntimeStatusc2f5ab45Output; error: SynexRuntimeStatusc2f5ab45Error };
+  "synex.security.assessment.get": { input: SynexSecurityAssessmentGetInput; output: SynexSecurityAssessmentGetOutput; error: SynexSecurityAssessmentGetError };
+  "synex.security.case.get": { input: SynexSecurityCaseGetInput; output: SynexSecurityCaseGetOutput; error: SynexSecurityCaseGetError };
+  "synex.security.expectation.list": { input: SynexSecurityExpectationListInput; output: SynexSecurityExpectationListOutput; error: SynexSecurityExpectationListError };
+  "synex.security.expectation.register": { input: SynexSecurityExpectationRegisterInput; output: SynexSecurityExpectationRegisterOutput; error: SynexSecurityExpectationRegisterError };
+  "synex.security.expectation.revoke": { input: SynexSecurityExpectationRevokeInput; output: SynexSecurityExpectationRevokeOutput; error: SynexSecurityExpectationRevokeError };
+  "synex.security.health.get": { input: SynexSecurityHealthGetInput; output: SynexSecurityHealthGetOutput; error: SynexSecurityHealthGetError };
+  "synex.security.sentinel.report": { input: SynexSecuritySentinelReportInput; output: SynexSecuritySentinelReportOutput; error: SynexSecuritySentinelReportError };
+  "synex.security.signal.report": { input: SynexSecuritySignalReportInput; output: SynexSecuritySignalReportOutput; error: SynexSecuritySignalReportError };
   "synex.world.door.set_state": { input: SynexWorldDoorSetStateInput; output: SynexWorldDoorSetStateOutput; error: SynexWorldDoorSetStateError };
   "synex.world.instance.close": { input: SynexWorldInstanceCloseInput; output: SynexWorldInstanceCloseOutput; error: SynexWorldInstanceCloseError };
   "synex.world.instance.create": { input: SynexWorldInstanceCreateInput; output: SynexWorldInstanceCreateOutput; error: SynexWorldInstanceCreateError };

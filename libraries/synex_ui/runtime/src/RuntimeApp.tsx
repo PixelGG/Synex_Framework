@@ -2,6 +2,7 @@ import {
   Component,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -38,13 +39,18 @@ import {
   UI_PROTOCOL_VERSION,
   createBrowserBootId,
   parseGameEnvelope,
+  parseSignalSoundPayload,
   type InputDevice,
   type NavigationIntent,
+  type RuntimeSignal,
   type RuntimeSurface,
   type SurfaceField,
   type SurfaceOption,
 } from './protocol';
 import { createInitialRuntimeState, runtimeReducer } from './store';
+import { closeSignalSound, createSignalSoundIngressFence, playSignalSound } from './signalSound';
+import { SIGNAL_EXIT_MS, SignalRail } from './SignalSurface';
+import { InteractionSurface } from './InteractionSurface';
 import { createNuiTransport, type NuiTransport } from './transport';
 
 interface BoundaryProps {
@@ -55,6 +61,14 @@ interface BoundaryProps {
   children: ReactNode;
 }
 interface BoundaryState { failed: boolean }
+
+interface SignalVisibilityTarget {
+  key: string;
+  generation: number;
+  capacity: number;
+  signals: Array<Pick<RuntimeSignal,
+    'ownerResource' | 'ownerEpoch' | 'signalId' | 'revision'>>;
+}
 
 export class OpenSurfaceBoundary extends Component<BoundaryProps, BoundaryState> {
   override state: BoundaryState = { failed: false };
@@ -97,25 +111,23 @@ export class OpenSurfaceBoundary extends Component<BoundaryProps, BoundaryState>
 
   override render() {
     if (!this.props.open) return null;
-    if (!this.state.failed) return <div className="sx-root sx-runtime-root">{this.props.children}</div>;
+    if (!this.state.failed) return <>{this.props.children}</>;
     const surface = this.props.surface;
     return (
-      <div className="sx-root sx-runtime-root">
-        <div className="sx-runtime-error" role="alert">
-          <strong>This surface could not be rendered.</strong>
-          <span>The runtime requested a fail-safe focus release. Retry the action from its owning resource.</span>
-          {surface ? <button type="button" className="sx-button" data-sx-variant="secondary" onClick={() => {
-            void this.props.transport.post('runtime:close', {
-              requestId: surface.requestId,
-              browserBootId: this.props.browserBootId,
-              instanceId: surface.instanceId,
-              surfaceId: surface.surfaceId,
-              ownerEpoch: surface.ownerEpoch,
-              revision: surface.revision,
-              reason: 'renderFailure',
-            });
-          }}>Release focus</button> : null}
-        </div>
+      <div className="sx-runtime-error" role="alert">
+        <strong>This surface could not be rendered.</strong>
+        <span>The runtime requested a fail-safe focus release. Retry the action from its owning resource.</span>
+        {surface ? <button type="button" className="sx-button" data-sx-variant="secondary" onClick={() => {
+          void this.props.transport.post('runtime:close', {
+            requestId: surface.requestId,
+            browserBootId: this.props.browserBootId,
+            instanceId: surface.instanceId,
+            surfaceId: surface.surfaceId,
+            ownerEpoch: surface.ownerEpoch,
+            revision: surface.revision,
+            reason: 'renderFailure',
+          });
+        }}>Release focus</button> : null}
       </div>
     );
   }
@@ -178,13 +190,16 @@ export function focusByIntent(intent: NavigationIntent) {
   candidates[next]?.focus();
 }
 
-function applyDocumentState(open: boolean, state: ReturnType<typeof createInitialRuntimeState>) {
-  document.body.dataset.sxOpen = open ? 'true' : 'false';
+function applyDocumentState(visible: boolean, interactive: boolean, state: ReturnType<typeof createInitialRuntimeState>) {
+  document.body.dataset.sxVisible = visible ? 'true' : 'false';
+  document.body.dataset.sxInteractive = interactive ? 'true' : 'false';
+  document.body.dataset.sxOpen = interactive ? 'true' : 'false';
   document.documentElement.dataset.sxQuality = state.preferences.quality.toLowerCase();
   document.documentElement.dataset.sxDensity = state.preferences.density;
   document.documentElement.dataset.sxReducedMotion = String(state.preferences.reducedMotion);
   document.documentElement.dataset.sxReducedTransparency = String(state.preferences.reducedTransparency);
   document.documentElement.dataset.sxHighContrast = String(state.preferences.highContrast);
+  document.documentElement.dataset.sxInteractionAssist = String(state.preferences.interactionAssist);
   document.documentElement.dataset.sxInput = state.inputDevice;
   const style = document.documentElement.style;
   style.setProperty('--synex-screen-width', `${state.screen.width}px`);
@@ -525,8 +540,32 @@ export function RuntimeApp() {
   const browserBootId = useMemo(createBrowserBootId, []);
   const transport = useMemo(() => createNuiTransport(), []);
   const [state, dispatch] = useReducer(runtimeReducer, browserBootId, createInitialRuntimeState);
+  const [, refreshSignalPresence] = useReducer((revision: number) => revision + 1, 0);
+  const signalPresenceRef = useRef(false);
   const inputRef = useRef<InputDevice>('keyboard');
-  const open = state.surfaces.length > 0;
+  const interactionInteractive = state.interaction?.mode === 'bloom' && state.interaction.pointer === true;
+  const interactive = state.surfaces.length > 0 || interactionInteractive;
+  const hasSignals = state.signals.length > 0;
+  const hasInteraction = state.interaction !== null;
+  const visible = interactive || hasInteraction || hasSignals || signalPresenceRef.current;
+
+  useLayoutEffect(() => {
+    if (hasSignals) {
+      signalPresenceRef.current = true;
+      return undefined;
+    }
+    if (!signalPresenceRef.current) return undefined;
+    if (state.preferences.reducedMotion) {
+      signalPresenceRef.current = false;
+      refreshSignalPresence();
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      signalPresenceRef.current = false;
+      refreshSignalPresence();
+    }, SIGNAL_EXIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [hasSignals, state.preferences.reducedMotion]);
 
   useEffect(() => {
     inputRef.current = state.inputDevice;
@@ -543,6 +582,58 @@ export function RuntimeApp() {
     });
   }, [browserBootId, transport]);
 
+  const [signalVisibilityTarget, setSignalVisibilityTarget] = useState<SignalVisibilityTarget | null>(null);
+  const signalVisibilityRevision = useRef(0);
+  const reportVisibleSignals = useCallback((signals: readonly RuntimeSignal[], capacity: number) => {
+    if (state.signalGeneration <= 0) return;
+    const projected = signals.map((signal) => ({
+      ownerResource: signal.ownerResource,
+      ownerEpoch: signal.ownerEpoch,
+      signalId: signal.signalId,
+      revision: signal.revision,
+    }));
+    const key = `${state.signalGeneration}|${capacity}|${projected.map((signal) => (
+      `${signal.ownerResource}\u0000${signal.ownerEpoch}\u0000${signal.signalId}\u0000${signal.revision}`
+    )).join('\u0001')}`;
+    setSignalVisibilityTarget((current) => current?.key === key ? current : {
+      key,
+      generation: state.signalGeneration,
+      capacity,
+      signals: projected,
+    });
+  }, [state.signalGeneration]);
+
+  useEffect(() => {
+    if (!signalVisibilityTarget) return undefined;
+    let cancelled = false;
+    let retryTimer: number | undefined;
+    let controller: AbortController | undefined;
+    let attempt = 0;
+    const retryDelays = [150, 500, 1_500, 5_000] as const;
+    const report = async () => {
+      signalVisibilityRevision.current += 1;
+      controller = new AbortController();
+      const response = await transport.post('runtime:signals:visible', {
+        requestId: createRequestId('signals'),
+        browserBootId,
+        generation: signalVisibilityTarget.generation,
+        presentationRevision: signalVisibilityRevision.current,
+        capacity: signalVisibilityTarget.capacity,
+        signals: signalVisibilityTarget.signals,
+      }, controller.signal);
+      if (cancelled || response.ok) return;
+      const delay = retryDelays[Math.min(attempt, retryDelays.length - 1)];
+      attempt += 1;
+      retryTimer = window.setTimeout(() => { void report(); }, delay);
+    };
+    void report();
+    return () => {
+      cancelled = true;
+      controller?.abort();
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
+  }, [browserBootId, signalVisibilityTarget, transport]);
+
   useEffect(() => {
     const controller = new AbortController();
     void transport.post<{ ready: boolean }>('runtime:ready', {
@@ -557,6 +648,7 @@ export function RuntimeApp() {
 
   useEffect(() => {
     const origins = allowedMessageOrigins();
+    const soundIngress = createSignalSoundIngressFence(browserBootId);
     const onMessage = (event: MessageEvent<unknown>) => {
       if (!origins.has(event.origin)) return;
       const envelope = parseGameEnvelope(event.data);
@@ -576,20 +668,42 @@ export function RuntimeApp() {
           focusByIntent(intent as NavigationIntent);
         }
       }
+      if (envelope.type === 'signal:sound') {
+        const sound = parseSignalSoundPayload(envelope.payload);
+        if (!sound) return;
+        const decision = soundIngress.accept({
+          browserBootId: sound.browserBootId,
+          messageId: envelope.messageId,
+          ownerEpoch: envelope.ownerEpoch,
+        });
+        if (decision.epochAdvanced) void closeSignalSound();
+        if (!decision.accepted) return;
+        void playSignalSound({ tone: sound.tone, volume: sound.volume });
+        return;
+      }
+      if (envelope.type === 'runtime:shutdown'
+        && envelope.ownerResource === 'synex_ui' && envelope.revision === 0) {
+        soundIngress.reset();
+        void closeSignalSound();
+      }
       dispatch({ type: 'message', envelope });
     };
     window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
+    return () => {
+      window.removeEventListener('message', onMessage);
+      soundIngress.reset();
+      void closeSignalSound();
+    };
   }, [browserBootId, reportInput, transport]);
 
-  useEffect(() => {
-    applyDocumentState(open, state);
+  useLayoutEffect(() => {
+    applyDocumentState(visible, interactive, state);
     const root = document.getElementById('root');
-    root?.setAttribute('aria-hidden', open ? 'false' : 'true');
-  }, [open, state]);
+    root?.setAttribute('aria-hidden', visible ? 'false' : 'true');
+  }, [interactive, state, visible]);
 
   useEffect(() => {
-    if (!open) return undefined;
+    if (!interactive) return undefined;
     const pointer = () => reportInput('mouse');
     const keyboard = (event: KeyboardEvent) => {
       if (navigationIntentEvents.has(event)) return;
@@ -603,21 +717,45 @@ export function RuntimeApp() {
       window.removeEventListener('pointerdown', pointer);
       window.removeEventListener('keydown', keyboard, true);
     };
-  }, [open, reportInput]);
+  }, [interactive, reportInput]);
 
   const activeSurface = state.surfaces[state.surfaces.length - 1];
+  if (!visible) return null;
   return (
-    <OpenSurfaceBoundary open={open} surface={activeSurface} transport={transport} browserBootId={browserBootId}>
-      {state.surfaces.map((surface) => (
-        <SharedSurface
-          key={`${surface.ownerResource}:${surface.ownerEpoch}:${surface.requestId}:${surface.instanceId}:${surface.surfaceId}`}
-          surface={surface}
-          active={surface === activeSurface}
+    <div className="sx-root sx-runtime-root">
+      {state.interaction ? (
+        <InteractionSurface
+          key={`${state.interaction.ownerResource}:${state.interaction.ownerEpoch}:${state.interaction.interactionId}`}
+          interaction={state.interaction}
+          inputDevice={state.inputDevice}
+          screen={state.screen}
+          reducedMotion={state.preferences.reducedMotion}
+          interactionAssist={state.preferences.interactionAssist}
           transport={transport}
           browserBootId={browserBootId}
-          inputDevice={state.inputDevice}
         />
-      ))}
-    </OpenSurfaceBoundary>
+      ) : null}
+      <SignalRail
+        signals={state.signals}
+        reducedMotion={state.preferences.reducedMotion}
+        inputDevice={state.inputDevice}
+        screen={state.screen}
+        scale={state.preferences.scale}
+        density={state.preferences.density}
+        onVisibleChange={reportVisibleSignals}
+      />
+      <OpenSurfaceBoundary open={state.surfaces.length > 0} surface={activeSurface} transport={transport} browserBootId={browserBootId}>
+        {state.surfaces.map((surface) => (
+          <SharedSurface
+            key={`${surface.ownerResource}:${surface.ownerEpoch}:${surface.requestId}:${surface.instanceId}:${surface.surfaceId}`}
+            surface={surface}
+            active={surface === activeSurface}
+            transport={transport}
+            browserBootId={browserBootId}
+            inputDevice={state.inputDevice}
+          />
+        ))}
+      </OpenSurfaceBoundary>
+    </div>
   );
 }

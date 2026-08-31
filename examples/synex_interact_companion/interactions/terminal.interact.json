@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "key": "synex_interact_companion:terminal",
+  "revision": 1,
+  "smartObjects": [
+    {
+      "key": "synex_interact_companion:terminal",
+      "binding": {
+        "type": "worldAnchor",
+        "key": "synex_interact_companion:terminal_anchor"
+      },
+      "slots": [
+        {
+          "key": "operator",
+          "interactionRadius": 2.0,
+          "facingTolerance": 100,
+          "capacity": 1
+        }
+      ],
+      "activities": ["synex_interact_companion:inspect"],
+      "tags": ["synex.interact_companion.fixture"],
+      "presentation": {
+        "label": "Inspection terminal"
+      }
+    }
+  ],
+  "intents": [
+    {
+      "key": "synex_interact_companion:inspect",
+      "smartObjectKey": "synex_interact_companion:terminal",
+      "verb": "inspect",
+      "label": "Inspect terminal",
+      "basePriority": 10,
+      "specificity": 10,
+      "trigger": "primary",
+      "slotSelector": "operator",
+      "visibilityConditions": [],
+      "executionPolicy": {
+        "maximumDistance": 2.0,
+        "leaseTtlMs": 2500,
+        "maximumLifetimeMs": 10000,
+        "lockChannels": ["actor.hands"]
+      },
+      "actionGraphRef": "synex_interact_companion:inspect",
+      "presentation": {
+        "hint": "INTERACT_PRIMARY"
+      },
+      "participants": [
+        {
+          "role": "operator",
+          "required": true,
+          "slotKey": "operator",
+          "capacity": 1,
+          "lossPolicy": "ABORT"
+        }
+      ]
+    }
+  ],
+  "graphs": [
+    {
+      "key": "synex_interact_companion:inspect",
+      "entry": "verify",
+      "timeoutMs": 10000,
+      "locks": ["actor.hands"],
+      "participantLossPolicy": "ABORT",
+      "nodes": [
+        {
+          "key": "verify",
+          "type": "verifyTarget",
+          "next": "progress"
+        },
+        {
+          "key": "progress",
+          "type": "progress",
+          "durationMs": 700,
+          "presentation": {
+            "label": "Inspecting terminal",
+            "mode": "timed",
+            "cancellable": true
+          },
+          "next": "complete"
+        },
+        {
+          "key": "complete",
+          "type": "complete"
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "purpose": "World Anchor and Interaction bundle integration fixture",
+    "persistentSideEffects": false
+  }
+}

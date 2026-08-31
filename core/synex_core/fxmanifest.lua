@@ -63,6 +63,7 @@ server_scripts {
     'server/bootstrap_discovery.lua',
     'server/bootstrap_api_validation.lua',
     'server/bootstrap_api_tracing.lua',
+    'server/bootstrap_api_diagnostics.lua',
     'server/bootstrap_api.lua',
     'server/bootstrap_diagnostics_shared.lua',
     'server/bootstrap_diagnostics_runtime.lua',

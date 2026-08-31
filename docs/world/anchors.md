@@ -41,4 +41,4 @@ The maximum result count is 256 and maximum distance filter is 1,000. This expor
 
 ## Interaction boundary
 
-A future interaction resource may attach prompts, intent and action graphs to anchor references. Those behaviors do not belong in an anchor definition and are not implemented by `synex_world`.
+`synex_interact` may attach Smart Objects, intents and Action Graphs to revisioned World references from the bounded client projection. Those behaviors do not belong in World definitions: World owns semantic anchors, doors, portals and verified context; Interact owns affordances, authorization leases and orchestration.

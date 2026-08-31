@@ -13,6 +13,8 @@ export type CallbackRoute =
   | 'runtime:respond'
   | 'runtime:close'
   | 'runtime:input'
+  | 'runtime:signals:visible'
+  | 'runtime:interaction'
   | 'runtime:preferences'
   | 'runtime:error';
 
@@ -27,6 +29,8 @@ const routes = new Set<CallbackRoute>([
   'runtime:respond',
   'runtime:close',
   'runtime:input',
+  'runtime:signals:visible',
+  'runtime:interaction',
   'runtime:preferences',
   'runtime:error',
 ]);

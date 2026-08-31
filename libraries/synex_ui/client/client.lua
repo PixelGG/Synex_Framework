@@ -1,4 +1,6 @@
 local RESOURCE_NAME = GetCurrentResourceName()
+local SIGNAL_TRANSPORT_OWNER = 'synex_notify'
+local INTERACTION_TRANSPORT_OWNER = 'synex_interact'
 local API_VERSION = '1.0.0'
 local PROTOCOL_VERSION = 1
 local FOCUS_AGENT_VERSION = '1.0.0'
@@ -23,6 +25,19 @@ local LIMITS = {
     maximumSections = 16,
     maximumMenuItems = 96,
     maximumMenuDepth = 3,
+    maximumSignals = 8,
+    maximumOwnerSignals = 8,
+    maximumVisibleSignals = 4,
+    maximumSignalActions = 2,
+    maximumSignalRevisionFences = 256,
+    minimumSignalSoundVolume = 1,
+    maximumSignalSoundVolume = 100,
+    signalSoundCooldownMs = 50,
+    maximumSignalSoundsPerWindow = 8,
+    signalSoundWindowMs = 1000,
+    maximumInteractionIntents = 6,
+    maximumInteractionRevisionFences = 64,
+    maximumInteractionDurationMs = 3600000,
     minimumTimeoutMs = 1000,
     maximumTimeoutMs = 120000,
     defaultTimeoutMs = 30000,
@@ -93,6 +108,85 @@ local TONES = {
     danger = true,
 }
 
+local SIGNAL_KINDS = {
+    toast = true,
+    progress = true,
+    persistent = true,
+    banner = true,
+    status = true,
+}
+
+local SIGNAL_TONES = {
+    neutral = true,
+    info = true,
+    success = true,
+    warning = true,
+    danger = true,
+}
+
+local SIGNAL_SOUND_TONES = {
+    neutral = true,
+    info = true,
+    success = true,
+    warning = true,
+    danger = true,
+    critical = true,
+}
+
+local SIGNAL_PRIORITIES = {
+    low = true,
+    normal = true,
+    high = true,
+    critical = true,
+}
+
+local SIGNAL_POSITIONS = {
+    ['top-right'] = true,
+    ['top-left'] = true,
+    ['bottom-right'] = true,
+    ['bottom-left'] = true,
+    ['top-center'] = true,
+    ['bottom-center'] = true,
+}
+
+local SIGNAL_PROGRESS_STATES = {
+    PENDING = true,
+    RUNNING = true,
+    SUCCESS = true,
+    FAILED = true,
+    CANCELLED = true,
+}
+
+local SIGNAL_PROGRESS_MODES = {
+    determinate = true,
+    indeterminate = true,
+}
+
+local SIGNAL_ACTION_STYLES = {
+    default = true,
+    primary = true,
+    danger = true,
+}
+
+local interactionRuntime = {
+    modes = {
+        cue = true,
+        bloom = true,
+        progress = true,
+    },
+    progressModes = {
+        determinate = true,
+        indeterminate = true,
+        timed = true,
+    },
+    active = nil,
+    generation = 0,
+    revisions = {},
+    revisionOrder = {},
+    actionSubscriber = nil,
+    actionBindingGeneration = 0,
+}
+
 local INPUT_INTENTS = {
     UP = 188,
     DOWN = 187,
@@ -151,6 +245,11 @@ local GAME_MESSAGE_TYPES = {
     ['surface:open'] = true,
     ['surface:update'] = true,
     ['surface:close'] = true,
+    ['signal:upsert'] = true,
+    ['signal:remove'] = true,
+    ['signal:sound'] = true,
+    ['interaction:upsert'] = true,
+    ['interaction:remove'] = true,
     ['input:intent'] = true,
     ['preferences:sync'] = true,
 }
@@ -168,6 +267,8 @@ local ERROR_CODES = {
     'UI_FOCUS_BUSY',
     'UI_FOCUS_DENIED',
     'UI_FOCUS_LEASE_INVALID',
+    'UI_SIGNAL_DENIED',
+    'UI_INTERACTION_DENIED',
     'UI_OWNER_STOPPED',
     'UI_OWNER_STALE',
     'UI_REQUEST_INVALID',
@@ -234,6 +335,15 @@ local DEFAULT_PREFERENCES = {
     reducedMotion = false,
     reducedTransparency = false,
     highContrast = false,
+    interactionAssist = false,
+}
+
+local SIGNAL_STACK_LAYOUT = {
+    comfortableHeightPx = 152,
+    compactHeightPx = 128,
+    narrowHeightBonusPx = 28,
+    narrowWidthPx = 360,
+    edgeInsetPx = 20,
 }
 
 local PREFERENCE_QUALITIES = { LOW = true, BALANCED = true, HIGH = true, ULTRA = true }
@@ -246,6 +356,8 @@ local CALLBACK_POLICIES = {
     ['runtime:respond'] = { capacity = 32, refillPerSecond = 16 },
     ['runtime:close'] = { capacity = 16, refillPerSecond = 8 },
     ['runtime:input'] = { capacity = 48, refillPerSecond = 24 },
+    ['runtime:signals:visible'] = { capacity = 32, refillPerSecond = 16 },
+    ['runtime:interaction'] = { capacity = 20, refillPerSecond = 10 },
     ['runtime:preferences'] = { capacity = 8, refillPerSecond = 2 },
     ['runtime:error'] = { capacity = 4, refillPerSecond = 0.25 },
 }
@@ -255,12 +367,19 @@ local metrics = {
     ui_focus_denied_total = 0,
     ui_surface_open_total = 0,
     ui_surface_close_total = 0,
+    ui_signal_upsert_total = 0,
+    ui_signal_remove_total = 0,
+    ui_interaction_upsert_total = 0,
+    ui_interaction_remove_total = 0,
+    ui_interaction_action_total = 0,
     ui_request_total = 0,
     ui_request_timeout_total = 0,
     ui_payload_bytes = 0,
     ui_runtime_errors = 0,
     ui_owner_cleanup_total = 0,
     ui_active_surfaces = 0,
+    ui_active_signals = 0,
+    ui_active_interactions = 0,
 }
 
 local runtimeRunning = true
@@ -274,6 +393,7 @@ local leaseSerial = 0
 local surfaceSerial = 0
 local requestSerial = 0
 local messageSerial = 0
+local signalGeneration = 0
 local runtimeEpoch = 1
 local lastScreenSampleAt = -1000
 local lastScreenMetrics = nil
@@ -283,6 +403,7 @@ local focusDesynchronized = false
 local transportFailures = 0
 local transientReasons = {}
 local preferences = {}
+local preferenceRevision = 1
 local owners = {}
 local focusLeases = {}
 local focusStack = {}
@@ -292,9 +413,19 @@ local focusAgentRevisionSerial = 0
 local focusAgentIntentSerial = 0
 local surfaces = {}
 local surfaceOrder = {}
+local signals = {}
+local signalOrder = {}
+local signalRevisions = {}
+local signalRevisionOrder = {}
+local browserVisibleSignals = {}
+local browserVisibleSignalGeneration = -1
+local browserVisibilityRevision = 0
+local browserVisibleCapacity = LIMITS.maximumVisibleSignals
+local signalCapacitySubscriber = nil
+local signalCapacityBindingGeneration = 0
 local pendingRequests = {}
 local callbackBuckets = {}
-
+local signalSoundRate = { windowStartedAt = -1000, count = 0, lastAt = -1000 }
 local finishSurface
 local cleanupOwner
 local cleanupRuntime
@@ -302,6 +433,7 @@ local sendEnvelope
 local sendRuntimeSync
 local syncFocus
 local ensureInputThread
+local notifySignalCapacity
 
 local function incrementMetric(name, amount)
     local current = metrics[name] or 0
@@ -383,6 +515,13 @@ local function rawMetatable(value)
     end
     local readable, metatable = pcall(getmetatable, value)
     return readable and metatable or nil
+end
+
+local function isCallable(value)
+    if type(value) == 'function' then return true end
+    if type(value) ~= 'table' and type(value) ~= 'userdata' then return false end
+    local metatable = rawMetatable(value)
+    return type(metatable) == 'table' and type(rawget(metatable, '__call')) == 'function'
 end
 
 local function canonicalContainerKind(value)
@@ -555,6 +694,9 @@ local function healthSnapshot()
     if focusDesynchronized then addReason('FOCUS_DESYNC') end
     if transportFailures >= 3 then addReason('TRANSPORT_DEGRADED') end
     if metrics.ui_active_surfaces >= math.floor(LIMITS.maximumSurfaces * 0.75) then
+        addReason('REQUEST_PRESSURE')
+    end
+    if metrics.ui_active_signals >= math.floor(LIMITS.maximumSignals * 0.75) then
         addReason('REQUEST_PRESSURE')
     end
     for reason, expiresAt in pairs(transientReasons) do
@@ -1202,13 +1344,15 @@ local function validatePreferencesPatch(value)
     if not keysAllowed(value, {
         schemaVersion = true, quality = true, scale = true, density = true,
         reducedMotion = true, reducedTransparency = true, highContrast = true,
+        interactionAssist = true,
     }) or (value.schemaVersion ~= nil and value.schemaVersion ~= 1)
         or (value.quality ~= nil and not PREFERENCE_QUALITIES[value.quality])
         or (value.scale ~= nil and not PREFERENCE_SCALES[value.scale])
         or (value.density ~= nil and not PREFERENCE_DENSITIES[value.density])
         or (value.reducedMotion ~= nil and type(value.reducedMotion) ~= 'boolean')
         or (value.reducedTransparency ~= nil and type(value.reducedTransparency) ~= 'boolean')
-        or (value.highContrast ~= nil and type(value.highContrast) ~= 'boolean') then
+        or (value.highContrast ~= nil and type(value.highContrast) ~= 'boolean')
+        or (value.interactionAssist ~= nil and type(value.interactionAssist) ~= 'boolean') then
         return nil, failure('UI_REQUEST_INVALID', 'The preference values are invalid.')
     end
     local merged = cloneJson(preferences)
@@ -1227,9 +1371,17 @@ end
 local function updatePreferences(value, persist)
     local merged, preferenceError = validatePreferencesPatch(value)
     if not merged then return nil, preferenceError end
+    local changed = false
+    for key, candidate in pairs(merged) do
+        if preferences[key] ~= candidate then changed = true; break end
+    end
     preferences = merged
+    if changed then
+        preferenceRevision = math.min(MAXIMUM_SAFE_INTEGER, preferenceRevision + 1)
+    end
     if persist then savePreferences() end
     if nuiReady then sendEnvelope('preferences:sync', RESOURCE_NAME, runtimeEpoch, 0, cloneJson(preferences)) end
+    if notifySignalCapacity ~= nil then notifySignalCapacity(false) end
     return cloneJson(preferences)
 end
 
@@ -1264,6 +1416,92 @@ local function readScreenMetrics()
         safeTop = vertical,
         safeBottom = vertical,
     }
+end
+
+local function adaptiveSignalCapacity()
+    local screen = lastScreenMetrics or readScreenMetrics()
+    local scale = (preferences.scale or 100) / 100
+    local horizontalSpace = math.max(0,
+        screen.width - screen.safeLeft - screen.safeRight)
+    local narrowBonus = horizontalSpace < SIGNAL_STACK_LAYOUT.narrowWidthPx * scale
+        and SIGNAL_STACK_LAYOUT.narrowHeightBonusPx or 0
+    local surfaceHeight = (preferences.density == 'compact'
+        and SIGNAL_STACK_LAYOUT.compactHeightPx
+        or SIGNAL_STACK_LAYOUT.comfortableHeightPx) + narrowBonus
+    local topInset = math.max(screen.safeTop, SIGNAL_STACK_LAYOUT.edgeInsetPx * scale)
+    local bottomInset = math.max(screen.safeBottom, SIGNAL_STACK_LAYOUT.edgeInsetPx * scale)
+    local availableHeight = math.max(0, screen.height - topInset - bottomInset)
+    return math.max(1, math.min(LIMITS.maximumVisibleSignals,
+        math.floor(availableHeight / (surfaceHeight * scale))))
+end
+
+notifySignalCapacity = function(force)
+    local subscriber = signalCapacitySubscriber
+    if subscriber == nil then return false end
+    local capacity = adaptiveSignalCapacity()
+    local currentPreferenceRevision = preferenceRevision
+    if not force and subscriber.capacity == capacity
+        and subscriber.preferenceRevision == currentPreferenceRevision then
+        subscriber.pendingCapacity = nil
+        subscriber.pendingPreferenceRevision = nil
+        return true
+    end
+    if not force and subscriber.pendingCapacity == capacity
+        and subscriber.pendingPreferenceRevision == currentPreferenceRevision then return true end
+    local current = ownerCurrent(subscriber.ownerResource, subscriber.ownerEpoch)
+    if not current or not isCallable(subscriber.callback) then
+        signalCapacitySubscriber = nil
+        signalCapacityBindingGeneration = signalCapacityBindingGeneration + 1
+        return false
+    end
+    if type(SetTimeout) ~= 'function' then
+        signalCapacitySubscriber = nil
+        signalCapacityBindingGeneration = signalCapacityBindingGeneration + 1
+        incrementMetric('ui_runtime_errors')
+        markReason('TRANSPORT_DEGRADED', 30000)
+        return false
+    end
+    subscriber.pendingCapacity = capacity
+    subscriber.pendingPreferenceRevision = currentPreferenceRevision
+    if subscriber.dispatchPending then return true end
+    subscriber.dispatchPending = true
+    local bindingGeneration = subscriber.bindingGeneration
+    SetTimeout(0, function()
+        local active = signalCapacitySubscriber
+        if active ~= subscriber or active.bindingGeneration ~= bindingGeneration
+            or active.ownerResource ~= subscriber.ownerResource
+            or active.ownerEpoch ~= subscriber.ownerEpoch then return end
+        active.dispatchPending = false
+        local pendingCapacity = active.pendingCapacity
+        local pendingPreferenceRevision = active.pendingPreferenceRevision
+        active.pendingCapacity = nil
+        active.pendingPreferenceRevision = nil
+        if pendingCapacity == nil or pendingPreferenceRevision == nil then return end
+        local ownerActive = ownerCurrent(active.ownerResource, active.ownerEpoch)
+        if not ownerActive or not isCallable(active.callback) then
+            signalCapacitySubscriber = nil
+            signalCapacityBindingGeneration = signalCapacityBindingGeneration + 1
+            return
+        end
+        local delivered, accepted = pcall(active.callback, {
+            ownerResource = active.ownerResource,
+            ownerEpoch = active.ownerEpoch,
+            capacity = pendingCapacity,
+            preferences = cloneJson(preferences),
+        })
+        if signalCapacitySubscriber ~= active
+            or active.bindingGeneration ~= bindingGeneration then return end
+        if not delivered or accepted ~= true then
+            signalCapacitySubscriber = nil
+            signalCapacityBindingGeneration = signalCapacityBindingGeneration + 1
+            incrementMetric('ui_runtime_errors')
+            markReason('TRANSPORT_DEGRADED', 30000)
+            return
+        end
+        active.capacity = pendingCapacity
+        active.preferenceRevision = pendingPreferenceRevision
+    end)
+    return true
 end
 
 local function screenMetricsChanged(current, previous)
@@ -1313,6 +1551,572 @@ sendRuntimeSync = function(payload)
     return sendEnvelope('runtime:sync', RESOURCE_NAME, runtimeEpoch, 0, payload)
 end
 
+local SIGNAL_KEY_SEPARATOR = '\31'
+
+local function signalKey(owner, signalId)
+    return owner .. SIGNAL_KEY_SEPARATOR .. signalId
+end
+
+local function finiteNumberInRange(value, minimum, maximum)
+    return type(value) == 'number' and value == value and value ~= math.huge and value ~= -math.huge
+        and value >= minimum and value <= maximum
+end
+
+local function normalizeSignalRequest(request)
+    if type(request) ~= 'table' then
+        return nil, failure('UI_REQUEST_INVALID', 'The passive signal descriptor is invalid.')
+    end
+    local requestBytes, requestBoundsError = boundedJson(request)
+    if not requestBytes then return nil, requestBoundsError end
+    if not keysAllowed(request, {
+        signalId = true, revision = true, kind = true, tone = true, priority = true,
+        title = true, message = true, iconKey = true, count = true, progress = true,
+        actions = true, createdAt = true, expiresAt = true, position = true,
+    }) or not validIdentifier(request.signalId, 96)
+        or not integerInRange(request.revision, 1, MAXIMUM_SAFE_INTEGER)
+        or not SIGNAL_KINDS[request.kind] or not SIGNAL_TONES[request.tone]
+        or not SIGNAL_PRIORITIES[request.priority] or not SIGNAL_POSITIONS[request.position]
+        or not boundedText(request.title, 120, false)
+        or (request.message ~= nil and not boundedText(request.message, 720, true))
+        or (request.iconKey ~= nil and not validIconKey(request.iconKey))
+        or (request.count ~= nil and not integerInRange(request.count, 1, 9999))
+        or not integerInRange(request.createdAt, 0, MAXIMUM_SAFE_INTEGER)
+        or (request.expiresAt ~= nil and (not integerInRange(request.expiresAt, 0, MAXIMUM_SAFE_INTEGER)
+            or request.expiresAt <= request.createdAt)) then
+        return nil, failure('UI_REQUEST_INVALID', 'The passive signal fields are invalid.')
+    end
+
+    if request.progress ~= nil then
+        if not keysAllowed(request.progress, { state = true, mode = true, value = true, maximum = true })
+            or not SIGNAL_PROGRESS_STATES[request.progress.state]
+            or not SIGNAL_PROGRESS_MODES[request.progress.mode] then
+            return nil, failure('UI_REQUEST_INVALID', 'The passive signal progress state is invalid.')
+        end
+        if request.progress.mode == 'determinate' then
+            if not finiteNumberInRange(request.progress.maximum, 0, MAXIMUM_SAFE_INTEGER)
+                or request.progress.maximum <= 0
+                or not finiteNumberInRange(request.progress.value, 0, request.progress.maximum) then
+                return nil, failure('UI_REQUEST_INVALID', 'Determinate progress requires a bounded value and maximum.')
+            end
+        elseif request.progress.value ~= nil or request.progress.maximum ~= nil then
+            return nil, failure('UI_REQUEST_INVALID', 'Indeterminate progress cannot include a value or maximum.')
+        end
+    end
+
+    local actionCount = 0
+    if request.actions ~= nil then
+        actionCount = arrayLength(request.actions, LIMITS.maximumSignalActions)
+        if actionCount == nil then
+            return nil, failure('UI_REQUEST_INVALID', 'The passive signal action hints are invalid.')
+        end
+        local tokens = {}
+        for index = 1, actionCount do
+            local action = request.actions[index]
+            if not keysAllowed(action, { token = true, label = true, hint = true, style = true })
+                or not validIdentifier(action.token, 96) or tokens[action.token]
+                or not boundedText(action.label, 64, false)
+                or (action.hint ~= nil and not boundedText(action.hint, 24, false))
+                or (action.style ~= nil and not SIGNAL_ACTION_STYLES[action.style]) then
+                return nil, failure('UI_REQUEST_INVALID', 'A passive signal action hint is invalid.')
+            end
+            tokens[action.token] = true
+        end
+    end
+
+    local normalized = cloneJson(request)
+    if actionCount == 0 then normalized.actions = nil end
+    local bytes, normalizedError = boundedJson(normalized)
+    if not bytes then return nil, normalizedError end
+    return normalized
+end
+
+local function signalPayload(signal, includeOwner)
+    local payload = {
+        signalId = signal.signalId,
+        revision = signal.revision,
+        kind = signal.kind,
+        tone = signal.tone,
+        priority = signal.priority,
+        title = signal.title,
+        createdAt = signal.createdAt,
+        position = signal.position,
+    }
+    if signal.message ~= nil then payload.message = signal.message end
+    if signal.iconKey ~= nil then payload.iconKey = signal.iconKey end
+    if signal.count ~= nil then payload.count = signal.count end
+    if signal.progress ~= nil then payload.progress = cloneJson(signal.progress) end
+    if signal.actions ~= nil then payload.actions = cloneJson(signal.actions) end
+    if signal.expiresAt ~= nil then payload.expiresAt = signal.expiresAt end
+    if includeOwner then
+        payload.ownerResource = signal.ownerResource
+        payload.ownerEpoch = signal.ownerEpoch
+    end
+    return payload
+end
+
+local function signalSnapshot(owner, includeVisibility)
+    local snapshot = setmetatable({}, decoderArrayMetatable)
+    for _, key in ipairs(signalOrder) do
+        local signal = signals[key]
+        if signal ~= nil and (owner == nil or signal.ownerResource == owner) then
+            local payload = signalPayload(signal, owner == nil)
+            if includeVisibility then
+                payload.visible = browserVisibleSignalGeneration == signalGeneration
+                    and browserVisibleSignals[key] == signal.revision
+            end
+            snapshot[#snapshot + 1] = payload
+        end
+    end
+    return snapshot
+end
+
+local function activeSignalCount()
+    local count = 0
+    for _ in pairs(signals) do count = count + 1 end
+    return count
+end
+
+local function ownerSignalCount(owner)
+    local count = 0
+    for _, signal in pairs(signals) do
+        if signal.ownerResource == owner then count = count + 1 end
+    end
+    return count
+end
+
+local function trackSignalRevision(key, revision)
+    if signalRevisions[key] == nil then signalRevisionOrder[#signalRevisionOrder + 1] = key end
+    signalRevisions[key] = revision
+    while #signalRevisionOrder > LIMITS.maximumSignalRevisionFences do
+        local removed = false
+        for index, candidate in ipairs(signalRevisionOrder) do
+            if signals[candidate] == nil then
+                signalRevisions[candidate] = nil
+                table.remove(signalRevisionOrder, index)
+                removed = true
+                break
+            end
+        end
+        if not removed then break end
+    end
+end
+
+local function nextSignalGeneration()
+    if signalGeneration >= MAXIMUM_SAFE_INTEGER then
+        return nil, failure('UI_REQUEST_INVALID', 'The passive signal generation is exhausted.')
+    end
+    signalGeneration = signalGeneration + 1
+    return signalGeneration
+end
+
+local function upsertSignalInternal(owner, epoch, request)
+    local normalized, requestError = normalizeSignalRequest(request)
+    if not normalized then return nil, requestError end
+    local key = signalKey(owner, normalized.signalId)
+    local current = signals[key]
+    local previousRevision = signalRevisions[key] or 0
+    if normalized.revision <= previousRevision then
+        return nil, failure('UI_REQUEST_STALE', 'The passive signal revision is stale.', {
+            signalId = normalized.signalId,
+            currentRevision = previousRevision,
+        })
+    end
+    if current == nil and (activeSignalCount() >= LIMITS.maximumSignals
+        or ownerSignalCount(owner) >= LIMITS.maximumOwnerSignals) then
+        markReason('REQUEST_PRESSURE', 5000)
+        return nil, failure('UI_SURFACE_CONFLICT', 'The passive signal capacity is exhausted.')
+    end
+    local generation, generationError = nextSignalGeneration()
+    if not generation then return nil, generationError end
+    normalized.ownerResource = owner
+    normalized.ownerEpoch = epoch
+    signals[key] = normalized
+    if current == nil then
+        signalOrder[#signalOrder + 1] = key
+        metrics.ui_active_signals = metrics.ui_active_signals + 1
+    end
+    trackSignalRevision(key, normalized.revision)
+    incrementMetric('ui_signal_upsert_total')
+    local delivered = false
+    if nuiReady then
+        local payload = signalPayload(normalized, false)
+        payload.generation = generation
+        delivered = sendEnvelope('signal:upsert', owner, epoch,
+            normalized.revision, payload) == true
+    end
+    ensureInputThread()
+    return {
+        generation = generation,
+        signal = signalPayload(normalized, false),
+        delivered = delivered,
+    }, nil
+end
+
+local function removeSignalInternal(owner, epoch, signalId, revision)
+    if not validIdentifier(signalId, 96) or not integerInRange(revision, 1, MAXIMUM_SAFE_INTEGER) then
+        return nil, failure('UI_REQUEST_INVALID', 'The passive signal removal is invalid.')
+    end
+    local key = signalKey(owner, signalId)
+    local previousRevision = signalRevisions[key] or 0
+    if revision <= previousRevision then
+        return nil, failure('UI_REQUEST_STALE', 'The passive signal removal revision is stale.', {
+            signalId = signalId,
+            currentRevision = previousRevision,
+        })
+    end
+    local generation, generationError = nextSignalGeneration()
+    if not generation then return nil, generationError end
+    local removed = signals[key] ~= nil
+    if removed then
+        signals[key] = nil
+        removeArrayValue(signalOrder, key)
+        metrics.ui_active_signals = math.max(0, metrics.ui_active_signals - 1)
+    end
+    trackSignalRevision(key, revision)
+    incrementMetric('ui_signal_remove_total')
+    if nuiReady then
+        sendEnvelope('signal:remove', owner, epoch, revision, {
+            signalId = signalId,
+            generation = generation,
+        })
+    end
+    return {
+        generation = generation,
+        signalId = signalId,
+        revision = revision,
+        removed = removed,
+    }, nil
+end
+
+local function clearOwnerSignals(owner, epoch)
+    local prefix = owner .. SIGNAL_KEY_SEPARATOR
+    local changed = false
+    for index = #signalOrder, 1, -1 do
+        local key = signalOrder[index]
+        local signal = signals[key]
+        if signal ~= nil and signal.ownerResource == owner and (epoch == nil or signal.ownerEpoch == epoch) then
+            signals[key] = nil
+            table.remove(signalOrder, index)
+            metrics.ui_active_signals = math.max(0, metrics.ui_active_signals - 1)
+            incrementMetric('ui_signal_remove_total')
+            changed = true
+        end
+    end
+    for index = #signalRevisionOrder, 1, -1 do
+        local key = signalRevisionOrder[index]
+        if key:sub(1, #prefix) == prefix then
+            signalRevisions[key] = nil
+            table.remove(signalRevisionOrder, index)
+        end
+    end
+    if changed then
+        local generation = nextSignalGeneration()
+        if generation ~= nil and nuiReady then
+            sendRuntimeSync({
+                signals = signalSnapshot(nil),
+                signalGeneration = generation,
+            })
+        end
+    end
+    return changed
+end
+
+function interactionRuntime.normalizeBinding(value)
+    if not keysAllowed(value, { keyboard = true, gamepad = true, mouse = true })
+        or not boundedText(value.keyboard, 24, false)
+        or not boundedText(value.gamepad, 24, false)
+        or (value.mouse ~= nil and not boundedText(value.mouse, 24, false)) then return nil end
+    return cloneJson(value)
+end
+
+function interactionRuntime.normalizeRequest(request)
+    if type(request) ~= 'table' then
+        return nil, failure('UI_REQUEST_INVALID', 'The interaction descriptor is invalid.')
+    end
+    local requestBytes, requestBoundsError = boundedJson(request)
+    if not requestBytes then return nil, requestBoundsError end
+    if not keysAllowed(request, {
+        interactionId = true, revision = true, mode = true, label = true,
+        targetLabel = true, projection = true, intents = true, selectedIntentId = true,
+        moreCount = true, pointer = true, input = true, progress = true,
+        cancellable = true,
+    }) or not validIdentifier(request.interactionId, 96)
+        or not integerInRange(request.revision, 1, MAXIMUM_SAFE_INTEGER)
+        or not interactionRuntime.modes[request.mode]
+        or not boundedText(request.label, 120, false)
+        or (request.targetLabel ~= nil and not boundedText(request.targetLabel, 80, false))
+        or type(request.pointer) ~= 'boolean' or type(request.cancellable) ~= 'boolean'
+        or (request.selectedIntentId ~= nil and not validIdentifier(request.selectedIntentId, 96))
+        or (request.moreCount ~= nil and not integerInRange(request.moreCount, 0, 99)) then
+        return nil, failure('UI_REQUEST_INVALID', 'The interaction descriptor fields are invalid.')
+    end
+    if request.projection ~= nil and (not keysAllowed(request.projection, {
+        visible = true, behindCamera = true, x = true, y = true,
+    }) or type(request.projection.visible) ~= 'boolean'
+        or type(request.projection.behindCamera) ~= 'boolean'
+        or not finiteNumberInRange(request.projection.x, 0, 1)
+        or not finiteNumberInRange(request.projection.y, 0, 1)) then
+        return nil, failure('UI_REQUEST_INVALID', 'The interaction projection is invalid.')
+    end
+    if not keysAllowed(request.input, { primary = true, more = true, cancel = true }) then
+        return nil, failure('UI_REQUEST_INVALID', 'The interaction input hints are invalid.')
+    end
+    local primary = request.input.primary ~= nil and interactionRuntime.normalizeBinding(request.input.primary) or nil
+    local more = request.input.more ~= nil and interactionRuntime.normalizeBinding(request.input.more) or nil
+    local cancel = request.input.cancel ~= nil and interactionRuntime.normalizeBinding(request.input.cancel) or nil
+    if (request.input.primary ~= nil and primary == nil)
+        or (request.input.more ~= nil and more == nil)
+        or (request.input.cancel ~= nil and cancel == nil) then
+        return nil, failure('UI_REQUEST_INVALID', 'An interaction input binding is invalid.')
+    end
+    local intentCount = arrayLength(request.intents, LIMITS.maximumInteractionIntents)
+    if intentCount == nil then
+        return nil, failure('UI_REQUEST_INVALID', 'The relevant interaction intents are not bounded.')
+    end
+    local intentIds, enabledIds = {}, {}
+    for index = 1, intentCount do
+        local intent = request.intents[index]
+        if not keysAllowed(intent, {
+            intentId = true, label = true, description = true, iconKey = true, disabled = true,
+        }) or not validIdentifier(intent.intentId, 96) or intentIds[intent.intentId]
+            or not boundedText(intent.label, 96, false)
+            or (intent.description ~= nil and not boundedText(intent.description, 180, false))
+            or (intent.iconKey ~= nil and not validIconKey(intent.iconKey))
+            or (intent.disabled ~= nil and type(intent.disabled) ~= 'boolean') then
+            return nil, failure('UI_REQUEST_INVALID', 'A relevant interaction intent is invalid.')
+        end
+        intentIds[intent.intentId] = true
+        if intent.disabled ~= true then enabledIds[intent.intentId] = true end
+    end
+    local progress = nil
+    if request.progress ~= nil then
+        if not keysAllowed(request.progress, {
+            mode = true, value = true, maximum = true, elapsedMs = true, durationMs = true,
+        }) or not interactionRuntime.progressModes[request.progress.mode] then
+            return nil, failure('UI_REQUEST_INVALID', 'The interaction progress is invalid.')
+        end
+        if request.progress.mode == 'determinate' then
+            if request.progress.elapsedMs ~= nil or request.progress.durationMs ~= nil
+                or not finiteNumberInRange(request.progress.maximum, 0, MAXIMUM_SAFE_INTEGER)
+                or request.progress.maximum <= 0
+                or not finiteNumberInRange(request.progress.value, 0, request.progress.maximum) then
+                return nil, failure('UI_REQUEST_INVALID', 'Determinate interaction progress is invalid.')
+            end
+        elseif request.progress.mode == 'timed' then
+            if request.progress.value ~= nil or request.progress.maximum ~= nil
+                or not integerInRange(request.progress.durationMs, 1, LIMITS.maximumInteractionDurationMs)
+                or not integerInRange(request.progress.elapsedMs, 0, request.progress.durationMs) then
+                return nil, failure('UI_REQUEST_INVALID', 'Timed interaction progress is invalid.')
+            end
+        elseif request.progress.value ~= nil or request.progress.maximum ~= nil
+            or request.progress.elapsedMs ~= nil or request.progress.durationMs ~= nil then
+            return nil, failure('UI_REQUEST_INVALID', 'Indeterminate interaction progress cannot contain values.')
+        end
+        progress = cloneJson(request.progress)
+    end
+
+    local moreCount = request.moreCount or 0
+    if request.mode == 'cue' then
+        if intentCount ~= 1 or request.pointer or request.cancellable or progress ~= nil
+            or primary == nil or cancel ~= nil or (moreCount > 0) ~= (more ~= nil)
+            or (request.selectedIntentId ~= nil
+                and request.selectedIntentId ~= request.intents[1].intentId) then
+            return nil, failure('UI_REQUEST_INVALID', 'The intent cue contract is invalid.')
+        end
+    elseif request.mode == 'bloom' then
+        if intentCount < 2 or request.moreCount ~= nil or progress ~= nil
+            or primary == nil or more ~= nil or cancel == nil or not request.cancellable
+            or request.selectedIntentId == nil or not enabledIds[request.selectedIntentId] then
+            return nil, failure('UI_REQUEST_INVALID', 'The action bloom contract is invalid.')
+        end
+    elseif intentCount ~= 0 or request.selectedIntentId ~= nil or request.moreCount ~= nil
+        or request.pointer or progress == nil or primary ~= nil or more ~= nil
+        or request.cancellable ~= (cancel ~= nil) then
+        return nil, failure('UI_REQUEST_INVALID', 'The interaction progress contract is invalid.')
+    end
+
+    local normalized = cloneJson(request)
+    normalized.input = {}
+    if primary ~= nil then normalized.input.primary = primary end
+    if more ~= nil then normalized.input.more = more end
+    if cancel ~= nil then normalized.input.cancel = cancel end
+    if progress ~= nil then normalized.progress = progress end
+    if request.mode == 'progress' then
+        normalized.intents = setmetatable({}, decoderArrayMetatable)
+    end
+    return normalized
+end
+
+function interactionRuntime.payload(value, includeOwner)
+    if value == nil then return nil end
+    local payload = {
+        interactionId = value.interactionId,
+        revision = value.revision,
+        mode = value.mode,
+        label = value.label,
+        intents = cloneJson(value.intents),
+        pointer = value.pointer,
+        input = cloneJson(value.input),
+        cancellable = value.cancellable,
+    }
+    if value.targetLabel ~= nil then payload.targetLabel = value.targetLabel end
+    if value.projection ~= nil then payload.projection = cloneJson(value.projection) end
+    if value.selectedIntentId ~= nil then payload.selectedIntentId = value.selectedIntentId end
+    if value.moreCount ~= nil then payload.moreCount = value.moreCount end
+    if value.progress ~= nil then payload.progress = cloneJson(value.progress) end
+    if includeOwner then
+        payload.ownerResource = value.ownerResource
+        payload.ownerEpoch = value.ownerEpoch
+    end
+    return payload
+end
+
+function interactionRuntime.trackRevision(interactionId, revision)
+    if interactionRuntime.revisions[interactionId] == nil then
+        interactionRuntime.revisionOrder[#interactionRuntime.revisionOrder + 1] = interactionId
+    end
+    interactionRuntime.revisions[interactionId] = revision
+    while #interactionRuntime.revisionOrder > LIMITS.maximumInteractionRevisionFences do
+        local candidate = table.remove(interactionRuntime.revisionOrder, 1)
+        if interactionRuntime.active == nil or interactionRuntime.active.interactionId ~= candidate then
+            interactionRuntime.revisions[candidate] = nil
+        else
+            interactionRuntime.revisionOrder[#interactionRuntime.revisionOrder + 1] = candidate
+        end
+    end
+end
+
+function interactionRuntime.nextGeneration()
+    if interactionRuntime.generation >= MAXIMUM_SAFE_INTEGER then
+        return nil, failure('UI_REQUEST_INVALID', 'The interaction generation is exhausted.')
+    end
+    interactionRuntime.generation = interactionRuntime.generation + 1
+    return interactionRuntime.generation
+end
+
+function interactionRuntime.upsert(owner, epoch, request)
+    local normalized, requestError = interactionRuntime.normalizeRequest(request)
+    if not normalized then return nil, requestError end
+    local previousRevision = interactionRuntime.revisions[normalized.interactionId] or 0
+    if normalized.revision <= previousRevision then
+        return nil, failure('UI_REQUEST_STALE', 'The interaction revision is stale.', {
+            interactionId = normalized.interactionId,
+            currentRevision = previousRevision,
+        })
+    end
+
+    local previous = interactionRuntime.active
+    local reuseFocus = previous ~= nil and previous.ownerResource == owner
+        and previous.ownerEpoch == epoch and previous.focusLeaseId ~= nil
+        and normalized.mode == 'bloom' and normalized.pointer
+    local focusLease = reuseFocus and focusLeases[previous.focusLeaseId] or nil
+    if normalized.mode == 'bloom' and normalized.pointer and focusLease == nil then
+        local acquired, focusError = acquireFocusInternal(owner, epoch, {
+            mode = 'EXCLUSIVE', priority = 'NORMAL', conflict = 'DENY',
+            reason = 'interaction_bloom',
+        }, false, true)
+        if not acquired then return nil, focusError end
+        focusLease = acquired
+    end
+    local generation, generationError = interactionRuntime.nextGeneration()
+    if not generation then
+        if focusLease ~= nil and not reuseFocus then
+            releaseFocusInternal(focusLease.leaseId, owner, epoch)
+        end
+        return nil, generationError
+    end
+    normalized.ownerResource = owner
+    normalized.ownerEpoch = epoch
+    normalized.focusLeaseId = focusLease and focusLease.leaseId or nil
+    normalized.actionPending = false
+    interactionRuntime.active = normalized
+    if previous ~= nil and previous.focusLeaseId ~= nil
+        and previous.focusLeaseId ~= normalized.focusLeaseId then
+        releaseFocusInternal(previous.focusLeaseId, previous.ownerResource, previous.ownerEpoch)
+    end
+    interactionRuntime.trackRevision(normalized.interactionId, normalized.revision)
+    metrics.ui_active_interactions = 1
+    incrementMetric('ui_interaction_upsert_total')
+    local delivered = false
+    if nuiReady then
+        local payload = interactionRuntime.payload(normalized, false)
+        payload.generation = generation
+        delivered = sendEnvelope('interaction:upsert', owner, epoch,
+            normalized.revision, payload) == true
+    end
+    ensureInputThread()
+    return {
+        generation = generation,
+        interaction = interactionRuntime.payload(normalized, false),
+        delivered = delivered,
+        focusLeaseId = normalized.focusLeaseId,
+    }, nil
+end
+
+function interactionRuntime.remove(owner, epoch, interactionId, revision)
+    if not validIdentifier(interactionId, 96)
+        or not integerInRange(revision, 1, MAXIMUM_SAFE_INTEGER) then
+        return nil, failure('UI_REQUEST_INVALID', 'The interaction removal is invalid.')
+    end
+    local previousRevision = interactionRuntime.revisions[interactionId] or 0
+    if revision <= previousRevision then
+        return nil, failure('UI_REQUEST_STALE', 'The interaction removal revision is stale.', {
+            interactionId = interactionId,
+            currentRevision = previousRevision,
+        })
+    end
+    local generation, generationError = interactionRuntime.nextGeneration()
+    if not generation then return nil, generationError end
+    local removed = interactionRuntime.active ~= nil and interactionRuntime.active.ownerResource == owner
+        and interactionRuntime.active.ownerEpoch == epoch
+        and interactionRuntime.active.interactionId == interactionId
+    if removed then
+        local focusLeaseId = interactionRuntime.active.focusLeaseId
+        interactionRuntime.active = nil
+        metrics.ui_active_interactions = 0
+        if focusLeaseId ~= nil then releaseFocusInternal(focusLeaseId, owner, epoch) end
+    end
+    interactionRuntime.trackRevision(interactionId, revision)
+    incrementMetric('ui_interaction_remove_total')
+    if nuiReady then
+        sendEnvelope('interaction:remove', owner, epoch, revision, {
+            interactionId = interactionId,
+            generation = generation,
+        })
+    end
+    return {
+        generation = generation,
+        interactionId = interactionId,
+        revision = revision,
+        removed = removed,
+    }, nil
+end
+
+function interactionRuntime.clearOwner(owner, epoch)
+    if interactionRuntime.active == nil or interactionRuntime.active.ownerResource ~= owner
+        or (epoch ~= nil and interactionRuntime.active.ownerEpoch ~= epoch) then return false end
+    local interactionId = interactionRuntime.active.interactionId
+    local revision = math.min(MAXIMUM_SAFE_INTEGER, interactionRuntime.active.revision + 1)
+    local focusLeaseId = interactionRuntime.active.focusLeaseId
+    interactionRuntime.active = nil
+    metrics.ui_active_interactions = 0
+    if focusLeaseId ~= nil and focusLeases[focusLeaseId] ~= nil then
+        releaseFocusInternal(focusLeaseId, owner, epoch)
+    end
+    local generation = interactionRuntime.nextGeneration()
+    if generation ~= nil then
+        interactionRuntime.trackRevision(interactionId, revision)
+        if nuiReady then
+            sendEnvelope('interaction:remove', owner, epoch, revision, {
+                interactionId = interactionId,
+                generation = generation,
+            })
+        end
+    end
+    incrementMetric('ui_interaction_remove_total')
+    return true
+end
+
 local function activeSurfaceCount()
     local count = 0
     for _ in pairs(surfaces) do count = count + 1 end
@@ -1329,12 +2133,14 @@ local function sampleAndSendScreenMetrics(force)
         sendRuntimeSync({
             screen = cloneJson(current),
         })
+        notifySignalCapacity(false)
     end
 end
 
 local function setActiveInputDevice(device)
-    if not INPUT_DEVICES[device] or activeInputDevice == device then return end
+    if not INPUT_DEVICES[device] or activeInputDevice == device then return false end
     activeInputDevice = device
+    return true
 end
 
 ensureInputThread = function()
@@ -1347,7 +2153,10 @@ ensureInputThread = function()
         while runtimeRunning do
             local top = topFocusLease()
             local surfaceCount = activeSurfaceCount()
-            if top == nil and surfaceCount == 0 then break end
+            local signalCount = activeSignalCount()
+            local interactionCount = interactionRuntime.active ~= nil and 1 or 0
+            if top == nil and surfaceCount == 0 and signalCount == 0
+                and interactionCount == 0 then break end
             if top ~= nil and top.mode ~= 'PASSIVE' then
                 local usingKeyboard = IsUsingKeyboard(0)
                 if not usingKeyboard then setActiveInputDevice('gamepad') end
@@ -1368,12 +2177,19 @@ ensureInputThread = function()
                 sampleAndSendScreenMetrics(false)
                 wait(0)
             else
+                if signalCount > 0 or interactionCount > 0 then
+                    local detectedDevice = IsUsingKeyboard(0) and 'keyboard' or 'gamepad'
+                    if setActiveInputDevice(detectedDevice) and nuiReady then
+                        sendRuntimeSync({ inputDevice = activeInputDevice })
+                    end
+                end
                 sampleAndSendScreenMetrics(false)
                 wait(250)
             end
         end
         inputThreadRunning = false
-        if runtimeRunning and (topFocusLease() ~= nil or activeSurfaceCount() > 0) then
+        if runtimeRunning and (topFocusLease() ~= nil or activeSurfaceCount() > 0
+            or activeSignalCount() > 0 or interactionRuntime.active ~= nil) then
             ensureInputThread()
         end
     end)
@@ -1604,6 +2420,8 @@ local function resetBrowserRuntime(code)
     focusQueue = {}
     syncFocus()
     activeInputDevice = 'keyboard'
+    interactionRuntime.active = nil
+    metrics.ui_active_interactions = 0
 end
 
 cleanupOwner = function(owner, epoch, disposition)
@@ -1635,6 +2453,22 @@ cleanupOwner = function(owner, epoch, disposition)
     end
     if #leases > 0 then changed = true end
     for _, leaseId in ipairs(leases) do releaseFocusInternal(leaseId) end
+    if clearOwnerSignals(owner, epoch) then changed = true end
+    if interactionRuntime.clearOwner(owner, epoch) then changed = true end
+    if interactionRuntime.actionSubscriber ~= nil
+        and interactionRuntime.actionSubscriber.ownerResource == owner
+        and (epoch == nil or interactionRuntime.actionSubscriber.ownerEpoch == epoch) then
+        interactionRuntime.actionSubscriber = nil
+        interactionRuntime.actionBindingGeneration = interactionRuntime.actionBindingGeneration + 1
+        changed = true
+    end
+    if signalCapacitySubscriber ~= nil
+        and signalCapacitySubscriber.ownerResource == owner
+        and (epoch == nil or signalCapacitySubscriber.ownerEpoch == epoch) then
+        signalCapacitySubscriber = nil
+        signalCapacityBindingGeneration = signalCapacityBindingGeneration + 1
+        changed = true
+    end
     if changed then incrementMetric('ui_owner_cleanup_total') end
     return changed
 end
@@ -1662,8 +2496,25 @@ cleanupRuntime = function()
     pendingRequests = {}
     surfaces = {}
     surfaceOrder = {}
+    signals = {}
+    signalOrder = {}
+    signalRevisions = {}
+    signalRevisionOrder = {}
+    browserVisibleSignals = {}
+    browserVisibleSignalGeneration = -1
+    browserVisibilityRevision = 0
+    browserVisibleCapacity = LIMITS.maximumVisibleSignals
+    signalCapacitySubscriber = nil
+    signalCapacityBindingGeneration = signalCapacityBindingGeneration + 1
     focusAgents = {}
+    interactionRuntime.active = nil
+    interactionRuntime.revisions = {}
+    interactionRuntime.revisionOrder = {}
+    interactionRuntime.actionSubscriber = nil
+    interactionRuntime.actionBindingGeneration = interactionRuntime.actionBindingGeneration + 1
     metrics.ui_active_surfaces = 0
+    metrics.ui_active_signals = 0
+    metrics.ui_active_interactions = 0
     if SetNuiFocusKeepInput ~= nil then pcall(SetNuiFocusKeepInput, false) end
     pcall(SetNuiFocus, false, false)
     focusApplied = { keyboard = false, pointer = false, target = 'none' }
@@ -1679,6 +2530,12 @@ registerNuiRoute('runtime:ready', function(request)
             'The NUI ready handshake is invalid.'))
     end
     local isSameBrowserBoot = browserBootId == request.browserBootId
+    if not isSameBrowserBoot then
+        browserVisibleSignals = {}
+        browserVisibleSignalGeneration = -1
+        browserVisibilityRevision = 0
+        browserVisibleCapacity = adaptiveSignalCapacity()
+    end
     if browserBootId ~= nil and not isSameBrowserBoot then
         nuiReady = false
         resetBrowserRuntime('UI_REQUEST_CANCELLED')
@@ -1689,12 +2546,19 @@ registerNuiRoute('runtime:ready', function(request)
     clearReason('NUI_NOT_READY')
     lastScreenMetrics = readScreenMetrics()
     lastScreenSampleAt = nowMilliseconds()
+    notifySignalCapacity(false)
     local syncPayload = {
         preferences = cloneJson(preferences),
         screen = cloneJson(lastScreenMetrics),
         inputDevice = activeInputDevice,
         health = healthSnapshot().state,
+        signals = signalSnapshot(nil),
+        signalGeneration = signalGeneration,
     }
+    if interactionRuntime.active ~= nil then
+        syncPayload.interaction = interactionRuntime.payload(interactionRuntime.active, true)
+        syncPayload.interactionGeneration = interactionRuntime.generation
+    end
     -- A retry from the same browser instance must not clear surfaces that are
     -- still mounted and hold an active native-focus lease. A genuinely new
     -- browser boot is reset above and receives an explicit empty snapshot.
@@ -1780,6 +2644,145 @@ registerNuiRoute('runtime:input', function(request)
     return success({ requestId = request.requestId, device = activeInputDevice })
 end)
 
+registerNuiRoute('runtime:interaction', function(request)
+    if not keysAllowed(request, {
+        protocolVersion = true, requestId = true, browserBootId = true,
+        interactionId = true, ownerEpoch = true, revision = true,
+        action = true, intentId = true, device = true,
+    }) or request.protocolVersion ~= PROTOCOL_VERSION
+        or request.browserBootId ~= browserBootId
+        or not validIdentifier(request.requestId, 96)
+        or not validIdentifier(request.interactionId, 96)
+        or not integerInRange(request.ownerEpoch, 1, MAXIMUM_SAFE_INTEGER)
+        or not integerInRange(request.revision, 1, MAXIMUM_SAFE_INTEGER)
+        or (request.action ~= 'activate' and request.action ~= 'cancel')
+        or not INPUT_DEVICES[request.device]
+        or (request.intentId ~= nil and not validIdentifier(request.intentId, 96)) then
+        return rejected(failure(request.protocolVersion ~= PROTOCOL_VERSION
+            and 'UI_PROTOCOL_UNSUPPORTED' or 'UI_REQUEST_INVALID',
+            'The interaction intent callback is invalid.'))
+    end
+    local current = interactionRuntime.active
+    if current == nil or current.ownerResource ~= INTERACTION_TRANSPORT_OWNER
+        or current.interactionId ~= request.interactionId
+        or current.ownerEpoch ~= request.ownerEpoch or current.revision ~= request.revision then
+        return rejected(failure('UI_REQUEST_STALE',
+            'The interaction intent callback belongs to a stale presentation.'))
+    end
+    local focusLease = current.focusLeaseId and focusLeases[current.focusLeaseId] or nil
+    if current.mode ~= 'bloom' or not current.pointer or focusLease == nil
+        or topFocusLease() ~= focusLease or not focusLease.sharedSurfaceLease then
+        return rejected(failure('UI_INTERACTION_DENIED',
+            'The interaction presentation does not own pointer focus.'))
+    end
+    local selectedIntent = nil
+    if request.action == 'activate' then
+        if request.intentId == nil then
+            return rejected(failure('UI_REQUEST_INVALID',
+                'An activated interaction requires an intent identifier.'))
+        end
+        for index = 1, #current.intents do
+            local candidate = current.intents[index]
+            if candidate.intentId == request.intentId then selectedIntent = candidate; break end
+        end
+        if selectedIntent == nil or selectedIntent.disabled == true then
+            return rejected(failure('UI_INTERACTION_DENIED',
+                'The selected interaction intent is unavailable.'))
+        end
+    elseif request.intentId ~= nil or not current.cancellable then
+        return rejected(failure('UI_REQUEST_INVALID',
+            'The interaction cancellation callback is invalid.'))
+    end
+    local subscriber = interactionRuntime.actionSubscriber
+    if subscriber == nil or subscriber.ownerResource ~= current.ownerResource
+        or subscriber.ownerEpoch ~= current.ownerEpoch or not isCallable(subscriber.callback) then
+        return rejected(failure('UI_INTERACTION_DENIED',
+            'The interaction intent subscriber is unavailable.'))
+    end
+    if current.actionPending then
+        return rejected(failure('UI_REQUEST_STALE',
+            'An interaction intent is already being handed off.'))
+    end
+    current.actionPending = true
+    setActiveInputDevice(request.device)
+    local event = {
+        interactionId = current.interactionId,
+        revision = current.revision,
+        action = request.action,
+        device = request.device,
+    }
+    if selectedIntent ~= nil then event.intentId = selectedIntent.intentId end
+    local delivered, accepted = pcall(subscriber.callback, event)
+    if not delivered or accepted ~= true then
+        current.actionPending = false
+        incrementMetric('ui_runtime_errors')
+        return rejected(failure('UI_INTERACTION_DENIED',
+            'The interaction owner did not accept the user intent.'))
+    end
+    incrementMetric('ui_interaction_action_total')
+    return success({ requestId = request.requestId, accepted = true })
+end)
+
+registerNuiRoute('runtime:signals:visible', function(request)
+    if not keysAllowed(request, {
+        protocolVersion = true, requestId = true, browserBootId = true,
+        generation = true, presentationRevision = true, capacity = true,
+        signals = true,
+    }) or request.protocolVersion ~= PROTOCOL_VERSION
+        or request.browserBootId ~= browserBootId
+        or not validIdentifier(request.requestId, 96)
+        or not integerInRange(request.generation, 1, MAXIMUM_SAFE_INTEGER)
+        or not integerInRange(request.presentationRevision, 1, MAXIMUM_SAFE_INTEGER)
+        or not integerInRange(request.capacity, 1, LIMITS.maximumVisibleSignals)
+        or request.capacity ~= adaptiveSignalCapacity() then
+        return rejected(failure(request.protocolVersion ~= PROTOCOL_VERSION
+            and 'UI_PROTOCOL_UNSUPPORTED' or 'UI_REQUEST_INVALID',
+            'The passive signal visibility report is invalid.'))
+    end
+    if request.generation ~= signalGeneration then
+        return rejected(failure('UI_REQUEST_STALE',
+            'The passive signal visibility report is stale.'))
+    end
+    if request.presentationRevision <= browserVisibilityRevision then
+        return rejected(failure('UI_REQUEST_STALE',
+            'The passive signal presentation revision is stale.'))
+    end
+    local count = arrayLength(request.signals, request.capacity)
+    if count == nil then
+        return rejected(failure('UI_REQUEST_INVALID',
+            'The passive signal visibility report is not bounded.'))
+    end
+    local confirmed = {}
+    for index = 1, count do
+        local entry = request.signals[index]
+        if not keysAllowed(entry, {
+            ownerResource = true, ownerEpoch = true, signalId = true, revision = true,
+        }) or not validIdentifier(entry.ownerResource, 64)
+            or not validIdentifier(entry.signalId, 96)
+            or not integerInRange(entry.ownerEpoch, 1, MAXIMUM_SAFE_INTEGER)
+            or not integerInRange(entry.revision, 1, MAXIMUM_SAFE_INTEGER) then
+            return rejected(failure('UI_REQUEST_INVALID',
+                'A passive signal visibility entry is invalid.'))
+        end
+        local key = signalKey(entry.ownerResource, entry.signalId)
+        local current = signals[key]
+        if confirmed[key] ~= nil or current == nil
+            or current.ownerEpoch ~= entry.ownerEpoch
+            or current.revision ~= entry.revision then
+            return rejected(failure('UI_REQUEST_STALE',
+                'A passive signal visibility entry is stale.'))
+        end
+        confirmed[key] = entry.revision
+    end
+    browserVisibleSignals = confirmed
+    browserVisibleSignalGeneration = request.generation
+    browserVisibilityRevision = request.presentationRevision
+    browserVisibleCapacity = request.capacity
+    return success({ generation = request.generation,
+        presentationRevision = request.presentationRevision,
+        capacity = request.capacity, visible = count })
+end)
+
 registerNuiRoute('runtime:preferences', function(request)
     if not keysAllowed(request, {
         protocolVersion = true, requestId = true, browserBootId = true, preferences = true,
@@ -1841,21 +2844,26 @@ local function facadeGuard(owner, epoch)
     return ownerCurrent(owner, epoch)
 end
 
-local function diagnosticsSnapshot()
+local function diagnosticsSnapshot(owner, epoch)
     local activeLeases = {}
     for _, leaseId in ipairs(focusStack) do
         local lease = focusLeases[leaseId]
-        if lease ~= nil then activeLeases[#activeLeases + 1] = publicLease(lease) end
+        if lease ~= nil and lease.ownerResource == owner and lease.ownerEpoch == epoch then
+            activeLeases[#activeLeases + 1] = publicLease(lease)
+        end
     end
     local queuedLeases = {}
     for _, leaseId in ipairs(focusQueue) do
         local lease = focusLeases[leaseId]
-        if lease ~= nil then queuedLeases[#queuedLeases + 1] = publicLease(lease) end
+        if lease ~= nil and lease.ownerResource == owner and lease.ownerEpoch == epoch then
+            queuedLeases[#queuedLeases + 1] = publicLease(lease)
+        end
     end
     local activeSurfaces = {}
     for _, surfaceId in ipairs(surfaceOrder) do
         local surface = surfaces[surfaceId]
-        if surface ~= nil then
+        if surface ~= nil and surface.ownerResource == owner
+            and surface.ownerEpoch == epoch then
             activeSurfaces[#activeSurfaces + 1] = {
                 surfaceId = surface.surfaceId,
                 requestId = surface.requestId,
@@ -1870,6 +2878,11 @@ local function diagnosticsSnapshot()
             }
         end
     end
+    local applied = { keyboard = false, pointer = false, target = 'none' }
+    local top = topFocusLease()
+    if top ~= nil and top.ownerResource == owner and top.ownerEpoch == epoch then
+        applied = cloneJson(focusApplied)
+    end
     return {
         apiVersion = API_VERSION,
         protocolVersion = PROTOCOL_VERSION,
@@ -1879,11 +2892,24 @@ local function diagnosticsSnapshot()
         limits = publicLimits(),
         activeInputDevice = activeInputDevice,
         focus = {
-            applied = cloneJson(focusApplied),
+            applied = applied,
             stack = activeLeases,
             queue = queuedLeases,
         },
         surfaces = activeSurfaces,
+        signals = signalSnapshot(owner),
+        signalGeneration = signalGeneration,
+        interaction = interactionRuntime.active ~= nil
+            and interactionRuntime.active.ownerResource == owner
+            and interactionRuntime.active.ownerEpoch == epoch
+            and interactionRuntime.payload(interactionRuntime.active, false) or nil,
+        interactionGeneration = interactionRuntime.generation,
+        interactionActionBindingGeneration = interactionRuntime.actionSubscriber ~= nil
+            and interactionRuntime.actionSubscriber.ownerResource == owner
+            and interactionRuntime.actionSubscriber.ownerEpoch == epoch
+            and interactionRuntime.actionSubscriber.bindingGeneration or nil,
+        signalVisibleCapacity = adaptiveSignalCapacity(),
+        signalBrowserVisibleCapacity = browserVisibleCapacity,
         pendingRequests = #activeSurfaces,
         screen = lastScreenMetrics and cloneJson(lastScreenMetrics) or nil,
     }
@@ -2138,6 +3164,176 @@ exports('GetAPI', function(versionRange)
         if not valid then return nil, guardError end
         return openSurfaceAndAwait(owner, epoch, 'contextMenu', request)
     end
+    api.upsertInteraction = function(request)
+        local valid, guardError = facadeGuard(owner, epoch)
+        if not valid then return nil, guardError end
+        if owner ~= INTERACTION_TRANSPORT_OWNER then
+            return nil, failure('UI_INTERACTION_DENIED',
+                'Interaction presentation transport is reserved for synex_interact.')
+        end
+        return interactionRuntime.upsert(owner, epoch, request)
+    end
+    api.removeInteraction = function(interactionId, revision)
+        local valid, guardError = facadeGuard(owner, epoch)
+        if not valid then return nil, guardError end
+        if owner ~= INTERACTION_TRANSPORT_OWNER then
+            return nil, failure('UI_INTERACTION_DENIED',
+                'Interaction presentation transport is reserved for synex_interact.')
+        end
+        return interactionRuntime.remove(owner, epoch, interactionId, revision)
+    end
+    api.getInteractionSnapshot = function()
+        local valid, guardError = facadeGuard(owner, epoch)
+        if not valid then return nil, guardError end
+        if owner ~= INTERACTION_TRANSPORT_OWNER then
+            return nil, failure('UI_INTERACTION_DENIED',
+                'Interaction presentation transport is reserved for synex_interact.')
+        end
+        return {
+            generation = interactionRuntime.generation,
+            interaction = interactionRuntime.active ~= nil
+                and interactionRuntime.payload(interactionRuntime.active, false) or nil,
+            focusLeaseId = interactionRuntime.active ~= nil
+                and interactionRuntime.active.focusLeaseId or nil,
+        }, nil
+    end
+    if owner == INTERACTION_TRANSPORT_OWNER then
+        api.bindInteractionActions = function(callback)
+            local valid, guardError = facadeGuard(owner, epoch)
+            if not valid then return nil, guardError end
+            if not isCallable(callback) then
+                return nil, failure('UI_REQUEST_INVALID',
+                    'The interaction action subscriber must be callable.')
+            end
+            interactionRuntime.actionBindingGeneration = interactionRuntime.actionBindingGeneration + 1
+            interactionRuntime.actionSubscriber = {
+                ownerResource = owner,
+                ownerEpoch = epoch,
+                callback = callback,
+                bindingGeneration = interactionRuntime.actionBindingGeneration,
+            }
+            return { bindingGeneration = interactionRuntime.actionBindingGeneration }, nil
+        end
+    end
+    api.upsertSignal = function(request)
+        local valid, guardError = facadeGuard(owner, epoch)
+        if not valid then return nil, guardError end
+        if owner ~= SIGNAL_TRANSPORT_OWNER then
+            return nil, failure('UI_SIGNAL_DENIED',
+                'Passive signal transport is reserved for synex_notify.')
+        end
+        return upsertSignalInternal(owner, epoch, request)
+    end
+    api.removeSignal = function(signalId, revision)
+        local valid, guardError = facadeGuard(owner, epoch)
+        if not valid then return nil, guardError end
+        if owner ~= SIGNAL_TRANSPORT_OWNER then
+            return nil, failure('UI_SIGNAL_DENIED',
+                'Passive signal transport is reserved for synex_notify.')
+        end
+        return removeSignalInternal(owner, epoch, signalId, revision)
+    end
+    api.getSignalSnapshot = function()
+        local valid, guardError = facadeGuard(owner, epoch)
+        if not valid then return nil, guardError end
+        if owner ~= SIGNAL_TRANSPORT_OWNER then
+            return nil, failure('UI_SIGNAL_DENIED',
+                'Passive signal transport is reserved for synex_notify.')
+        end
+        return {
+            generation = signalGeneration,
+            visibilityGeneration = browserVisibleSignalGeneration,
+            visibilityRevision = browserVisibilityRevision,
+            visibleCapacity = adaptiveSignalCapacity(),
+            visibilityCapacity = browserVisibleCapacity,
+            signals = signalSnapshot(owner, true),
+        }, nil
+    end
+    if owner == SIGNAL_TRANSPORT_OWNER then
+        api.bindSignalCapacity = function(callback)
+            local valid, guardError = facadeGuard(owner, epoch)
+            if not valid then return nil, guardError end
+            if not isCallable(callback) then
+                return nil, failure('UI_REQUEST_INVALID',
+                    'The signal-capacity subscriber must be callable.')
+            end
+            signalCapacityBindingGeneration = signalCapacityBindingGeneration + 1
+            signalCapacitySubscriber = {
+                ownerResource = owner,
+                ownerEpoch = epoch,
+                callback = callback,
+                capacity = nil,
+                preferenceRevision = nil,
+                pendingCapacity = nil,
+                pendingPreferenceRevision = nil,
+                dispatchPending = false,
+                bindingGeneration = signalCapacityBindingGeneration,
+            }
+            local scheduled = notifySignalCapacity(true)
+            if not scheduled or signalCapacitySubscriber == nil then
+                return nil, failure('UI_REQUEST_INVALID',
+                    'The signal-capacity subscriber could not be scheduled.')
+            end
+            return { capacity = adaptiveSignalCapacity() }
+        end
+        api.playSignalSound = function(request)
+            local valid, guardError = facadeGuard(owner, epoch)
+            if not valid then return nil, guardError end
+            if not keysAllowed(request, { tone = true, volume = true })
+                or SIGNAL_SOUND_TONES[request.tone] ~= true
+                or not integerInRange(request.volume, LIMITS.minimumSignalSoundVolume,
+                    LIMITS.maximumSignalSoundVolume) then
+                return nil, failure('UI_REQUEST_INVALID',
+                    'The notification sound request is invalid.')
+            end
+            local now = nowMilliseconds()
+            local sinceLast = now - signalSoundRate.lastAt
+            if sinceLast < LIMITS.signalSoundCooldownMs then
+                return nil, failure('UI_SIGNAL_DENIED',
+                    'The notification sound cooldown is active.', {
+                        retryAfterMs = LIMITS.signalSoundCooldownMs - sinceLast,
+                    })
+            end
+            if now - signalSoundRate.windowStartedAt >= LIMITS.signalSoundWindowMs then
+                signalSoundRate.windowStartedAt = now
+                signalSoundRate.count = 0
+            end
+            if signalSoundRate.count >= LIMITS.maximumSignalSoundsPerWindow then
+                return nil, failure('UI_SIGNAL_DENIED',
+                    'The notification sound rate limit is active.', {
+                        retryAfterMs = math.max(1,
+                            LIMITS.signalSoundWindowMs - (now - signalSoundRate.windowStartedAt)),
+                    })
+            end
+            local delivered, sendError = sendEnvelope('signal:sound', owner, epoch, 0, {
+                tone = request.tone,
+                volume = request.volume,
+                browserBootId = browserBootId,
+            })
+            if not delivered then return nil, sendError end
+            signalSoundRate.lastAt = now
+            signalSoundRate.count = signalSoundRate.count + 1
+            return { delivered = true }, nil
+        end
+    end
+    if owner == SIGNAL_TRANSPORT_OWNER or owner == INTERACTION_TRANSPORT_OWNER then
+        api.reportInputDevice = function(device)
+            local valid, guardError = facadeGuard(owner, epoch)
+            if not valid then return nil, guardError end
+            if device ~= 'keyboard' and device ~= 'gamepad' then
+                return nil, failure('UI_REQUEST_INVALID',
+                    'The passive input-device report is invalid.')
+            end
+            local changed = setActiveInputDevice(device)
+            if changed and nuiReady then
+                local synchronized, syncError = sendRuntimeSync({
+                    inputDevice = activeInputDevice,
+                })
+                if not synchronized then return nil, syncError end
+            end
+            return { device = activeInputDevice, changed = changed }, nil
+        end
+    end
     api.closeOwner = function(disposition)
         local valid, guardError = facadeGuard(owner, epoch)
         if not valid then return nil, guardError end
@@ -2165,7 +3361,7 @@ exports('GetAPI', function(versionRange)
     api.getDiagnostics = function()
         local valid, guardError = facadeGuard(owner, epoch)
         if not valid then return nil, guardError end
-        return diagnosticsSnapshot()
+        return diagnosticsSnapshot(owner, epoch)
     end
     return api, nil
 end)

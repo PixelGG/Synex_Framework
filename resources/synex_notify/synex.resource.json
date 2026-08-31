@@ -1,0 +1,206 @@
+{
+  "$schema": "../../schemas/resource.schema.json",
+  "schema": 1,
+  "name": "synex_notify",
+  "version": "0.1.0",
+  "synex": "^1.0.0",
+  "critical": false,
+  "capabilities": {
+    "request": [
+      "synex.audit.append",
+      "synex.capabilities.delegate",
+      "synex.compat.adapter.register",
+      "synex.control.provider.register",
+      "synex.identity.read",
+      "synex.metrics.write"
+    ]
+  },
+  "controlProvider": {
+    "schemaVersion": 1,
+    "namespace": "notify",
+    "label": "Notify",
+    "category": "foundation",
+    "version": "1.0.0",
+    "operations": ["summary", "health", "list", "metrics", "findings", "simulate"],
+    "views": [
+      {
+        "id": "overview",
+        "label": "Notify overview",
+        "operation": "summary",
+        "presentation": "key-value",
+        "order": 10,
+        "description": "Bounded delivery, owner, progress, action, and suppression totals.",
+        "accessClass": "general"
+      },
+      {
+        "id": "health",
+        "label": "Notify health",
+        "operation": "health",
+        "presentation": "key-value",
+        "order": 20,
+        "description": "Current Core, UI runtime, transport, and capacity health.",
+        "accessClass": "general"
+      },
+      {
+        "id": "owners",
+        "label": "Owners",
+        "operation": "list",
+        "presentation": "table",
+        "order": 30,
+        "description": "Bounded per-resource activity aggregates without message or player data.",
+        "accessClass": "general"
+      },
+      {
+        "id": "budgets",
+        "label": "Budgets",
+        "operation": "list",
+        "presentation": "table",
+        "order": 40,
+        "description": "Configured visible, queue, action, history, and target-list bounds.",
+        "accessClass": "general"
+      },
+      {
+        "id": "rate_limits",
+        "label": "Rate limits",
+        "operation": "list",
+        "presentation": "table",
+        "order": 50,
+        "description": "Configured resource, kind, high, critical, and global token budgets.",
+        "accessClass": "general"
+      },
+      {
+        "id": "activity",
+        "label": "Lifecycle activity",
+        "operation": "metrics",
+        "presentation": "metrics",
+        "order": 60,
+        "description": "Server-created, wake-dispatched, rejected, and action totals with bounded client presentation telemetry.",
+        "accessClass": "general"
+      },
+      {
+        "id": "queue",
+        "label": "Queue and capacity",
+        "operation": "metrics",
+        "presentation": "metrics",
+        "order": 61,
+        "description": "Active presentation and retained-delivery pressure against the bounded server registry.",
+        "accessClass": "general"
+      },
+      {
+        "id": "deduplication",
+        "label": "Deduplication",
+        "operation": "metrics",
+        "presentation": "metrics",
+        "order": 62,
+        "description": "Fresh client-reported deduplication totals, explicitly separated from server-authoritative metrics.",
+        "accessClass": "general"
+      },
+      {
+        "id": "grouping",
+        "label": "Grouping",
+        "operation": "metrics",
+        "presentation": "metrics",
+        "order": 63,
+        "description": "Fresh client-reported grouping totals, explicitly separated from server-authoritative metrics.",
+        "accessClass": "general"
+      },
+      {
+        "id": "suppression",
+        "label": "Suppression",
+        "operation": "metrics",
+        "presentation": "metrics",
+        "order": 64,
+        "description": "Client-reported presentation suppression plus separate server rate-limit and authorization denials.",
+        "accessClass": "general"
+      },
+      {
+        "id": "progress",
+        "label": "Progress",
+        "operation": "metrics",
+        "presentation": "metrics",
+        "order": 65,
+        "description": "Current non-terminal progress count.",
+        "accessClass": "general"
+      },
+      {
+        "id": "actions",
+        "label": "Actions",
+        "operation": "metrics",
+        "presentation": "metrics",
+        "order": 66,
+        "description": "Bounded action backlog, invocation, expiry, and replay totals.",
+        "accessClass": "general"
+      },
+      {
+        "id": "performance",
+        "label": "Performance",
+        "operation": "metrics",
+        "presentation": "metrics",
+        "order": 67,
+        "description": "Measured server wake latency plus bounded client-reported queue and render latency.",
+        "accessClass": "general"
+      },
+      {
+        "id": "findings",
+        "label": "Findings",
+        "operation": "findings",
+        "presentation": "findings",
+        "order": 70,
+        "description": "Bounded queue pressure, action backlog, spam, priority, and orphan findings.",
+        "accessClass": "general"
+      },
+      {
+        "id": "policy",
+        "label": "Presentation policy simulator",
+        "operation": "simulate",
+        "presentation": "detail",
+        "order": 80,
+        "description": "Validate and explain a notification shape without sending it.",
+        "accessClass": "general"
+      }
+    ]
+  },
+  "services": {
+    "provide": ["synex.notify@1"],
+    "require": ["synex.runtime@1"],
+    "optional": []
+  },
+  "contracts": {
+    "provide": [
+      "synex.notify.send",
+      "synex.notify.update",
+      "synex.notify.dismiss",
+      "synex.notify.command.pull",
+      "synex.notify.action.invoke",
+      "synex.notify.metrics.report"
+    ],
+    "consume": []
+  },
+  "events": {
+    "publish": ["synex.notify.*"],
+    "subscribe": []
+  },
+  "hooks": {
+    "register": [],
+    "run": []
+  },
+  "dependencies": {
+    "required": [
+      { "name": "synex_core", "version": ">=0.1.0" }
+    ],
+    "optional": [
+      { "name": "synex_ui", "version": ">=0.1.0" },
+      { "name": "synex_bridge", "version": ">=0.1.0" }
+    ],
+    "development": []
+  },
+  "migrations": [],
+  "dataOwnership": {
+    "tables": [],
+    "characterDelete": "none"
+  },
+  "stateSnapshot": {
+    "supported": false,
+    "schemaVersion": 1
+  }
+}

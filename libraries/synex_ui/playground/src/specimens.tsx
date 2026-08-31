@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import {
   ActionMenu,
   ActionRow,
@@ -93,6 +93,11 @@ import {
 } from "@synex/ui";
 import { designLabTransport, type MockScenario } from "./mockTransport";
 import type { LabPreferences, LabSection } from "./DesignLab";
+import { InteractionSurface } from "../../runtime/src/InteractionSurface";
+import { SignalRail, SignalSurface, selectVisibleSignals } from "../../runtime/src/SignalSurface";
+import { createInitialRuntimeState, runtimeReducer } from "../../runtime/src/store";
+import type { RuntimeInteraction, RuntimeSignal, ScreenMetrics, SignalDescriptor } from "../../runtime/src/protocol";
+import type { NuiTransport } from "../../runtime/src/transport";
 
 interface SpecimenSectionProps {
   section: LabSection;
@@ -487,11 +492,490 @@ function MenuSpecimens() {
   );
 }
 
+const notifySignals: readonly SignalDescriptor[] = [
+  {
+    signalId: "notify.critical",
+    revision: 1,
+    kind: "banner",
+    tone: "danger",
+    priority: "critical",
+    title: "Engine temperature critical",
+    message: "Pull over safely before continuing.",
+    iconKey: "error",
+    actions: [{ token: "acknowledge", label: "Acknowledge", hint: "E", style: "danger" }],
+    createdAt: 1_725_000_000_004,
+    position: "top-right",
+  },
+  {
+    signalId: "notify.download",
+    revision: 1,
+    kind: "progress",
+    tone: "info",
+    priority: "high",
+    title: "Downloading vehicle assets",
+    message: "12 of 20 bundles are ready.",
+    progress: { state: "RUNNING", mode: "determinate", value: 60, maximum: 100 },
+    actions: [{ token: "cancel", label: "Cancel", hint: "B" }],
+    createdAt: 1_725_000_000_003,
+    position: "top-right",
+  },
+  {
+    signalId: "notify.grouped",
+    revision: 1,
+    kind: "toast",
+    tone: "success",
+    priority: "normal",
+    title: "Inventory updated",
+    message: "Repair supplies were added.",
+    count: 4,
+    actions: [],
+    createdAt: 1_725_000_000_002,
+    position: "top-right",
+  },
+  {
+    signalId: "notify.hint",
+    revision: 1,
+    kind: "persistent",
+    tone: "neutral",
+    priority: "low",
+    title: "Seatbelt reminder",
+    message: "Fasten before entering traffic.",
+    actions: [{ token: "toggle", label: "Toggle belt", hint: "K" }],
+    createdAt: 1_725_000_000_001,
+    position: "top-right",
+  },
+];
+
+const notifyToneSignals: readonly SignalDescriptor[] = [
+  {
+    signalId: "fixture.neutral",
+    revision: 1,
+    kind: "persistent",
+    tone: "neutral",
+    priority: "low",
+    title: "Seatbelt reminder",
+    message: "Fasten before entering traffic.",
+    actions: [],
+    createdAt: 1_725_000_000_010,
+    position: "top-right",
+  },
+  {
+    signalId: "fixture.info",
+    revision: 1,
+    kind: "progress",
+    tone: "info",
+    priority: "high",
+    title: "Downloading vehicle assets",
+    message: "12 of 20 bundles are ready.",
+    progress: { state: "RUNNING", mode: "determinate", value: 60, maximum: 100 },
+    actions: [],
+    createdAt: 1_725_000_000_011,
+    position: "top-right",
+  },
+  {
+    signalId: "fixture.success",
+    revision: 1,
+    kind: "status",
+    tone: "success",
+    priority: "normal",
+    title: "Import complete",
+    message: "All vehicle bundles are available.",
+    progress: { state: "SUCCESS", mode: "determinate", value: 100, maximum: 100 },
+    actions: [],
+    createdAt: 1_725_000_000_012,
+    position: "top-right",
+  },
+  {
+    signalId: "fixture.warning",
+    revision: 1,
+    kind: "toast",
+    tone: "warning",
+    priority: "normal",
+    title: "Inventory near capacity",
+    message: "Three recent updates were grouped.",
+    count: 3,
+    actions: [],
+    createdAt: 1_725_000_000_013,
+    position: "top-right",
+  },
+  {
+    signalId: "fixture.danger",
+    revision: 1,
+    kind: "banner",
+    tone: "danger",
+    priority: "critical",
+    title: "Asset import failed",
+    message: "The current bundle could not be verified.",
+    progress: { state: "FAILED", mode: "determinate", value: 78, maximum: 100 },
+    actions: [{ token: "retry", label: "Retry import", hint: "R", style: "danger" }],
+    createdAt: 1_725_000_000_014,
+    position: "top-right",
+  },
+];
+
+function runtimeSignal(descriptor: SignalDescriptor): RuntimeSignal {
+  return { ...descriptor, ownerResource: "synex_design_lab", ownerEpoch: 1 };
+}
+
+function SignalToneMatrix() {
+  return (
+    <div className="lab-signal-matrix" data-testid="signal-tone-matrix">
+      {notifyToneSignals.map((descriptor) => (
+        <SignalSurface key={descriptor.signalId} signal={runtimeSignal(descriptor)} />
+      ))}
+    </div>
+  );
+}
+
+const signalProfiles: readonly {
+  label: string;
+  quality: "low" | "balanced" | "high" | "ultra";
+  reducedMotion?: boolean;
+  reducedTransparency?: boolean;
+}[] = [
+  { label: "LOW", quality: "low" },
+  { label: "BALANCED", quality: "balanced" },
+  { label: "HIGH", quality: "high" },
+  { label: "ULTRA", quality: "ultra" },
+  { label: "REDUCED MOTION", quality: "balanced", reducedMotion: true },
+  { label: "OPAQUE", quality: "balanced", reducedTransparency: true },
+];
+
+function SignalProfileMatrix() {
+  const sample = runtimeSignal({
+    ...notifyToneSignals[1]!,
+    signalId: "fixture.profile",
+    title: "Runtime profile check",
+    message: undefined,
+    actions: [],
+  });
+  return (
+    <div className="lab-signal-profile-grid" data-testid="signal-profile-matrix">
+      {signalProfiles.map((profile) => (
+        <div
+          key={profile.label}
+          className="lab-signal-profile"
+          data-sx-signal-profile="true"
+          data-sx-quality={profile.quality}
+          data-sx-reduced-motion={profile.reducedMotion ? "true" : undefined}
+          data-sx-reduced-transparency={profile.reducedTransparency ? "true" : undefined}
+        >
+          <span>{profile.label}</span>
+          <SignalSurface signal={sample} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const simulatorToast: SignalDescriptor = {
+  signalId: "simulator.toast",
+  revision: 1,
+  kind: "toast",
+  tone: "info",
+  priority: "normal",
+  title: "Vehicle access updated",
+  message: "The temporary key is ready for this session.",
+  actions: [],
+  createdAt: 1_725_000_000_100,
+  position: "top-right",
+};
+
+const simulatorProgress: SignalDescriptor = {
+  signalId: "notify.download",
+  revision: 1,
+  kind: "progress",
+  tone: "info",
+  priority: "high",
+  title: "Synchronizing vehicle assets",
+  message: "15% of the manifest is ready.",
+  progress: { state: "RUNNING", mode: "determinate", value: 15, maximum: 100 },
+  actions: [{ token: "cancel", label: "Cancel", hint: "B" }],
+  createdAt: 1_725_000_000_101,
+  position: "top-right",
+};
+
+const simulatorCritical: SignalDescriptor = {
+  signalId: "simulator.critical",
+  revision: 1,
+  kind: "banner",
+  tone: "danger",
+  priority: "critical",
+  title: "Engine temperature critical",
+  message: "Pull over safely before continuing.",
+  iconKey: "error",
+  actions: [{ token: "acknowledge", label: "Acknowledge", hint: "E", style: "danger" }],
+  createdAt: 1_725_000_000_102,
+  position: "top-right",
+};
+
+const simulatorAction: SignalDescriptor = {
+  signalId: "simulator.action",
+  revision: 1,
+  kind: "persistent",
+  tone: "warning",
+  priority: "high",
+  title: "Route requires confirmation",
+  message: "Choose a safe response using the mapped game controls.",
+  actions: [
+    { token: "confirm", label: "Confirm route", hint: "E", style: "primary" },
+    { token: "dismiss", label: "Dismiss", hint: "B" },
+  ],
+  createdAt: 1_725_000_000_103,
+  position: "top-right",
+};
+
+const maximumSignalTitle = `Maximum title boundary ${"T".repeat(120 - "Maximum title boundary ".length)}`;
+const maximumProjectedMessage = `Maximum projected body boundary ${"body-segment ".repeat(48)}`.slice(0, 512);
+const maximumCopySignal = runtimeSignal({
+  signalId: "fixture.maximum-copy",
+  revision: 1,
+  kind: "persistent",
+  tone: "neutral",
+  priority: "normal",
+  title: maximumSignalTitle,
+  message: maximumProjectedMessage,
+  actions: [],
+  createdAt: 1_725_000_000_104,
+  position: "top-right",
+});
+
+function SignalCopyBoundary() {
+  return (
+    <div className="lab-signal-boundary" data-testid="signal-copy-boundary">
+      <div className="lab-signal-boundary__frame">
+        <SignalSurface signal={maximumCopySignal} />
+      </div>
+      <dl className="lab-signal-boundary__checks">
+        <div><dt>Title input</dt><dd>120 characters</dd></div>
+        <div><dt>Body projection</dt><dd>512 characters</dd></div>
+        <div><dt>Title behavior</dt><dd>Single-line ellipsis</dd></div>
+        <div><dt>Body behavior</dt><dd>Bounded two-line wrap</dd></div>
+      </dl>
+    </div>
+  );
+}
+
+interface SimulatorScenario {
+  label: string;
+  sourceRequests: number;
+  note: string;
+}
+
+function NotifySimulator() {
+  const [runtime, dispatch] = useReducer(runtimeReducer, "lab_notify", createInitialRuntimeState);
+  const progressRevision = useRef(1);
+  const progressValue = useRef(60);
+  const progressActive = useRef(true);
+  const [scenario, setScenario] = useState<SimulatorScenario>({
+    label: "Initial fixture",
+    sourceRequests: notifySignals.length,
+    note: "Four representative projections are loaded for visual inspection.",
+  });
+
+  useEffect(() => {
+    const unsubscribe = designLabTransport.subscribe((envelope) => dispatch({ type: "message", envelope }));
+    designLabTransport.signalSnapshot(notifySignals);
+    return unsubscribe;
+  }, []);
+
+  const present = (next: readonly SignalDescriptor[], details: SimulatorScenario) => {
+    progressActive.current = false;
+    designLabTransport.signalSnapshot(next);
+    setScenario(details);
+  };
+
+  const spawnProgress = () => {
+    progressRevision.current = 1;
+    progressValue.current = 15;
+    progressActive.current = true;
+    designLabTransport.signalSnapshot([simulatorProgress]);
+    setScenario({
+      label: "Spawn progress",
+      sourceRequests: 1,
+      note: "A determinate progress notification starts at 15%.",
+    });
+  };
+
+  const advanceProgress = () => {
+    if (!progressActive.current) {
+      spawnProgress();
+      return;
+    }
+    progressRevision.current += 1;
+    const value = Math.min(100, progressValue.current + 20);
+    progressValue.current = value;
+    designLabTransport.upsertSignal({
+      ...simulatorProgress,
+      revision: progressRevision.current,
+      message: `${value}% of the manifest is ready.`,
+      progress: { state: value === 100 ? "SUCCESS" : "RUNNING", mode: "determinate", value, maximum: 100 },
+    });
+    setScenario({
+      label: "Advance progress",
+      sourceRequests: 1,
+      note: `The active progress revision advanced to ${value}%.`,
+    });
+  };
+
+  const failProgress = () => {
+    if (!progressActive.current) {
+      progressRevision.current = 1;
+      progressValue.current = 45;
+      progressActive.current = true;
+      designLabTransport.signalSnapshot([{
+        ...simulatorProgress,
+        message: "The manifest could not be verified.",
+        tone: "danger",
+        progress: { state: "FAILED", mode: "determinate", value: 45, maximum: 100 },
+      }]);
+    } else {
+      progressRevision.current += 1;
+      designLabTransport.upsertSignal({
+        ...simulatorProgress,
+        revision: progressRevision.current,
+        tone: "danger",
+        message: "The manifest could not be verified.",
+        progress: {
+          state: "FAILED",
+          mode: "determinate",
+          value: progressValue.current,
+          maximum: 100,
+        },
+      });
+    }
+    setScenario({
+      label: "Fail progress",
+      sourceRequests: 1,
+      note: "The existing progress identity transitions to a terminal failure state.",
+    });
+  };
+
+  const groupBurst = () => present([{
+    ...simulatorToast,
+    signalId: "simulator.group",
+    tone: "success",
+    title: "Inventory updates grouped",
+    message: "Related item changes share one bounded presentation.",
+    count: 20,
+  }], {
+    label: "Group burst",
+    sourceRequests: 20,
+    note: "Twenty related source events are represented by one grouped signal.",
+  });
+
+  const dedupeBurst = () => {
+    progressActive.current = false;
+    designLabTransport.signalSnapshot([]);
+    for (let revision = 1; revision <= 10; revision += 1) {
+      designLabTransport.upsertSignal({
+        ...simulatorToast,
+        signalId: "simulator.dedupe",
+        revision,
+        title: "Repeated status deduplicated",
+        message: `Latest duplicate revision ${revision} is retained.`,
+        count: revision,
+      });
+    }
+    setScenario({
+      label: "Dedupe burst",
+      sourceRequests: 10,
+      note: "Ten revisions reuse one identity; only the newest projection remains.",
+    });
+  };
+
+  const spamTest = () => {
+    const boundedProjection = Array.from({ length: 8 }, (_, index): SignalDescriptor => ({
+      ...simulatorToast,
+      signalId: `simulator.spam.${index + 1}`,
+      revision: 1,
+      tone: index % 3 === 0 ? "warning" : "neutral",
+      priority: index === 7 ? "high" : "normal",
+      title: `Bounded pressure item ${index + 1}`,
+      message: "The engine retained a bounded projection after request pressure.",
+      createdAt: simulatorToast.createdAt + index,
+    }));
+    present(boundedProjection, {
+      label: "Spam test",
+      sourceRequests: 1_000,
+      note: "The simulator projects the bounded result: eight retained records and four visible surfaces.",
+    });
+  };
+
+  return (
+    <div className="lab-signal-simulator">
+      <div className="lab-signal-controls" role="group" aria-label="Notification simulator controls">
+        <div className="lab-signal-controls__group">
+          <span>Create</span>
+          <Inline gap={8} wrap>
+            <Button size="sm" onClick={() => present([simulatorToast], {
+              label: "Spawn toast",
+              sourceRequests: 1,
+              note: "A single informational toast is projected into the passive rail.",
+            })}>Spawn toast</Button>
+            <Button size="sm" onClick={spawnProgress}>Spawn progress</Button>
+            <Button size="sm" variant="danger" onClick={() => present([simulatorCritical], {
+              label: "Critical",
+              sourceRequests: 1,
+              note: "A genuinely urgent banner uses alert semantics.",
+            })}>Critical</Button>
+          </Inline>
+        </div>
+        <div className="lab-signal-controls__group">
+          <span>Progress</span>
+          <Inline gap={8} wrap>
+            <Button size="sm" variant="secondary" onClick={advanceProgress}>Advance progress</Button>
+            <Button size="sm" variant="secondary" onClick={failProgress}>Fail progress</Button>
+          </Inline>
+        </div>
+        <div className="lab-signal-controls__group">
+          <span>Pressure</span>
+          <Inline gap={8} wrap>
+            <Button size="sm" variant="secondary" onClick={groupBurst}>Group burst</Button>
+            <Button size="sm" variant="secondary" onClick={dedupeBurst}>Dedupe burst</Button>
+            <Button size="sm" variant="secondary" onClick={spamTest}>Spam test</Button>
+          </Inline>
+        </div>
+        <div className="lab-signal-controls__group">
+          <span>Actions</span>
+          <Inline gap={8} wrap>
+            <Button size="sm" variant="secondary" onClick={() => present([simulatorAction], {
+              label: "Action test",
+              sourceRequests: 1,
+              note: "Two passive action hints expose explicit game-control mappings.",
+            })}>Action test</Button>
+            <Button size="sm" variant="quiet" onClick={() => present([], {
+              label: "Clear",
+              sourceRequests: 0,
+              note: "The runtime projection is empty and the Signal Surface unmounts.",
+            })}>Clear</Button>
+          </Inline>
+        </div>
+      </div>
+      <dl className="lab-signal-readout" data-testid="signal-simulator-state" aria-live="polite">
+        <div><dt>Scenario</dt><dd>{scenario.label}</dd></div>
+        <div><dt>Source requests</dt><dd>{scenario.sourceRequests.toLocaleString("en-US")}</dd></div>
+        <div><dt>Retained</dt><dd>{runtime.signals.length}</dd></div>
+        <div><dt>Visible</dt><dd>{selectVisibleSignals(runtime.signals).length}</dd></div>
+      </dl>
+      <p className="lab-signal-readout__note">{scenario.note}</p>
+      <div className="lab-signal-stage" data-testid="signal-rail-preview">
+        <SignalRail signals={runtime.signals} />
+      </div>
+      <small className="lab-note">The rail is visible but pointer-free. Controls and request counts belong only to this development simulator; production renders no debug panel.</small>
+    </div>
+  );
+}
+
 function FeedbackSpecimens() {
   return (
     <>
       <FamilyHeader code="08" eyebrow="FEEDBACK" title="Feedback and progress" description="Loading, progress, empty and transient states with readable recovery information." />
       <div className="lab-specimen-grid">
+        <Specimen title="Signal Surface simulator" note="Development-only scenario controls · bounded passive projection" wide><NotifySimulator /></Specimen>
+        <Specimen title="Signal copy boundary" note="Maximum title and client-projected body · bounded layout" wide><SignalCopyBoundary /></Specimen>
+        <Specimen title="Signal tone and state matrix" note="Five tones · running/success/failed · persistent/banner/group/action" wide><SignalToneMatrix /></Specimen>
+        <Specimen title="Signal profile matrix" note="LOW/BALANCED/HIGH/ULTRA · reduced motion/transparency" wide><SignalProfileMatrix /></Specimen>
         <Specimen title="Progress" wide><Grid minColumnWidth={240} gap={20}><Stack gap={14}><ProgressBar label="Bundle compilation" value={76} showValue /><ProgressBar label="Waiting for response" indeterminate tone="info" /></Stack><Inline gap={18} align="center"><ProgressRing label="Runtime health" value={92} size={76}>92</ProgressRing><Spinner size="lg" /><Spinner size="sm" /></Inline></Grid></Specimen>
         <Specimen title="Skeleton"><Stack gap={12}><Skeleton shape="text" lines={3} /><Inline gap={12}><Skeleton shape="circle" className="lab-skeleton-circle" /><Skeleton shape="rect" className="lab-skeleton-rect" /></Inline></Stack></Specimen>
         <Specimen title="Toast — visual primitive"><Stack gap={8}><Toast title="Lease acquired" description="Owner epoch 42 is active." tone="positive" onDismiss={() => undefined} /><Toast title="Focus busy" description="A higher-priority owner is active." tone="warning" /></Stack></Specimen>
@@ -571,7 +1055,81 @@ function AdvancedSpecimens() {
   );
 }
 
-function RuntimeSpecimens() {
+const interactionPreviewTransport = {
+  post: async () => ({ ok: true as const }),
+  pending: () => 0,
+  resourceName: "synex_ui",
+} as NuiTransport;
+
+const interactionPreviewScreen: ScreenMetrics = {
+  width: 1920,
+  height: 1080,
+  aspectRatio: 16 / 9,
+  safeLeft: 0,
+  safeRight: 0,
+  safeTop: 0,
+  safeBottom: 0,
+};
+
+const interactionPreviewBindings = {
+  primary: { keyboard: "E", gamepad: "A", mouse: "LMB" },
+  more: { keyboard: "TAB", gamepad: "Y" },
+  cancel: { keyboard: "ESC", gamepad: "B", mouse: "RMB" },
+};
+
+const interactionPreviews: readonly RuntimeInteraction[] = [
+  {
+    interactionId: "lab_interaction_cue",
+    revision: 1,
+    mode: "cue",
+    label: "Primary interaction",
+    targetLabel: "Managed object",
+    projection: { visible: true, behindCamera: false, x: 0.32, y: 0.67 },
+    intents: [{ intentId: "inspect", label: "Inspect", description: "Read the current interaction context." }],
+    moreCount: 2,
+    pointer: false,
+    input: interactionPreviewBindings,
+    cancellable: false,
+    ownerResource: "synex_design_lab",
+    ownerEpoch: 1,
+  },
+  {
+    interactionId: "lab_interaction_bloom",
+    revision: 1,
+    mode: "bloom",
+    label: "Available intents",
+    targetLabel: "Semantic anchor",
+    projection: { visible: true, behindCamera: false, x: 0.5, y: 0.89 },
+    intents: [
+      { intentId: "primary", label: "Use", description: "Begin the selected interaction." },
+      { intentId: "secondary", label: "Inspect", description: "Review contextual details." },
+      { intentId: "reserved", label: "Reserved", description: "Unavailable while another actor holds the slot.", disabled: true },
+    ],
+    selectedIntentId: "primary",
+    pointer: false,
+    input: interactionPreviewBindings,
+    cancellable: true,
+    ownerResource: "synex_design_lab",
+    ownerEpoch: 1,
+  },
+  {
+    interactionId: "lab_interaction_progress",
+    revision: 1,
+    mode: "progress",
+    label: "Interaction in progress",
+    targetLabel: "Authority confirmed",
+    projection: { visible: true, behindCamera: false, x: 0.68, y: 0.67 },
+    intents: [],
+    pointer: false,
+    input: interactionPreviewBindings,
+    progress: { mode: "determinate", value: 62, maximum: 100 },
+    cancellable: true,
+    ownerResource: "synex_design_lab",
+    ownerEpoch: 1,
+  },
+];
+
+function RuntimeSpecimens({ preferences }: { preferences: LabPreferences }) {
   const [scenario, setScenario] = useState<MockScenario>("success");
   const [events, setEvents] = useState<readonly string[]>(["runtime.sync / READY"]);
   const execute = async () => {
@@ -592,6 +1150,28 @@ function RuntimeSpecimens() {
         <div className="lab-runtime-map__lane"><span>04</span><strong>RESPONSE</strong><small>correlated + fenced</small></div>
       </section>
       <div className="lab-specimen-grid">
+        <Specimen
+          title="Interaction surfaces"
+          note="Synthetic contract fixture: cue, intent bloom and authoritative progress. No game feature is simulated."
+          wide
+          id="interaction-surface-preview"
+        >
+          <div className="lab-interaction-preview" aria-label="Interaction surface contract preview">
+            <span className="lab-interaction-preview__axis" aria-hidden="true" />
+            {interactionPreviews.map((interaction) => (
+              <InteractionSurface
+                key={interaction.interactionId}
+                interaction={interaction}
+                inputDevice="keyboard"
+                screen={interactionPreviewScreen}
+                reducedMotion={preferences.reducedMotion}
+                interactionAssist
+                transport={interactionPreviewTransport}
+                browserBootId="design_lab"
+              />
+            ))}
+          </div>
+        </Specimen>
         <Specimen title="Transport scenario runner" wide>
           <Grid columns="minmax(220px, .7fr) minmax(320px, 1.3fr)" gap={18}>
             <Stack gap={12}><Select aria-label="Mock transport scenario" value={scenario} options={[{ value: "success", label: "Success" }, { value: "error", label: "Focus conflict" }, { value: "timeout", label: "Request timeout" }, { value: "malformed", label: "Malformed response" }, { value: "restart", label: "Owner restart" }]} onValueChange={setScenario} /><Button onClick={() => void execute()}>Run scenario</Button><small className="lab-note">Injected mock only. It does not count as FiveM/CEF acceptance.</small></Stack>
@@ -621,6 +1201,6 @@ export function SpecimenSection({ section, preferences }: SpecimenSectionProps) 
     case "data": return <DataSpecimens />;
     case "utilities": return <UtilitySpecimens />;
     case "advanced": return <AdvancedSpecimens />;
-    case "runtime": return <RuntimeSpecimens />;
+    case "runtime": return <RuntimeSpecimens preferences={preferences} />;
   }
 }

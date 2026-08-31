@@ -24,6 +24,7 @@ The complete lifecycle and allowed transitions are documented in [Runtime model]
 | `synex ledger` / `entities` | Restricted, console-only Cfx commands | Read-only optional service summaries with explicit `NOT_INSTALLED`, `STOPPED`, `STARTING`, `DEGRADED`, or `HEALTHY` status |
 | `synex doctor entities` | Restricted, console-only Cfx command | Bounded paged Entity diagnostic snapshot: mappings, bindings, owners, resource/bucket leaks, recovery, lease conflicts, capacity pressure and observed global policy |
 | `synex doctor accounts` / `synex accounts status` | Restricted, console-only Cfx commands | Bounded Accounts Doctor and operational summary while the Alpha provider is running |
+| `synex doctor notify` / `synex notify status` / `synex notify doctor` | Restricted, console-only Cfx commands | Bounded Experimental Alpha Notify health, lifecycle, owner, capacity, action and finding aggregates; never sends player feedback |
 | `synex accounts trace` / `inspect` / `outbox` | Restricted, console-only Cfx commands | Exact transaction/account investigation and bounded dead-outbox inspection |
 | `synex accounts outbox-retry` | Restricted, console-only Cfx command | Separately capability-gated, idempotent requeue of one eligible dead event with durable retry and audit evidence |
 | `synex accounts reconcile` | Restricted, console-only Cfx command | Explicit idempotent integrity mutation; persists run/findings/audit/outbox and never repairs data |
@@ -94,6 +95,17 @@ synex accounts reconcile <currency> <idempotency-uuid>
 The outbox limit defaults to 25 and accepts `1..50`. All commands reject player execution and use capability-declared, trace-bound service methods. The first six forms are bounded reads. Reconciliation is a mutation even though it is diagnostic: it requires the operator-supplied UUID idempotency key and transactionally persists the run, findings, Accounts audit, and outbox intent. It has no auto-repair mode.
 
 While Accounts is running, monitor operation/transaction failure and duration metrics, deadlock/lock-timeout/retry totals, idempotency replay/conflict totals, access denials, active and expired-pending holds, pending/publishing/dead outbox gauges, published/retry/dead totals, and reconciliation findings. `synex ledger`/`accounts status` also expose bounded real 24-hour, 7-day, and 30-day economy aggregates by reason and source resource. Metrics are in-process observations, not production capacity evidence. See [Accounts Financial Engine](reference/accounts.md).
+
+### Notify Alpha diagnostics
+
+Notify is intentionally process-local and ephemeral. Its service and optional
+Control provider expose counts, low-cardinality metrics, bounded owner
+aggregates, queue/action pressure and stable finding codes only; notification
+message text, action tokens and player identifiers are not operator output.
+`synex_ui` being stopped produces `DEGRADED` plus
+`UI_RUNTIME_UNAVAILABLE`; it does not make ordinary notifications durable.
+Starting the UI allows the client runtime to reconcile its bounded visible
+projection. See [Notify diagnostics](notify/diagnostics.md).
 
 ## Logs and privacy
 

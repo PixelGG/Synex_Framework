@@ -1,6 +1,6 @@
 # Cluster authority
 
-Entity authority answers one question: which FXServer instance may control a durable Entity definition now? It is independent from logical ownership, resource ownership, Cfx network ownership and future player interaction leases.
+Entity authority answers one question: which FXServer instance may control a durable Entity definition now? It is independent from logical ownership, resource ownership, Cfx network ownership and `synex_interact` player interaction leases.
 
 ## Lease identity
 
@@ -54,7 +54,7 @@ A live foreign lease always wins and returns `AUTHORITY_LEASE_CONFLICT`; no inst
 
 ## Not an interaction lease
 
-An Entity authority lease belongs to an FXServer instance and protects persistence. An interaction lease would belong to gameplay/user intent and must be implemented by a separate domain such as `synex_interact`. Network control and player proximity do not satisfy the Entity lease.
+An Entity authority lease belongs to an FXServer instance and protects persistence. A `synex_interact` lease belongs to gameplay/user intent and remains a separate runtime domain. Network control and player proximity do not satisfy either authority boundary.
 
 ## Acceptance boundary
 

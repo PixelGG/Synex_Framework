@@ -11,7 +11,9 @@ browser receives intents rather than raw native identifiers.
 
 When an applicable lease is active, the runtime observes disabled-control
 presses and identifies whether the last input source is keyboard/mouse or
-controller. Polling must stop when the UI no longer needs it.
+controller. Passive Notify signals use only a 250 ms `IsUsingKeyboard` sample;
+they never disable or capture controls. Both loops stop when the relevant lease
+or final passive signal is gone.
 
 ## Component behavior
 

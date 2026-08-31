@@ -16,7 +16,7 @@ factories.commands = function(deps)
     local registry = {}
     local bound = false
     local maximumEntries = 256
-    local usage = 'synex <overview|status|doctor|resources|sessions|permissions|trace|migrations|accounts|ledger|entities|prepare-restart|access|ban|unban|allow|unallow>'
+    local usage = 'synex <overview|status|doctor|resources|sessions|permissions|trace|migrations|accounts|ledger|entities|notify|interact|security|prepare-restart|access|ban|unban|allow|unallow>'
 
     local function commandError(code, message, retryable)
         return foundation.error(code, message, { retryable = retryable == true })
@@ -212,8 +212,21 @@ factories.commands = function(deps)
                 return serviceSummary(
                     'synex.entities', 'getDiagnosticSnapshot', 'synex_entities')
             end
+            if arguments[2] == 'notify' then
+                return serviceSummary('synex.notify', 'doctor', 'synex_notify')
+            end
+            if arguments[2] == 'interact' then
+                return serviceSummary('synex.interact', 'doctor', 'synex_interact', {
+                    limit = 100,
+                })
+            end
+            if arguments[2] == 'security' then
+                return serviceSummary('synex.security', 'doctor', 'synex_security', {
+                    limit = 100,
+                })
+            end
             return nil, commandError(
-                'INVALID_ARGUMENT', 'usage: synex doctor [groups|accounts|entities]')
+                'INVALID_ARGUMENT', 'usage: synex doctor [groups|accounts|entities|notify|interact|security]')
         end
     }
     registry.resources = {
@@ -300,6 +313,67 @@ factories.commands = function(deps)
     registry.entities = {
         minimum = 1, maximum = 1,
         run = function() return serviceSummary('synex.entities', 'getControlSummary', 'synex_entities') end
+    }
+    registry.notify = {
+        minimum = 2, maximum = 2,
+        run = function(arguments)
+            if arguments[2] == 'status' then
+                return serviceSummary('synex.notify', 'get_control_summary', 'synex_notify')
+            end
+            if arguments[2] == 'doctor' then
+                return serviceSummary('synex.notify', 'doctor', 'synex_notify')
+            end
+            return nil, commandError('INVALID_ARGUMENT',
+                'usage: synex notify <status|doctor>')
+        end
+    }
+    registry.interact = {
+        minimum = 2, maximum = 3,
+        run = function(arguments)
+            if arguments[2] == 'status' and arguments[3] == nil then
+                return serviceSummary('synex.interact', 'summary', 'synex_interact')
+            end
+            if arguments[2] == 'doctor' and arguments[3] == nil then
+                return serviceSummary('synex.interact', 'doctor', 'synex_interact', {
+                    limit = 100,
+                })
+            end
+            if arguments[2] == 'inspect' and arguments[3] ~= nil then
+                return serviceSummary('synex.interact', 'inspect', 'synex_interact', {
+                    key = arguments[3],
+                })
+            end
+            if arguments[2] == 'trace' and arguments[3] ~= nil then
+                return serviceSummary('synex.interact', 'replay_trace', 'synex_interact', {
+                    traceId = arguments[3], limit = 50,
+                })
+            end
+            return nil, commandError('INVALID_ARGUMENT',
+                'usage: synex interact <status|doctor|inspect <namespaced-key>|trace <trace-id>>')
+        end
+    }
+    registry.security = {
+        minimum = 2, maximum = 3,
+        run = function(arguments)
+            if arguments[2] == 'status' and arguments[3] == nil then
+                return serviceSummary('synex.security', 'getControlSummary',
+                    'synex_security')
+            end
+            if arguments[2] == 'doctor' and arguments[3] == nil then
+                return serviceSummary('synex.security', 'doctor',
+                    'synex_security', { limit = 100 })
+            end
+            if arguments[2] == 'detectors' and arguments[3] == nil then
+                return serviceSummary('synex.security', 'listDetectors',
+                    'synex_security', { limit = 100 })
+            end
+            if arguments[2] == 'case' and arguments[3] ~= nil then
+                return serviceSummary('synex.security', 'getCase',
+                    'synex_security', { caseId = arguments[3] })
+            end
+            return nil, commandError('INVALID_ARGUMENT',
+                'usage: synex security <status|doctor|detectors|case <case-id>>')
+        end
     }
     registry['prepare-restart'] = {
         minimum = 1, maximum = 1,

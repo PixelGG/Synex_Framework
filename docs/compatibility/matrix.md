@@ -8,6 +8,8 @@ Catalog aggregate: **PARTIAL**. No compatibility profile may be treated as certi
 | Provider | Provider version | Target framework API range | Surface | Scope | Type | Status | Legacy version | Native mapping | Adapter operation → native capabilities | Catalog operation → native capabilities | Modes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | ESX | `0.1.0` | unreviewed | `esx.client.callback_invocation` | client | callback | **PARTIAL** | — | — | — | — | compat, silent |
+| ESX | `0.1.0` | unreviewed | `esx.client.notification` | client | method | **PARTIAL** | — | `synex.notify.compatibility@1` | — | — | compat, silent |
+| ESX | `0.1.0` | unreviewed | `esx.client.notification_events` | client | event | **UNSUPPORTED** | — | — | — | — | compat, silent, strict |
 | ESX | `0.1.0` | unreviewed | `esx.client.player_data` | client | object | **PARTIAL** | — | — | — | — | compat, silent |
 | ESX | `0.1.0` | unreviewed | `esx.server.callback_registration` | server | callback | **PARTIAL** | — | — | — | — | compat, silent |
 | ESX | `0.1.0` | unreviewed | `esx.server.identifier_player_lookup` | server | method | **PARTIAL** | — | — | — | — | compat, silent |
@@ -28,6 +30,8 @@ Catalog aggregate: **PARTIAL**. No compatibility profile may be treated as certi
 | ESX | `0.1.0` | unreviewed | `esx.xplayer.money_mutation` | server | method | **PARTIAL** | — | `synex.accounts.transfer_v2/mint_v2/burn_v2@2` | — | — | compat, silent |
 | ESX | `0.1.0` | unreviewed | `esx.xplayer.permission_group` | server | method | **PARTIAL** | — | `synex.permissions.check@1` | — | — | compat, silent |
 | QB | `0.1.0` | unreviewed | `qb.client.callback_invocation` | client | callback | **PARTIAL** | — | — | — | — | compat, silent |
+| QB | `0.1.0` | unreviewed | `qb.client.notification` | client | method | **PARTIAL** | — | `synex.notify.compatibility@1` | — | — | compat, silent |
+| QB | `0.1.0` | unreviewed | `qb.client.notification_event` | client | event | **UNSUPPORTED** | — | — | — | — | compat, silent, strict |
 | QB | `0.1.0` | unreviewed | `qb.client.player_data` | client | object | **PARTIAL** | — | — | — | — | compat, silent |
 | QB | `0.1.0` | unreviewed | `qb.player.duty_mutation` | server | method | **PARTIAL** | — | `synex.groups.duty@1` | — | — | compat, silent |
 | QB | `0.1.0` | unreviewed | `qb.player.group_mutation` | server | method | **PARTIAL** | — | `synex.groups.compatibility.set_primary_grade@1` | — | — | compat, silent |
@@ -50,6 +54,8 @@ Catalog aggregate: **PARTIAL**. No compatibility profile may be treated as certi
 | QB | `0.1.0` | unreviewed | `qb.shared.lifecycle_events` | shared | event | **PARTIAL** | — | — | — | — | compat, silent |
 | QB | `0.1.0` | unreviewed | `qb.shared.money_update_events` | shared | event | **PARTIAL** | — | — | — | — | compat, silent |
 | QB | `0.1.0` | unreviewed | `qb.shared.vehicles_registry` | shared | object | **UNSUPPORTED** | — | — | — | — | compat, silent, strict |
+| QBX | `0.1.0` | unreviewed | `qbx.client.notification` | client | export | **PARTIAL** | — | `synex.notify.compatibility@1` | — | — | compat, silent |
+| QBX | `0.1.0` | unreviewed | `qbx.client.notification_event` | client | event | **UNSUPPORTED** | — | — | — | — | compat, silent, strict |
 | QBX | `0.1.0` | unreviewed | `qbx.client.player_data` | client | export | **PARTIAL** | — | — | — | — | compat, silent |
 | QBX | `0.1.0` | unreviewed | `qbx.compat.qb_core_object` | shared | object | **UNSUPPORTED** | — | — | — | — | compat, silent, strict |
 | QBX | `0.1.0` | unreviewed | `qbx.player.metadata_mutation` | server | export | **PARTIAL** | — | `synex_bridge.compatibility_metadata@1` | — | — | compat, silent |

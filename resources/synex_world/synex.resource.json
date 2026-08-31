@@ -23,7 +23,8 @@
       "synex.groups.read",
       "synex.identity.read",
       "synex.metrics.write",
-      "synex.runtime.read"
+      "synex.runtime.read",
+      "synex.security.expectation.manage"
     ]
   },
   "controlProvider": {

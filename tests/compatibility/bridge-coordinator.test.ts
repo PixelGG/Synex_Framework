@@ -40,6 +40,7 @@ type CoordinatorOptions = {
   updateEvents?: boolean;
   clientPlayerData?: boolean;
   clientCallbacks?: boolean;
+  clientNotifications?: boolean;
   lifecycleSurface?: boolean;
   secondUpdateEvents?: boolean;
   secondClientPlayerData?: boolean;
@@ -211,6 +212,11 @@ function fixtureConfiguration(options: CoordinatorOptions): string {
             name = 'qb.server.callback_registration', acceptedStatuses = { 'PARTIAL' },
           }`
     : '';
+  const clientNotificationRequirement = options.clientNotifications === true
+    ? String.raw`, {
+            name = 'qb.client.notification', acceptedStatuses = { 'PARTIAL' },
+          }`
+    : '';
   const lifecycleRequirement = options.lifecycleSurface === false
     ? ''
     : String.raw`, {
@@ -234,7 +240,7 @@ function fixtureConfiguration(options: CoordinatorOptions): string {
           },
           requiredSurfaces = {{
             name = 'qb.server.player_lookup', acceptedStatuses = { 'PARTIAL' },
-          }${lifecycleRequirement}${domainRequirement}${catalogRequirement}${filterRequirement}${updateEventRequirement}${clientPlayerDataRequirement}${clientCallbackRequirement}},
+          }${lifecycleRequirement}${domainRequirement}${catalogRequirement}${filterRequirement}${updateEventRequirement}${clientPlayerDataRequirement}${clientCallbackRequirement}${clientNotificationRequirement}},
           requiredAdapters = ${domainAdapters},
           requiredCatalogs = ${domainCatalogs},
         }${secondQbProfile}${qbxProfile}},
@@ -329,6 +335,10 @@ function fixtureConfiguration(options: CoordinatorOptions): string {
         }, {
           name = 'qb.server.callback_registration', status = 'PARTIAL',
           requiredCapability = 'synex.compat.qb.callbacks',
+          adapterOperations = {}, modes = { 'compat' }, deprecated = true,
+        }, {
+          name = 'qb.client.notification', status = 'PARTIAL',
+          requiredCapability = 'synex.compat.qb.read',
           adapterOperations = {}, modes = { 'compat' }, deprecated = true,
         }${domainSurface}${catalogSurface}},
       },
@@ -656,6 +666,43 @@ test('bridge coordinator publishes client access only for authorized client surf
       return publication.authorizationOperation
     `);
     assert.equal(result, 'client.player_data.read');
+  } finally {
+    engine.global.close();
+  }
+});
+
+test('bridge coordinator supports notification-only consumers and checks native Notify authority', async () => {
+  const engine = await createCoordinator({
+    configuredConsumer: true,
+    lifecycleSurface: false,
+    clientNotifications: true,
+  });
+  try {
+    const result = await engine.doString(String.raw`
+      invokingResource = 'synex_bridge_qb'
+      local publication = assert(exported.ShouldPublishLifecycle({
+        provider = 'qb', providerResource = 'synex_bridge_qb',
+      }))
+      assert(publication.authorizationOperation == 'client.notification.send')
+      assert(#publication.clientAccess.playerData == 0
+        and #publication.clientAccess.callbacks == 0
+        and #publication.clientAccess.notifications == 1
+        and publication.clientAccess.notifications[1] == 'legacy_consumer')
+      local checked = false
+      for _, entry in ipairs(capabilityChecks) do
+        if entry.resource == 'legacy_consumer'
+          and entry.capability == 'synex.notify.send' then checked = true end
+      end
+      assert(checked == true)
+      deniedCapability = 'synex.notify.send'
+      local denied, deniedError = exported.ShouldPublishLifecycle({
+        provider = 'qb', providerResource = 'synex_bridge_qb',
+      })
+      assert(denied == nil, 'notification denial returned a publication')
+      assert(deniedError.code == 'COMPAT_PROVIDER_DISABLED', deniedError.code)
+      return publication.authorizationOperation
+    `);
+    assert.equal(result, 'client.notification.send');
   } finally {
     engine.global.close();
   }

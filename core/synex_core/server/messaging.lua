@@ -45,7 +45,8 @@ factories.messaging = function(deps)
     local deprecatedUsageSize = 0
     local deprecatedWarnedAt = {}
 
-    local function recordValidationFinding(category, code, resource, scope, operation, summary)
+    local function recordValidationFinding(category, code, resource, scope, operation, summary,
+        subject)
         local diagnostics = type(security) == 'table' and rawget(security, 'diagnostics') or nil
         local record = type(diagnostics) == 'table' and rawget(diagnostics, 'record') or nil
         if not foundation.isCallable(record) then return end
@@ -58,6 +59,13 @@ factories.messaging = function(deps)
         }
         if type(resource) == 'string' then finding.resource = resource end
         if type(scope) == 'string' then finding.scope = scope end
+        if type(subject) == 'table' then
+            finding.sessionId = subject.sessionId
+            finding.source = subject.source
+            finding.sourceGeneration = subject.sourceGeneration
+            finding.userId = subject.userId
+            finding.characterId = subject.characterId
+        end
         foundation.safeCall(record, diagnostics, finding)
     end
 
@@ -1725,14 +1733,21 @@ factories.messaging = function(deps)
                 })
         end
         if not ok or handlerError ~= nil then
+            local normalizedError = ok
+                and normalizeBoundedProviderError(handlerError, serviceContext.traceId, nil) or nil
+            -- A bounded error returned by a provider is a normal domain rejection,
+            -- not evidence that the provider is unhealthy. Counting NOT_FOUND,
+            -- DENIED, RATE_LIMITED, or validation outcomes here lets an authorized
+            -- caller open the provider circuit without crashing the provider.
+            if ok and normalizedError ~= nil then
+                return nil, normalizedError
+            end
             provider.failures = provider.failures + 1
             if provider.circuit == 'HALF_OPEN' or provider.failures >= 5 then
                 provider.circuit = 'OPEN'
                 provider.openedAt = foundation.monotonicMs()
             end
             syncProviderHealth(provider)
-            local normalizedError = ok
-                and normalizeBoundedProviderError(handlerError, serviceContext.traceId, nil) or nil
             local failureCode = not ok and 'SERVICE_PROVIDER_EXCEPTION'
                 or normalizedError and normalizedError.code or 'INVALID_SERVICE_PROVIDER_ERROR'
             if ok and handlerError ~= nil and not normalizedError then
@@ -1872,6 +1887,25 @@ factories.messaging = function(deps)
         platform.triggerClientEvent(protocol.events.response, target, response)
         return true
     end
+
+    local function networkDiagnosticSubject(playerSource, session)
+        if type(session) ~= 'table' or type(session.id) ~= 'string'
+            or type(session.sourceGeneration) ~= 'number'
+            or math.type(session.sourceGeneration) ~= 'integer' then return nil end
+        return {
+            sessionId = session.id,
+            source = playerSource,
+            sourceGeneration = session.sourceGeneration,
+            userId = session.userId,
+            characterId = session.characterId,
+        }
+    end
+
+    local function recordNetworkFinding(code, scope, operation, summary, playerSource, session)
+        recordValidationFinding('transport_abuse', code, nil, scope, operation, summary,
+            networkDiagnosticSubject(playerSource, session))
+    end
+
     function network:bind()
         platform.onNet(protocol.events.request, function(envelope)
             local playerSource = source
@@ -1882,19 +1916,39 @@ factories.messaging = function(deps)
                 or ('rpc-unauthenticated:%s:ingress'):format(playerSource)
             local ingressAllowed = security.rateLimiter:consume(
                 ingressBucketKey, config.burst or 24, config.rate or 12, 1)
-            if not ingressAllowed then return end
+            if not ingressAllowed then
+                local reportAllowed = security.rateLimiter:consume(
+                    ('rpc-diagnostic:%s:%s:'):format(
+                        playerSource, sourceGeneration), 2, 0.5, 1)
+                if reportAllowed then
+                    recordNetworkFinding('RPC_RATE_LIMITED', 'rpc.ingress',
+                        'rpc.ingress.rate_limit',
+                        'RPC ingress rate limiting rejected a client request.',
+                        playerSource, session)
+                end
+                return
+            end
             local valid, envelopeError = security.validateNetworkEnvelope(
                 envelope, maximumTimeoutMs)
             local plainEnvelope = type(envelope) == 'table' and getmetatable(envelope) == nil
             local traceId = plainEnvelope and rawget(envelope, 'traceId') or foundation.nextId('trace')
             local requestId = plainEnvelope and rawget(envelope, 'requestId') or 'invalid'
-            if not valid then sendResponse(playerSource, requestId, traceId, nil, envelopeError) return end
+            if not valid then
+                recordNetworkFinding('RPC_ENVELOPE_INVALID', 'rpc.ingress',
+                    'rpc.ingress.envelope',
+                    'RPC ingress envelope validation rejected a client request.',
+                    playerSource, session)
+                sendResponse(playerSource, requestId, traceId, nil, envelopeError)
+                return
+            end
             local payloadValid, payloadFailure = validTransportValue(envelope.payload)
             if not payloadValid then
                 recordValidationFinding('payload_validation',
-                    payloadFailure == 'bytes' and 'PAYLOAD_TOO_LARGE' or 'INVALID_PAYLOAD',
+                    payloadFailure == 'bytes' and 'RPC_PAYLOAD_TOO_LARGE'
+                        or 'RPC_PAYLOAD_INVALID',
                     nil, envelope.procedure, 'rpc.ingress.validate',
-                    'RPC ingress payload validation rejected.')
+                    'RPC ingress payload validation rejected.',
+                    networkDiagnosticSubject(playerSource, session))
                 sendResponse(playerSource, requestId, traceId, nil, payloadFailure == 'bytes'
                     and foundation.error('PAYLOAD_TOO_LARGE',
                         'RPC payload exceeds the configured byte limit.')
@@ -1904,24 +1958,46 @@ factories.messaging = function(deps)
             end
             local encodedOk, encodedPayload = pcall(platform.jsonEncode, envelope.payload)
             if not encodedOk or type(encodedPayload) ~= 'string' then
-                recordValidationFinding('payload_validation', 'INVALID_PAYLOAD',
+                recordValidationFinding('payload_validation', 'RPC_PAYLOAD_INVALID',
                     nil, envelope.procedure, 'rpc.ingress.encode',
-                    'RPC ingress payload encoding rejected.')
+                    'RPC ingress payload encoding rejected.',
+                    networkDiagnosticSubject(playerSource, session))
                 sendResponse(playerSource, requestId, traceId, nil, foundation.error('INVALID_PAYLOAD', 'RPC payload could not be encoded.'))
                 return
             end
             if #encodedPayload > maximumTransportBytes then
-                recordValidationFinding('payload_validation', 'PAYLOAD_TOO_LARGE',
+                recordValidationFinding('payload_validation', 'RPC_PAYLOAD_TOO_LARGE',
                     nil, envelope.procedure, 'rpc.ingress.validate',
-                    'RPC ingress payload validation rejected.')
+                    'RPC ingress payload validation rejected.',
+                    networkDiagnosticSubject(playerSource, session))
                 sendResponse(playerSource, requestId, traceId, nil, foundation.error('PAYLOAD_TOO_LARGE', 'RPC payload exceeds the configured byte limit.'))
                 return
             end
-            if not session then sendResponse(playerSource, requestId, traceId, nil, foundation.error('SESSION_REQUIRED', 'An active Synex session is required.')) return end
+            if not session then
+                recordNetworkFinding('RPC_SESSION_INVALID', envelope.procedure,
+                    'rpc.ingress.session',
+                    'RPC ingress rejected a request without an active session.',
+                    playerSource, nil)
+                sendResponse(playerSource, requestId, traceId, nil,
+                    foundation.error('SESSION_REQUIRED', 'An active Synex session is required.'))
+                return
+            end
             local pendingKey = ('%s:%s:%s'):format(playerSource, session.sourceGeneration, envelope.requestId)
-            if activeInbound[pendingKey] then sendResponse(playerSource, requestId, traceId, nil, foundation.error('DUPLICATE_REQUEST', 'The RPC request ID is already active.')) return end
+            if activeInbound[pendingKey] then
+                recordNetworkFinding('RPC_REPLAY_ATTEMPT', envelope.procedure,
+                    'rpc.ingress.replay',
+                    'RPC ingress rejected a duplicate active request identifier.',
+                    playerSource, session)
+                sendResponse(playerSource, requestId, traceId, nil,
+                    foundation.error('DUPLICATE_REQUEST', 'The RPC request ID is already active.'))
+                return
+            end
             local sourceKey = ('%s:%s'):format(playerSource, session.sourceGeneration)
             if (activeInboundCounts[sourceKey] or 0) >= (config.maximumPendingPerSource or 16) then
+                recordNetworkFinding('RPC_RATE_LIMITED', envelope.procedure,
+                    'rpc.ingress.pending_limit',
+                    'RPC ingress rejected a request above the bounded pending limit.',
+                    playerSource, session)
                 sendResponse(playerSource, requestId, traceId, nil, foundation.error('TOO_MANY_PENDING_REQUESTS', 'The source has too many active RPC requests.', { retryable = true }))
                 return
             end
@@ -1961,8 +2037,19 @@ factories.messaging = function(deps)
                     }))
                 return
             end
-            if not contract then finishInbound(nil, contractError) return end
+            if not contract then
+                recordNetworkFinding('RPC_UNKNOWN_CONTRACT', envelope.procedure,
+                    'rpc.ingress.contract',
+                    'RPC ingress rejected an unknown or incompatible contract.',
+                    playerSource, session)
+                finishInbound(nil, contractError)
+                return
+            end
             if contract.network ~= 'client-to-server' then
+                recordNetworkFinding('NETWORK_CONTRACT_FORBIDDEN', envelope.procedure,
+                    'rpc.ingress.network_boundary',
+                    'RPC ingress rejected a contract outside its network boundary.',
+                    playerSource, session)
                 finishInbound(nil, foundation.error('NETWORK_ACCESS_DENIED',
                     'The contract is not client-callable.'))
                 return
@@ -1983,8 +2070,19 @@ factories.messaging = function(deps)
                     }))
                 return
             end
-            if not allowed then finishInbound(nil, rateError) return end
+            if not allowed then
+                recordNetworkFinding('RPC_RATE_LIMITED', envelope.procedure,
+                    'rpc.ingress.contract_rate_limit',
+                    'RPC ingress contract rate limiting rejected a client request.',
+                    playerSource, session)
+                finishInbound(nil, rateError)
+                return
+            end
             if not sessionStateAllowed(contract, session) then
+                recordNetworkFinding('RPC_SESSION_INVALID', envelope.procedure,
+                    'rpc.ingress.session_state',
+                    'RPC ingress rejected a request for the current session state.',
+                    playerSource, session)
                 finishInbound(nil, foundation.error('INVALID_SESSION_STATE',
                     'The session state does not permit this operation.'))
                 return
@@ -2009,6 +2107,10 @@ factories.messaging = function(deps)
                 return
             end
             if not permitted then
+                recordNetworkFinding('RPC_PERMISSION_DENIED', envelope.procedure,
+                    'rpc.ingress.permission',
+                    'RPC ingress rejected a request without the required permission.',
+                    playerSource, session)
                 finishInbound(nil, permissionError
                     or foundation.error('PERMISSION_DENIED', 'The session is not permitted to perform this operation.'))
                 return
@@ -2022,15 +2124,27 @@ factories.messaging = function(deps)
                 or currentSession.sourceGeneration ~= session.sourceGeneration
                 or not players:isCurrent(
                     currentSession.id, playerSource, currentSession.sourceGeneration) then
+                recordNetworkFinding('RPC_SOURCE_STALE', envelope.procedure,
+                    'rpc.ingress.source_fence',
+                    'RPC ingress discarded work after its source incarnation changed.',
+                    playerSource, nil)
                 finalizeInbound()
                 return
             end
             if not sessionStateAllowed(contract, currentSession) then
+                recordNetworkFinding('RPC_SESSION_INVALID', envelope.procedure,
+                    'rpc.ingress.session_state',
+                    'RPC ingress rejected a request after session revalidation.',
+                    playerSource, currentSession)
                 finishInbound(nil, foundation.error('INVALID_SESSION_STATE',
                     'The session state does not permit this operation.'))
                 return
             end
             if sessionExplicitlyDenies(currentSession, contract.capability) then
+                recordNetworkFinding('RPC_PERMISSION_DENIED', envelope.procedure,
+                    'rpc.ingress.permission',
+                    'RPC ingress rejected a request after permission revalidation.',
+                    playerSource, currentSession)
                 finishInbound(nil, foundation.error('PERMISSION_DENIED',
                     'The session is not permitted to perform this operation.'))
                 return
@@ -2084,15 +2198,18 @@ factories.messaging = function(deps)
     function network:purgeSource(playerSource, generation)
         if generation == nil then
             security.rateLimiter:purge(('rpc-unauthenticated:%s:'):format(playerSource))
+            security.rateLimiter:purge(
+                ('rpc-diagnostic:%s:unauthenticated:'):format(playerSource))
             return
         end
         local prefix = ('%s:%s:'):format(playerSource, generation)
         for key, entry in pairs(activeInbound) do if key:sub(1, #prefix) == prefix then entry.cancelled = true; activeInbound[key] = nil end end
         for key, entry in pairs(pendingOutbound) do if key:sub(1, #prefix) == prefix then entry.cancelled = true; pendingOutbound[key] = nil end end
-        security.rateLimiter:purge(
-            ('rpc:%s:%s:'):format(playerSource, generation),
-            ('rpc-unauthenticated:%s:'):format(playerSource))
+        security.rateLimiter:purge(('rpc:%s:%s:'):format(playerSource, generation))
+        security.rateLimiter:purge(('rpc-unauthenticated:%s:'):format(playerSource))
         security.rateLimiter:purge(('rpc-cancel:%s:%s:'):format(playerSource, generation))
+        security.rateLimiter:purge(
+            ('rpc-diagnostic:%s:%s:'):format(playerSource, generation))
         activeInboundCounts[('%s:%s'):format(playerSource, generation)] = nil
     end
     function network:snapshot()

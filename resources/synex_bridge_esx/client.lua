@@ -3,10 +3,14 @@ local transport = assert(SynexBridgeClient,
     requestEvent = 'synex_bridge_esx:server:callback',
     responseEvent = 'synex_bridge_esx:client:callback',
 })
+local notifyCompatibility = assert(SynexBridgeNotify,
+    'synex_bridge notification compatibility library is unavailable')
 
 local FACADE_RESOURCE = 'es_extended'
 local currentPlayerData = {}
-local authorizedConsumers = { playerData = {}, callbacks = {} }
+local authorizedConsumers = {
+    playerData = {}, callbacks = {}, notifications = {},
+}
 
 local function copy(value, seen)
     if type(value) ~= 'table' then return value end
@@ -49,15 +53,21 @@ end
 local function readClientAccess(value)
     if type(value) ~= 'table' then return nil end
     for key in next, value do
-        if key ~= 'playerData' and key ~= 'callbacks' then return nil end
+        if key ~= 'playerData' and key ~= 'callbacks'
+            and key ~= 'notifications' then return nil end
     end
     local playerData = consumerSet(rawget(value, 'playerData'))
     local callbacks = consumerSet(rawget(value, 'callbacks'))
-    if not playerData or not callbacks then return nil end
+    local notifications = consumerSet(rawget(value, 'notifications') or {})
+    if not playerData or not callbacks or not notifications then return nil end
     for consumer in pairs(callbacks) do
         if playerData[consumer] ~= true then return nil end
     end
-    return { playerData = playerData, callbacks = callbacks }
+    return {
+        playerData = playerData,
+        callbacks = callbacks,
+        notifications = notifications,
+    }
 end
 
 local function hasAccess(consumer, surface)
@@ -69,6 +79,20 @@ end
 local function playerDataFor(consumer)
     if not hasAccess(consumer, 'playerData') then return nil end
     return copy(currentPlayerData)
+end
+
+local function showNotification(consumer, message, notifyType, durationMs, title,
+    position)
+    if not hasAccess(consumer, 'notifications') then return nil end
+    return notifyCompatibility.esx(consumer, message, notifyType, durationMs,
+        title, position)
+end
+
+local function showAdvancedNotification(consumer, sender, subject, message,
+    textureDictionary, iconType, flash, saveToBrief, hudColorIndex)
+    if not hasAccess(consumer, 'notifications') then return nil end
+    return notifyCompatibility.esxAdvanced(consumer, sender, subject, message,
+        textureDictionary, iconType, flash, saveToBrief, hudColorIndex)
 end
 
 local function sharedObject(consumer)
@@ -84,6 +108,18 @@ local function sharedObject(consumer)
             return transport:triggerCallback(consumer, name, callback, ...)
         end
     end
+    if hasAccess(consumer, 'notifications') then
+        object.ShowNotification = function(message, notifyType, durationMs, title,
+            position)
+            return showNotification(consumer, message, notifyType, durationMs,
+                title, position)
+        end
+        object.ShowAdvancedNotification = function(sender, subject, message,
+            textureDictionary, iconType, flash, saveToBrief, hudColorIndex)
+            return showAdvancedNotification(consumer, sender, subject, message,
+                textureDictionary, iconType, flash, saveToBrief, hudColorIndex)
+        end
+    end
     return next(object) ~= nil and object or nil
 end
 
@@ -91,15 +127,20 @@ RegisterNetEvent('synex_bridge_esx:client:projection', function(
     action, playerData, clientAccess)
     if source ~= 65535 then return end
     local access = action == 'replace' and readClientAccess(clientAccess) or nil
-    if access and next(access.playerData) ~= nil and type(playerData) == 'table' then
+    if access and (next(access.playerData) ~= nil
+        or next(access.notifications) ~= nil) and type(playerData) == 'table' then
         currentPlayerData = copy(playerData)
         authorizedConsumers = access
     elseif action == 'clear' then
         currentPlayerData = {}
-        authorizedConsumers = { playerData = {}, callbacks = {} }
+        authorizedConsumers = {
+            playerData = {}, callbacks = {}, notifications = {},
+        }
     elseif action == 'replace' then
         currentPlayerData = {}
-        authorizedConsumers = { playerData = {}, callbacks = {} }
+        authorizedConsumers = {
+            playerData = {}, callbacks = {}, notifications = {},
+        }
     end
 end)
 
@@ -110,10 +151,12 @@ exports('GetPlayerData', function()
     return playerDataFor(GetInvokingResource())
 end)
 exports('GetSharedObjectForConsumer', function(consumer)
-    if GetInvokingResource() ~= FACADE_RESOURCE or not validConsumer(consumer) then return nil end
+    if GetInvokingResource() ~= FACADE_RESOURCE
+        or not validConsumer(consumer) then return nil end
     return sharedObject(consumer)
 end)
 exports('GetPlayerDataForConsumer', function(consumer)
-    if GetInvokingResource() ~= FACADE_RESOURCE or not validConsumer(consumer) then return nil end
+    if GetInvokingResource() ~= FACADE_RESOURCE
+        or not validConsumer(consumer) then return nil end
     return playerDataFor(consumer)
 end)

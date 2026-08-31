@@ -18,8 +18,8 @@ body,
   pointer-events: none;
 }
 
-body[data-sx-open='true'],
-body[data-sx-open='true'] #root {
+body[data-sx-interactive='true'],
+body[data-sx-interactive='true'] #root {
   pointer-events: auto;
 }
 

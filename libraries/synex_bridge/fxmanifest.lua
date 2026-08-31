@@ -26,6 +26,7 @@ files {
     'kernel/foundation.lua',
     'native_server.lua',
     'native_client.lua',
+    'compatibility_notify.lua',
     'synex.resource.json',
     'compatibility/*.json',
     'compatibility/surfaces/*.json',

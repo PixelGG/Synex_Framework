@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "profile": "conservative",
+  "retentionDays": 90,
+  "closedCaseRetentionDays": 30,
+  "sentinelIntervalMs": 3000,
+  "cfxPolicy": {
+    "deniedModels": [],
+    "deniedExplosions": [],
+    "deniedProjectiles": [],
+    "deniedPtFx": [],
+    "burstMitigation": {
+      "entity": false,
+      "damage": false,
+      "explosion": false,
+      "projectile": false,
+      "ptFx": false
+    },
+    "cancellation": {
+      "startProjectileEvent": { "supported": false, "liveVerified": false },
+      "ptFxEvent": { "supported": false, "liveVerified": false }
+    }
+  },
+  "detectors": {
+    "transport": "MITIGATE",
+    "sentinel": "OBSERVE",
+    "player_integrity": "OBSERVE",
+    "movement": "OBSERVE",
+    "entity_guard": "MITIGATE",
+    "game_events": "MITIGATE",
+    "weapon_integrity": "OBSERVE",
+    "combat_analytics": "OBSERVE",
+    "domain_abuse": "OBSERVE"
+  },
+  "enforcement": {
+    "automaticKick": false,
+    "automaticBan": false,
+    "minimumKickEvidenceClasses": 2,
+    "minimumBanEvidenceClasses": 3
+  }
+}

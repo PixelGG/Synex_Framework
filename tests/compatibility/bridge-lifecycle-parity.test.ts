@@ -602,10 +602,13 @@ test('client facades accept only private server projections and detach every ret
         })
         GetInvokingResource = function() return invoking end
       `);
-      const source = await readFile(
+      const source = `${await readFile(
+        path.join(root, 'libraries', 'synex_bridge', 'compatibility_notify.lua'),
+        'utf8',
+      )}\n${await readFile(
         path.join(root, 'resources', `synex_bridge_${provider}`, 'client.lua'),
         'utf8',
-      );
+      )}`;
       await engine.doString(source);
       const eventName = `synex_bridge_${provider}:client:projection`;
       const publicLoaded = provider === 'esx'

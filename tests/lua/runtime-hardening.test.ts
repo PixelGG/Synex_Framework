@@ -158,7 +158,8 @@ test('persistent RBAC caches subjects, enforces deny precedence, and invalidates
 });
 
 test('permission explanation is exposed through the read-capability facade', async () => {
-  const engine = await coreEngine(['foundation', 'bootstrap_api_validation', 'bootstrap_api_tracing', 'bootstrap_api']);
+  const engine = await coreEngine(['foundation', 'bootstrap_api_validation',
+    'bootstrap_api_tracing', 'bootstrap_api_diagnostics', 'bootstrap_api']);
   try {
     const result = await engine.doString(`
       local checkedCapability, checkedOperation, explanations = nil, nil, 0
@@ -2648,7 +2649,8 @@ test('yielding scheduler handlers are isolated across owners', async () => {
 test('failed runtime gate blocks owner discovery and cached facade mutations', async () => {
   const engine = await coreEngine([
     'foundation', 'registries', 'lifecycle', 'runtime_gate', 'bootstrap_discovery',
-    'bootstrap_api_validation', 'bootstrap_api_tracing', 'bootstrap_api',
+    'bootstrap_api_validation', 'bootstrap_api_tracing',
+    'bootstrap_api_diagnostics', 'bootstrap_api',
   ]);
   try {
     const result = await engine.doString(`
@@ -4377,7 +4379,8 @@ test('instance status synchronization clears a failed write after desired status
 
 test('capability delegation is bridge-granted, target-declared, and limited to active resources', async () => {
   const engine = await coreEngine([
-    'foundation', 'security', 'bootstrap_api_validation', 'bootstrap_api_tracing', 'bootstrap_api',
+    'foundation', 'security', 'bootstrap_api_validation', 'bootstrap_api_tracing',
+    'bootstrap_api_diagnostics', 'bootstrap_api',
   ]);
   try {
     const result = await engine.doString(`
@@ -4462,7 +4465,8 @@ test('control provider facade crosses its declared read and register capability 
   const luaList = (values: string[]): string =>
     `{${values.map((value) => JSON.stringify(value)).join(',')}}`;
   const engine = await coreEngine([
-    'foundation', 'security', 'bootstrap_api_validation', 'bootstrap_api_tracing', 'bootstrap_api',
+    'foundation', 'security', 'bootstrap_api_validation', 'bootstrap_api_tracing',
+    'bootstrap_api_diagnostics', 'bootstrap_api',
   ]);
   try {
     const result = await engine.doString(`

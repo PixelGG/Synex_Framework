@@ -18,3 +18,11 @@ exports('GetGroups', function()
     if not caller then return nil end
     return exports.synex_bridge_qbx:GetGroupsForConsumer(caller)
 end)
+exports('Notify', function(text, notifyType, durationMs, subTitle,
+    notifyPosition, notifyStyle, notifyIcon, notifyIconColor)
+    local caller = consumer()
+    if not caller then return nil end
+    return exports.synex_bridge_qbx:NotifyForConsumer(caller, text, notifyType,
+        durationMs, subTitle, notifyPosition, notifyStyle, notifyIcon,
+        notifyIconColor)
+end)

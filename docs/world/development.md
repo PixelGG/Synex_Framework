@@ -35,7 +35,7 @@ The operator must separately grant `synex.world.bundle.register`; a request alon
 2. Create the map package first, then locations and containment parents before their children for readability (the compiler does not depend on file order).
 3. Keep map assets in their original resource and reference its actual resource name. Associate the package with its root locations; availability then propagates through their containment children.
 4. Use composite unions for disconnected location shapes.
-5. Keep anchors semantic; put prompts/actions in a future interaction resource.
+5. Keep anchors, doors and portals semantic; put prompts/actions in `synex_interact` bundles.
 6. Treat tags as filters, never authorization.
 7. Add access policies only with real Groups IDs/capabilities and World state definitions.
 8. Use revisioned refs returned by the runtime; do not hard-code a runtime revision in source.

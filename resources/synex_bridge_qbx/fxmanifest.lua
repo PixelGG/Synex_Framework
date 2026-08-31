@@ -20,6 +20,7 @@ server_scripts {
 
 client_scripts {
     '@synex_bridge/native_client.lua',
+    '@synex_bridge/compatibility_notify.lua',
     'client.lua'
 }
 

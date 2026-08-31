@@ -1,0 +1,29 @@
+{
+  "$schema": "../../../schemas/world-bundle.schema.json",
+  "schema": 1,
+  "key": "synex_interact_companion:terminal_world",
+  "version": "0.1.0",
+  "dependencies": [],
+  "objects": [
+    {
+      "kind": "location",
+      "key": "synex_interact_companion:fixture_area",
+      "label": "Interact companion fixture area",
+      "tags": ["synex.example.interact"],
+      "geometry": {
+        "type": "aabb",
+        "min": { "x": 207.0, "y": -818.0, "z": 27.0 },
+        "max": { "x": 224.0, "y": -801.0, "z": 35.0 }
+      }
+    },
+    {
+      "kind": "anchor",
+      "key": "synex_interact_companion:terminal_anchor",
+      "parent": "synex_interact_companion:fixture_area",
+      "label": "Inspection terminal fixture",
+      "position": { "x": 215.85, "y": -810.14, "z": 30.73 },
+      "radius": 0.75,
+      "tags": ["synex.anchor.terminal", "synex.example.interact"]
+    }
+  ]
+}

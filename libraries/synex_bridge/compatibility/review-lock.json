@@ -25,7 +25,7 @@
       "providerVersion": "0.1.0",
       "targetFrameworkApiRange": null,
       "catalogPath": "libraries/synex_bridge/compatibility/surfaces/esx.json",
-      "catalogSha256": "ca0d18c218525908d3a69a9b704f2b8d7aa2b824dca4bd8776d960c6d90864cd",
+      "catalogSha256": "3c84b2c071376a85b1ca200b1370b10c19c0b04777a9a71e55b1f60f5e694f58",
       "upstream": {
         "repository": "https://github.com/esx-framework/esx_core",
         "branch": "main",
@@ -48,7 +48,7 @@
       "providerVersion": "0.1.0",
       "targetFrameworkApiRange": null,
       "catalogPath": "libraries/synex_bridge/compatibility/surfaces/qb.json",
-      "catalogSha256": "161aefb98682252e02e396ba606645513d1c6332b0a28e20db4dfa199db77ea4",
+      "catalogSha256": "607487b6f8e986632a5e82c9fb1813050b51f9fcd7b037d328f9ed7f5986aa1c",
       "upstream": {
         "repository": "https://github.com/qbcore-framework/qb-core",
         "branch": "main",
@@ -70,7 +70,7 @@
       "providerVersion": "0.1.0",
       "targetFrameworkApiRange": null,
       "catalogPath": "libraries/synex_bridge/compatibility/surfaces/qbx.json",
-      "catalogSha256": "798b6d5d6474039b391453c5e23929b2d4d42c3d311204a5a19ad8dca187e829",
+      "catalogSha256": "efc832722327a2ef4aabbe40d8bb19f5e2374cf608efbe08c98e0ba1a35a7839",
       "upstream": {
         "repository": "https://github.com/Qbox-project/qbx_core",
         "branch": "main",

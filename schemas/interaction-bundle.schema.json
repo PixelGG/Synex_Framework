@@ -1,0 +1,715 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://synex.dev/schemas/interaction-bundle.schema.json",
+  "title": "Synex interaction bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "key", "revision", "smartObjects", "intents", "graphs"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "key": { "$ref": "#/$defs/identifier" },
+    "revision": { "$ref": "#/$defs/positiveInteger" },
+    "smartObjects": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/smartObject" }
+    },
+    "intents": {
+      "type": "array",
+      "maxItems": 256,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/intent" }
+    },
+    "graphs": {
+      "type": "array",
+      "maxItems": 128,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/graph" }
+    },
+    "metadata": { "$ref": "#/$defs/structuredObject" }
+  },
+  "$defs": {
+    "positiveInteger": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "identifier": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9_]*:[a-z0-9][a-z0-9_.-]*$"
+    },
+    "semanticKey": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"
+    },
+    "permission": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$"
+    },
+    "resourceName": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "token": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$"
+    },
+    "apiName": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128,
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*(?:@[1-9][0-9]*)?$"
+    },
+    "slotKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-z][A-Za-z0-9_.-]*$"
+    },
+    "nodeKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+    },
+    "safeText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F]+$"
+    },
+    "vector3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "z"],
+      "properties": {
+        "x": { "type": "number", "minimum": -20000, "maximum": 20000 },
+        "y": { "type": "number", "minimum": -20000, "maximum": 20000 },
+        "z": { "type": "number", "minimum": -20000, "maximum": 20000 }
+      }
+    },
+    "transform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["position"],
+      "properties": {
+        "position": { "$ref": "#/$defs/vector3" },
+        "heading": { "type": "number", "minimum": -360000, "maximum": 360000 }
+      }
+    },
+    "tagList": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/semanticKey" }
+    },
+    "bindingTagList": {
+      "type": "array",
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/semanticKey" }
+    },
+    "structuredValue": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "boolean" },
+        { "type": "number" },
+        { "type": "string", "maxLength": 4096 },
+        {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/structuredValue" }
+        },
+        { "$ref": "#/$defs/structuredObject" }
+      ]
+    },
+    "structuredObject": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 64,
+        "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
+      },
+      "additionalProperties": { "$ref": "#/$defs/structuredValue" }
+    },
+    "progressPresentation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
+        },
+        "mode": { "enum": ["determinate", "indeterminate", "timed"] },
+        "value": { "type": "number", "minimum": 0, "maximum": 9007199254740991 },
+        "maximum": { "type": "number", "exclusiveMinimum": 0, "maximum": 9007199254740991 },
+        "durationMs": { "type": "integer", "minimum": 1, "maximum": 60000 },
+        "cancellable": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "not": {
+            "properties": { "label": {}, "text": {} },
+            "required": ["label", "text"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "mode": { "const": "determinate" } },
+            "required": ["mode"]
+          },
+          "then": {
+            "properties": { "value": {}, "maximum": {} },
+            "required": ["value", "maximum"]
+          },
+          "else": {
+            "not": {
+              "anyOf": [
+                { "properties": { "value": {} }, "required": ["value"] },
+                { "properties": { "maximum": {} }, "required": ["maximum"] }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "availabilityPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "evaluator": { "$ref": "#/$defs/identifier" },
+        "arguments": { "$ref": "#/$defs/structuredObject" }
+      }
+    },
+    "concurrencyPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "enum": ["slot", "exclusive"] }
+      }
+    },
+    "worldAnchorBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "key"],
+      "properties": {
+        "type": { "const": "worldAnchor" },
+        "key": { "$ref": "#/$defs/identifier" },
+        "tags": { "$ref": "#/$defs/bindingTagList" }
+      }
+    },
+    "worldRefBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "kind", "key"],
+      "properties": {
+        "type": { "const": "worldRef" },
+        "kind": { "enum": ["anchor", "door", "portal"] },
+        "key": { "$ref": "#/$defs/identifier" },
+        "tags": { "$ref": "#/$defs/bindingTagList" }
+      }
+    },
+    "entityRefBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "entityId", "generation"],
+      "properties": {
+        "type": { "const": "entityRef" },
+        "entityId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:%-]*$"
+        },
+        "generation": { "$ref": "#/$defs/positiveInteger" },
+        "tags": { "$ref": "#/$defs/bindingTagList" }
+      }
+    },
+    "entityArchetypeBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "entityArchetype" },
+        "archetype": { "$ref": "#/$defs/semanticKey" },
+        "model": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "tags": { "$ref": "#/$defs/bindingTagList" }
+      },
+      "anyOf": [
+        { "properties": { "archetype": {} }, "required": ["archetype"] },
+        { "properties": { "model": {} }, "required": ["model"] }
+      ]
+    },
+    "entityBoneBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "bone"],
+      "properties": {
+        "type": { "const": "entityBone" },
+        "archetype": { "$ref": "#/$defs/semanticKey" },
+        "model": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+        "bone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
+        },
+        "tags": { "$ref": "#/$defs/bindingTagList" }
+      },
+      "anyOf": [
+        { "properties": { "archetype": {} }, "required": ["archetype"] },
+        { "properties": { "model": {} }, "required": ["model"] }
+      ]
+    },
+    "staticTransformBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "position"],
+      "properties": {
+        "type": { "const": "staticTransform" },
+        "position": { "$ref": "#/$defs/vector3" },
+        "heading": { "type": "number", "minimum": -360000, "maximum": 360000 },
+        "tags": { "$ref": "#/$defs/bindingTagList" }
+      }
+    },
+    "dynamicBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "provider", "bindingKey"],
+      "properties": {
+        "type": { "const": "dynamic" },
+        "provider": { "$ref": "#/$defs/identifier" },
+        "bindingKey": { "$ref": "#/$defs/token" },
+        "tags": { "$ref": "#/$defs/bindingTagList" }
+      }
+    },
+    "binding": {
+      "oneOf": [
+        { "$ref": "#/$defs/worldAnchorBinding" },
+        { "$ref": "#/$defs/worldRefBinding" },
+        { "$ref": "#/$defs/entityRefBinding" },
+        { "$ref": "#/$defs/entityArchetypeBinding" },
+        { "$ref": "#/$defs/entityBoneBinding" },
+        { "$ref": "#/$defs/staticTransformBinding" },
+        { "$ref": "#/$defs/dynamicBinding" }
+      ]
+    },
+    "slot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key"],
+      "properties": {
+        "key": { "$ref": "#/$defs/slotKey" },
+        "localTransform": { "$ref": "#/$defs/transform" },
+        "approachTransform": { "$ref": "#/$defs/transform" },
+        "interactionRadius": { "type": "number", "minimum": 0.25, "maximum": 20 },
+        "facingTolerance": { "type": "number", "minimum": 0, "maximum": 180 },
+        "tags": {
+          "type": "array",
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/semanticKey" }
+        },
+        "capacity": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "initialState": { "enum": ["FREE", "DISABLED"] },
+        "availabilityPolicy": { "$ref": "#/$defs/availabilityPolicy" }
+      }
+    },
+    "smartObject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "binding", "slots", "activities"],
+      "properties": {
+        "key": { "$ref": "#/$defs/identifier" },
+        "binding": { "$ref": "#/$defs/binding" },
+        "slots": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/slot" }
+        },
+        "activities": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/identifier" }
+        },
+        "tags": { "$ref": "#/$defs/tagList" },
+        "availabilityPolicy": { "$ref": "#/$defs/availabilityPolicy" },
+        "concurrencyPolicy": { "$ref": "#/$defs/concurrencyPolicy" },
+        "presentation": { "$ref": "#/$defs/structuredObject" }
+      }
+    },
+    "declarativeCondition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "path", "operator"],
+      "properties": {
+        "kind": { "const": "declarative" },
+        "path": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
+        },
+        "operator": { "enum": ["eq", "ne", "lt", "lte", "gt", "gte", "truthy", "falsy", "contains"] },
+        "value": { "$ref": "#/$defs/structuredValue" },
+        "arguments": { "$ref": "#/$defs/structuredObject" }
+      }
+    },
+    "evaluatorCondition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "evaluator"],
+      "properties": {
+        "kind": { "const": "evaluator" },
+        "evaluator": { "$ref": "#/$defs/identifier" },
+        "arguments": { "$ref": "#/$defs/structuredObject" }
+      }
+    },
+    "condition": {
+      "oneOf": [
+        { "$ref": "#/$defs/declarativeCondition" },
+        { "$ref": "#/$defs/evaluatorCondition" }
+      ]
+    },
+    "participant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "required"],
+      "properties": {
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
+        },
+        "required": { "type": "boolean" },
+        "slotKey": { "$ref": "#/$defs/slotKey" },
+        "capacity": { "type": "integer", "minimum": 1, "maximum": 8 },
+        "lossPolicy": { "enum": ["ABORT", "CONTINUE", "REPLACE"] },
+        "lateJoin": { "type": "boolean" }
+      },
+      "allOf": [{
+        "if": { "properties": { "required": { "const": true } } },
+        "then": { "properties": { "lateJoin": { "not": { "const": true } } } }
+      }]
+    },
+    "cancellationPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cancelOnMove": { "type": "boolean" },
+        "cancelOnDamage": { "type": "boolean" },
+        "cancelOnDeath": { "type": "boolean" },
+        "cancelOnRagdoll": { "type": "boolean" },
+        "cancelOnVehicleChange": { "type": "boolean" },
+        "cancelOnTargetMove": { "type": "boolean" },
+        "cancelOnTargetLoss": { "type": "boolean" },
+        "cancelOnWorldChange": { "type": "boolean" },
+        "actorMoveDistance": { "type": "number", "minimum": 0.05, "maximum": 20 },
+        "targetMoveDistance": { "type": "number", "minimum": 0.05, "maximum": 20 },
+        "cancelDistance": { "type": "number", "minimum": 0.25, "maximum": 20 },
+        "distanceHysteresis": { "type": "number", "minimum": 0, "maximum": 5 },
+        "distanceGraceMs": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "targetLossGraceMs": { "type": "integer", "minimum": 0, "maximum": 10000 }
+      }
+    },
+    "executionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requiredCapability": { "$ref": "#/$defs/permission" },
+        "maximumDistance": { "type": "number", "minimum": 0.25, "maximum": 20 },
+        "managedOnly": { "type": "boolean" },
+        "leaseTtlMs": { "type": "integer", "minimum": 500, "maximum": 10000 },
+        "maximumLifetimeMs": { "type": "integer", "minimum": 1000, "maximum": 120000 },
+        "lockChannels": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "actor.movement",
+              "actor.hands",
+              "actor.weapon",
+              "actor.fullbody",
+              "actor.camera",
+              "actor.input",
+              "ui.primary"
+            ]
+          }
+        },
+        "cancel": { "$ref": "#/$defs/cancellationPolicy" },
+        "privileged": { "type": "boolean" }
+      }
+    },
+    "intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "smartObjectKey",
+        "verb",
+        "label",
+        "basePriority",
+        "trigger",
+        "visibilityConditions",
+        "executionPolicy",
+        "actionGraphRef",
+        "presentation"
+      ],
+      "properties": {
+        "key": { "$ref": "#/$defs/identifier" },
+        "smartObjectKey": { "$ref": "#/$defs/identifier" },
+        "verb": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 48,
+          "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
+        },
+        "icon": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+        },
+        "basePriority": { "type": "number", "minimum": -100, "maximum": 100 },
+        "specificity": { "type": "number", "minimum": -100, "maximum": 100 },
+        "trigger": { "enum": ["primary", "secondary", "automatic"] },
+        "slotSelector": { "$ref": "#/$defs/slotKey" },
+        "visibilityConditions": {
+          "type": "array",
+          "maxItems": 16,
+          "items": { "$ref": "#/$defs/condition" }
+        },
+        "executionPolicy": { "$ref": "#/$defs/executionPolicy" },
+        "actionGraphRef": { "$ref": "#/$defs/identifier" },
+        "presentation": { "$ref": "#/$defs/structuredObject" },
+        "participants": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/participant" }
+        }
+      }
+    },
+    "graphNode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "type"],
+      "properties": {
+        "key": { "$ref": "#/$defs/nodeKey" },
+        "type": {
+          "enum": [
+            "sequence",
+            "branch",
+            "parallel",
+            "race",
+            "barrier",
+            "timeout",
+            "retry",
+            "wait",
+            "verifyLease",
+            "verifyContext",
+            "verifyTarget",
+            "verifyPolicy",
+            "faceTarget",
+            "moveToSlot",
+            "animation",
+            "scenario",
+            "progress",
+            "sound",
+            "interactionCue",
+            "serviceCall",
+            "contractCall",
+            "awaitEvent",
+            "participantBarrier",
+            "stopAnimation",
+            "releaseSlot",
+            "releaseLease",
+            "releaseLocks",
+            "removeTemporaryEntity",
+            "commit",
+            "complete",
+            "fail"
+          ]
+        },
+        "next": { "$ref": "#/$defs/nodeKey" },
+        "children": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/nodeKey" }
+        },
+        "thenNode": { "$ref": "#/$defs/nodeKey" },
+        "elseNode": { "$ref": "#/$defs/nodeKey" },
+        "condition": { "$ref": "#/$defs/condition" },
+        "durationMs": { "type": "integer", "minimum": 0, "maximum": 60000 },
+        "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 120000 },
+        "maxAttempts": { "type": "integer", "minimum": 1, "maximum": 8 },
+        "backoffMs": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "retryableErrors": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Z][A-Z0-9_]*$"
+          }
+        },
+        "adapter": { "$ref": "#/$defs/identifier" },
+        "service": { "$ref": "#/$defs/apiName" },
+        "version": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1, "maximum": 1000 },
+            {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+            }
+          ]
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+        },
+        "request": { "$ref": "#/$defs/structuredValue" },
+        "contract": { "$ref": "#/$defs/apiName" },
+        "presentation": { "$ref": "#/$defs/structuredObject" },
+        "roles": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32,
+            "pattern": "^[^\\u0000-\\u001F\\u007F]+$"
+          }
+        },
+        "commitKey": { "$ref": "#/$defs/token" },
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "cleanup": { "$ref": "#/$defs/nodeKey" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "retry" } }, "required": ["type"] },
+          "then": { "properties": { "maxAttempts": {} }, "required": ["maxAttempts"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "wait" } }, "required": ["type"] },
+          "then": { "properties": { "durationMs": {} }, "required": ["durationMs"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "progress" } }, "required": ["type"] },
+          "then": { "properties": { "presentation": { "$ref": "#/$defs/progressPresentation" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "timeout" } }, "required": ["type"] },
+          "then": { "properties": { "timeoutMs": {} }, "required": ["timeoutMs"] }
+        },
+        {
+          "if": {
+            "properties": { "type": { "enum": ["serviceCall", "contractCall", "awaitEvent", "removeTemporaryEntity"] } },
+            "required": ["type"]
+          },
+          "then": { "properties": { "adapter": {} }, "required": ["adapter"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "serviceCall" } }, "required": ["type"] },
+          "then": {
+            "properties": { "service": {}, "version": {}, "method": {} },
+            "required": ["service", "version", "method"]
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "contractCall" } }, "required": ["type"] },
+          "then": { "properties": { "contract": {} }, "required": ["contract"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "awaitEvent" } }, "required": ["type"] },
+          "then": {
+            "properties": { "contract": {}, "timeoutMs": {} },
+            "required": ["contract", "timeoutMs"]
+          }
+        }
+      ]
+    },
+    "graph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "entry", "nodes"],
+      "properties": {
+        "key": { "$ref": "#/$defs/identifier" },
+        "entry": { "$ref": "#/$defs/nodeKey" },
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "uniqueItems": true,
+          "contains": {
+            "type": "object",
+            "required": ["type"],
+            "properties": { "type": { "enum": ["complete", "fail"] } }
+          },
+          "items": { "$ref": "#/$defs/graphNode" }
+        },
+        "locks": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$"
+          }
+        },
+        "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 120000 },
+        "cancelPolicy": { "$ref": "#/$defs/cancellationPolicy" },
+        "participantLossPolicy": { "enum": ["ABORT", "CONTINUE", "REPLACE"] }
+      }
+    }
+  }
+}

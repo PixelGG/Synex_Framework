@@ -1,3 +1,4 @@
+import { lstat, realpath } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
 import type { Diagnostic } from "./types.ts";
@@ -82,6 +83,7 @@ export interface ResourceManifest {
   dataOwnership: { tables: string[]; characterDelete: string };
   stateSnapshot: { supported: boolean; schemaVersion: number };
   worldBundles?: string[];
+  interactionBundles?: string[];
 }
 
 export interface LoadedResourceManifest {
@@ -97,6 +99,7 @@ export interface ValidationReport {
   contracts: number;
   states: number;
   worldBundles: number;
+  interactionBundles: number;
   diagnostics: Diagnostic[];
 }
 
@@ -315,6 +318,183 @@ export async function loadResourceManifests(
   return { manifests, diagnostics };
 }
 
+interface InteractionBundleRecord {
+  key: string;
+  ownerResource: string;
+  file: string;
+}
+
+interface InteractionBundleCatalog {
+  bundles: InteractionBundleRecord[];
+  diagnostics: Diagnostic[];
+  declaredBundleFiles: number;
+}
+
+async function interactionBundlePathIsContained(
+  resourceDirectory: string,
+  bundleFile: string,
+): Promise<boolean> {
+  try {
+    const metadata = await lstat(bundleFile);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) return false;
+    const [realResource, realBundle] = await Promise.all([
+      realpath(resourceDirectory),
+      realpath(bundleFile),
+    ]);
+    return containsPath(realResource, realBundle);
+  } catch {
+    return false;
+  }
+}
+
+function interactionNamespace(key: string): string | null {
+  const separator = key.indexOf(":");
+  return separator > 0 ? key.slice(0, separator) : null;
+}
+
+async function loadInteractionBundleCatalog(
+  repositoryRoot: string,
+  manifests: LoadedResourceManifest[],
+  schemas: SchemaRegistry,
+  selectedResources: ReadonlySet<string>,
+): Promise<InteractionBundleCatalog> {
+  const diagnostics: Diagnostic[] = [];
+  const bundles: InteractionBundleRecord[] = [];
+  const bundleKeys = new Map<string, InteractionBundleRecord>();
+  let declaredBundleFiles = 0;
+
+  const add = (
+    ownerResource: string,
+    rule: string,
+    file: string,
+    message: string,
+  ): void => {
+    if (!selectedResources.has(ownerResource)) return;
+    diagnostics.push({ level: "error", rule, file, message });
+  };
+
+  for (const loaded of manifests) {
+    for (const relativeBundle of loaded.manifest.interactionBundles ?? []) {
+      if (selectedResources.has(loaded.manifest.name)) declaredBundleFiles += 1;
+      let bundleFile: string;
+      try {
+        bundleFile = resolveWithin(loaded.directory, relativeBundle);
+      } catch {
+        add(
+          loaded.manifest.name,
+          "interaction-bundle-path",
+          displayPath(repositoryRoot, loaded.file),
+          `Interaction bundle path ${relativeBundle} escapes its resource.`,
+        );
+        continue;
+      }
+
+      const shownFile = displayPath(repositoryRoot, bundleFile);
+      if (!(await interactionBundlePathIsContained(loaded.directory, bundleFile))) {
+        add(
+          loaded.manifest.name,
+          "interaction-bundle-path",
+          shownFile,
+          "Interaction bundle must be a regular file contained by its declaring resource.",
+        );
+        continue;
+      }
+
+      let value: unknown;
+      try {
+        value = await readJsonFile(bundleFile);
+      } catch (error) {
+        add(
+          loaded.manifest.name,
+          "interaction-bundle-json",
+          shownFile,
+          error instanceof Error ? error.message : "Interaction bundle could not be read.",
+        );
+        continue;
+      }
+      if (!schemas.interactionBundle(value)) {
+        if (selectedResources.has(loaded.manifest.name)) {
+          diagnostics.push(...schemaDiagnostics(
+            schemas.interactionBundle.errors,
+            bundleFile,
+            repositoryRoot,
+            "interaction-bundle-schema",
+          ));
+        }
+        continue;
+      }
+      if (!isRecord(value) || typeof value.key !== "string") continue;
+
+      const bundle: InteractionBundleRecord = {
+        key: value.key,
+        ownerResource: loaded.manifest.name,
+        file: shownFile,
+      };
+      bundles.push(bundle);
+      if (interactionNamespace(bundle.key) !== loaded.manifest.name) {
+        add(
+          loaded.manifest.name,
+          "interaction-bundle-ownership",
+          shownFile,
+          `Bundle key ${bundle.key} must use declaring resource namespace ${loaded.manifest.name}.`,
+        );
+      }
+
+      const previousBundle = bundleKeys.get(bundle.key);
+      if (previousBundle) {
+        if (selectedResources.has(bundle.ownerResource)
+          || selectedResources.has(previousBundle.ownerResource)) {
+          diagnostics.push({
+            level: "error",
+            rule: "interaction-bundle-key-unique",
+            file: shownFile,
+            message: `Bundle key ${bundle.key} is already declared in ${previousBundle.file}.`,
+          });
+        }
+      } else {
+        bundleKeys.set(bundle.key, bundle);
+      }
+
+      for (const collectionName of ["smartObjects", "intents", "graphs"] as const) {
+        const definitions = value[collectionName];
+        if (!Array.isArray(definitions)) continue;
+        const keys = new Set<string>();
+        for (const definition of definitions) {
+          if (!isRecord(definition) || typeof definition.key !== "string") continue;
+          if (interactionNamespace(definition.key) !== loaded.manifest.name) {
+            add(
+              loaded.manifest.name,
+              "interaction-definition-ownership",
+              shownFile,
+              `${collectionName} key ${definition.key} must use declaring resource namespace ${loaded.manifest.name}.`,
+            );
+          }
+          if (keys.has(definition.key)) {
+            add(
+              loaded.manifest.name,
+              "interaction-definition-key-unique",
+              shownFile,
+              `${collectionName} key ${definition.key} is duplicated within the bundle.`,
+            );
+          } else {
+            keys.add(definition.key);
+          }
+        }
+      }
+    }
+  }
+
+  diagnostics.sort((left, right) => compareText(
+    `${left.file}:${left.rule}:${left.message}`,
+    `${right.file}:${right.rule}:${right.message}`,
+  ));
+  return {
+    bundles: bundles.sort((left, right) => compareText(left.key, right.key)),
+    diagnostics,
+    declaredBundleFiles,
+  };
+}
+
 export async function validateRepository(
   repositoryRoot: string,
   target = repositoryRoot,
@@ -372,6 +552,13 @@ export async function validateRepository(
     selectedResourceNames,
   );
   diagnostics.push(...worldCatalog.diagnostics);
+  const interactionCatalog = await loadInteractionBundleCatalog(
+    repositoryRoot,
+    globalResources.manifests,
+    schemas,
+    selectedResourceNames,
+  );
+  diagnostics.push(...interactionCatalog.diagnostics);
 
   const stateFiles = await walkFiles(selectedTarget, (path) => path.endsWith(".state.json"));
   for (const file of stateFiles) {
@@ -642,11 +829,15 @@ export async function validateRepository(
   return {
     target: displayPath(repositoryRoot, selectedTarget),
     filesChecked: resources.manifests.length + contractSources.sources.length + stateFiles.length
-      + configurationFiles.length + fxmanifests.length + worldCatalog.declaredBundleFiles,
+      + configurationFiles.length + fxmanifests.length + worldCatalog.declaredBundleFiles
+      + interactionCatalog.declaredBundleFiles,
     resources: resources.manifests.length,
     contracts: contractSources.sources.reduce((total, source) => total + source.collection.contracts.length, 0),
     states: stateFiles.length,
     worldBundles: worldCatalog.bundles.filter((bundle) => selectedResourceNames.has(bundle.ownerResource)).length,
+    interactionBundles: interactionCatalog.bundles.filter((bundle) =>
+      selectedResourceNames.has(bundle.ownerResource)
+    ).length,
     diagnostics,
   };
 }

@@ -91,6 +91,8 @@ For server-side domain extensions, each official provider exposes `InvokeCompati
 
 `strict` accepts only `CERTIFIED` or `COMPATIBLE` status and also rejects deprecated surfaces. Every current surface is deprecated, so none can pass `strict`. `compat` and `silent` may admit a cataloged `PARTIAL` surface, subject to the profile and consumer failure policy. With the checked-in empty profile and consumer registries, all three modes remain denied.
 
+When both resources are running, `synex_notify` offers one server-side adapter definition for the `notifications` domain. It remains `PARTIAL` and exposes only bounded `send` with an exact session target plus canonical notification payload. The QB, QBX, and ESX providers also implement a narrow client function/export mapping for their common Notify helpers. Bridge binds every such call to the immediate consumer and projects only a local, normal, plain-text toast; legacy notification events, player targets, system origin, actions, banners, and privileged priority remain unsupported. The consumer still needs an explicit profile plus compatibility and Notify grants, while the checked-in profile/consumer registries enable none. These mappings do not persist an offline notification or certify compatibility. See the [Notify compatibility boundary](../notify/compatibility.md).
+
 ## Components and facade boundary
 
 | Path | Responsibility |

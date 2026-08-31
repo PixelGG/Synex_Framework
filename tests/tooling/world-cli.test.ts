@@ -17,6 +17,7 @@ async function prepareWorldRepository(): Promise<string> {
     "config.schema.json",
     "capability-policy.schema.json",
     "world-bundle.schema.json",
+    "interaction-bundle.schema.json",
   ].map((name) => copyFile(join(process.cwd(), "schemas", name), join(root, "schemas", name))));
   await writeFile(join(root, "package.json"), `${JSON.stringify({
     name: "synex-world-test",

@@ -30,7 +30,7 @@ map/MLO resource        -> models, collision, textures, YMAP/YBN/YDR/MLO
 companion resource      -> declarative Synex meaning and relationships
 synex_world             -> validation, graph, geometry, context and typed bounded state
 synex_entities          -> Entity identity, materialization and routing buckets
-future synex_interact   -> player intent, prompts, leases and actions
+synex_interact          -> player intent, prompts, leases and actions
 gameplay domains        -> business rules and authorization intent
 ```
 
